@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.DS_Store
+Thumbs.db
+server-runtime/
+tmp/
+test-results/
+coverage/
+deployment/local-server.production.json
+deployment/cloudflare-tunnel/config.yml
+*.tsbuildinfo
+*.log
+.env
+.env.local
+.env.production
+.env.development

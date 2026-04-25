@@ -1,0 +1,12 @@
+{
+  "name": "metrovanai-web-rebuild",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "dev": "pnpm --parallel --filter metrovan-ai-server --filter metrovan-ai-client dev",
+    "dev:client": "pnpm --filter metrovan-ai-client dev",
+    "dev:server": "pnpm --filter metrovan-ai-server dev",
+    "build": "pnpm --filter metrovan-ai-server build && pnpm --filter metrovan-ai-client build"
+  }
+}

@@ -1,0 +1,11 @@
+tunnel: REPLACE_WITH_TUNNEL_ID
+credentials-file: C:\Users\zhouj\.cloudflared\REPLACE_WITH_TUNNEL_ID.json
+
+ingress:
+  - hostname: metrovanai.com
+    service: http://127.0.0.1:8787
+  - hostname: www.metrovanai.com
+    service: http://127.0.0.1:8787
+  - hostname: api.metrovanai.com
+    service: http://127.0.0.1:8787
+  - service: http_status:404
