@@ -7,6 +7,7 @@
     "dev": "pnpm --parallel --filter metrovan-ai-server --filter metrovan-ai-client dev",
     "dev:client": "pnpm --filter metrovan-ai-client dev",
     "dev:server": "pnpm --filter metrovan-ai-server dev",
-    "build": "pnpm --filter metrovan-ai-server build && pnpm --filter metrovan-ai-client build"
+    "build": "pnpm --filter metrovan-ai-server build && pnpm --filter metrovan-ai-client build",
+    "check:commercial": "node ./scripts/check-commercial-readiness.mjs"
   }
 }
