@@ -4,6 +4,11 @@ import type { HdrItem, ProjectRecord } from './types.js';
 import type { LocalStore } from './store.js';
 import { normalizeHex, sanitizeSegment } from './utils.js';
 import { estimateReferenceWhiteBalanceGains, extractPreviewOrConvertToJpeg, fuseToJpeg } from './images.js';
+import {
+  createObjectDownloadUrl,
+  isObjectStorageConfigured,
+  mirrorLocalFileToObjectStorage
+} from './object-storage.js';
 import { RunningHubClient } from './runninghub.js';
 import { buildRunningHubNodeInfoList, loadWorkflowConfig, resolveWorkflowRoute } from './workflows.js';
 
@@ -24,11 +29,13 @@ export interface WorkflowExecutionProgress {
 export interface MergedHdrArtifact {
   mergedPath: string;
   mergedFileName: string;
+  mergedStorageKey?: string | null;
 }
 
 export interface WorkflowExecutionArtifact {
   resultPath: string;
   resultFileName: string;
+  resultStorageKey?: string | null;
 }
 
 export interface WorkflowExecutionOptions {
@@ -73,6 +80,7 @@ interface RemoteHttpJobCreateResponse {
 interface RemoteHttpJobResultPayload {
   downloadUrl?: string;
   base64Data?: string;
+  storageKey?: string;
   fileName?: string;
 }
 
@@ -108,6 +116,11 @@ function buildWorkflowResultTargetPath(
 
 function resolveLocalMergeMaxInFlight() {
   return parsePositiveIntEnv(process.env.METROVAN_LOCAL_MERGE_MAX_IN_FLIGHT, 2);
+}
+
+function shouldUseObjectStorageForRemoteExecutor() {
+  const value = String(process.env.METROVAN_REMOTE_EXECUTOR_OBJECT_IO ?? '').trim().toLowerCase();
+  return (value === 'true' || value === '1' || value === 'yes') && isObjectStorageConfigured();
 }
 
 function trimTrailingSlash(value: string) {
@@ -238,9 +251,19 @@ function createLocalHdrMergeContext(store: LocalStore) {
       }
     );
 
+    const mirrored = await mirrorLocalFileToObjectStorage({
+      userKey: project.userKey,
+      projectId: project.id,
+      category: 'hdr',
+      sourcePath: mergedPath,
+      fileName: mergedFileName,
+      contentType: 'image/jpeg'
+    });
+
     return {
       mergedPath,
-      mergedFileName
+      mergedFileName,
+      mergedStorageKey: mirrored?.storageKey ?? null
     };
   };
 
@@ -333,6 +356,14 @@ class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
 
       const resultPath = buildWorkflowResultTargetPath(this.store, project, mergedFileName, options);
       await extractPreviewOrConvertToJpeg(tempDownloadPath, resultPath, 95);
+      const mirrored = await mirrorLocalFileToObjectStorage({
+        userKey: project.userKey,
+        projectId: project.id,
+        category: 'results',
+        sourcePath: resultPath,
+        fileName: path.basename(resultPath),
+        contentType: 'image/jpeg'
+      });
       try {
         fs.rmSync(tempDownloadPath, { force: true });
       } catch {
@@ -341,7 +372,8 @@ class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
 
       return {
         resultPath,
-        resultFileName: path.basename(resultPath)
+        resultFileName: path.basename(resultPath),
+        resultStorageKey: mirrored?.storageKey ?? null
       };
     };
 
@@ -394,7 +426,18 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
         throw new Error(`Missing project group for HDR item ${hdrItem.id}.`);
       }
 
-      const mergedBuffer = fs.readFileSync(mergedPath);
+      const objectIo = shouldUseObjectStorageForRemoteExecutor();
+      const remoteInput = objectIo
+        ? await mirrorLocalFileToObjectStorage({
+            userKey: project.userKey,
+            projectId: project.id,
+            category: 'work',
+            sourcePath: mergedPath,
+            fileName: mergedFileName,
+            contentType: 'image/jpeg'
+          })
+        : null;
+      const mergedBuffer = remoteInput ? null : fs.readFileSync(mergedPath);
       const createResponse = await fetch(`${config.baseUrl}/jobs`, {
         method: 'POST',
         headers: createHeaders(),
@@ -409,7 +452,9 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
           colorCardNo: options?.colorCardNo ?? null,
           inputFileName: mergedFileName,
           inputMimeType: 'image/jpeg',
-          inputImageBase64: mergedBuffer.toString('base64')
+          inputImageBase64: mergedBuffer ? mergedBuffer.toString('base64') : undefined,
+          inputStorageKey: remoteInput?.storageKey,
+          inputDownloadUrl: remoteInput?.storageKey ? createObjectDownloadUrl(remoteInput.storageKey) : undefined
         })
       });
       const created = await readRemoteJson<RemoteHttpJobCreateResponse>(
@@ -461,7 +506,7 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
         }
 
         const result = statusPayload.result;
-        if (!result?.downloadUrl && !result?.base64Data) {
+        if (!result?.downloadUrl && !result?.base64Data && !result?.storageKey) {
           throw new Error('Remote executor completed without returning a result artifact.');
         }
 
@@ -470,6 +515,15 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
 
         if (result.base64Data) {
           outputBuffer = Buffer.from(result.base64Data, 'base64');
+        } else if (result.storageKey) {
+          const objectDownloadResponse = await fetch(createObjectDownloadUrl(result.storageKey));
+          if (!objectDownloadResponse.ok) {
+            throw new Error(`Failed to download remote object result (${objectDownloadResponse.status}).`);
+          }
+          outputBuffer = Buffer.from(await objectDownloadResponse.arrayBuffer());
+          if (!outputExtension) {
+            outputExtension = path.extname(result.storageKey);
+          }
         } else {
           const downloadResponse = await fetch(result.downloadUrl as string, {
             headers: config.token ? { Authorization: `Bearer ${config.token}` } : undefined
@@ -493,6 +547,14 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
 
         const resultPath = buildWorkflowResultTargetPath(this.store, project, mergedFileName, options);
         await extractPreviewOrConvertToJpeg(tempDownloadPath, resultPath, 95);
+        const mirrored = await mirrorLocalFileToObjectStorage({
+          userKey: project.userKey,
+          projectId: project.id,
+          category: 'results',
+          sourcePath: resultPath,
+          fileName: path.basename(resultPath),
+          contentType: 'image/jpeg'
+        });
         try {
           fs.rmSync(tempDownloadPath, { force: true });
         } catch {
@@ -501,7 +563,8 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
 
         return {
           resultPath,
-          resultFileName: path.basename(resultPath)
+          resultFileName: path.basename(resultPath),
+          resultStorageKey: mirrored?.storageKey ?? result.storageKey ?? null
         };
       }
 

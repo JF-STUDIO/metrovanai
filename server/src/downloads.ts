@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { writeJpegVariant } from './images.js';
+import { restoreObjectToFileIfAvailable } from './object-storage.js';
 import type { ProjectRecord } from './types.js';
 import { sanitizeSegment } from './utils.js';
 
@@ -52,6 +53,10 @@ export async function buildProjectDownloadArchive(project: ProjectRecord, input?
     fs.mkdirSync(variantFolder, { recursive: true });
 
     for (const [index, asset] of orderedAssets.entries()) {
+      if (!fs.existsSync(asset.storagePath)) {
+        await restoreObjectToFileIfAvailable(asset.storageKey, asset.storagePath);
+      }
+
       if (!fs.existsSync(asset.storagePath)) {
         continue;
       }

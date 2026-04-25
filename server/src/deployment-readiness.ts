@@ -16,6 +16,11 @@ function hasEnv(name: string) {
   return Boolean(String(process.env[name] ?? '').trim());
 }
 
+function isEnabledEnv(name: string) {
+  const value = String(process.env[name] ?? '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
 function describeProvider(info: ProviderInfo) {
   return info.workflowEngine ? `${info.provider}/${info.workflowEngine}` : info.provider;
 }
@@ -29,6 +34,9 @@ export function buildDeploymentReadiness(input: {
     hasEnv('METROVAN_OBJECT_STORAGE_BUCKET') &&
     hasEnv('METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID') &&
     hasEnv('METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY');
+  const objectStorageEndpointReady = hasEnv('METROVAN_OBJECT_STORAGE_ENDPOINT');
+  const directUploadEnabled = isEnabledEnv('METROVAN_DIRECT_UPLOAD_ENABLED');
+  const remoteObjectIoEnabled = isEnabledEnv('METROVAN_REMOTE_EXECUTOR_OBJECT_IO');
   const remoteExecutorEnvReady = hasEnv('METROVAN_REMOTE_EXECUTOR_URL');
   const stripeEnvReady = hasEnv('METROVAN_STRIPE_SECRET_KEY') && hasEnv('METROVAN_STRIPE_WEBHOOK_SECRET');
   const checks: DeploymentReadinessCheck[] = [
@@ -52,9 +60,21 @@ export function buildDeploymentReadiness(input: {
     },
     {
       id: 'storage.object_env',
-      status: objectStorageEnvReady ? 'ready' : 'planned',
-      current: objectStorageEnvReady ? 'configured' : 'not configured',
-      next: 'Future S3/R2 provider should read METROVAN_OBJECT_STORAGE_* variables exported by the launcher.'
+      status: objectStorageEnvReady && objectStorageEndpointReady ? 'ready' : 'planned',
+      current: objectStorageEnvReady && objectStorageEndpointReady ? 'configured' : 'not configured',
+      next:
+        objectStorageEnvReady && objectStorageEndpointReady
+          ? 'Object storage env is ready for persistent file mirroring and remote worker handoff.'
+          : 'Set METROVAN_OBJECT_STORAGE_ENDPOINT, BUCKET, ACCESS_KEY_ID and SECRET_ACCESS_KEY before S3/R2 cutover.'
+    },
+    {
+      id: 'storage.direct_upload',
+      status: directUploadEnabled && objectStorageEnvReady && objectStorageEndpointReady ? 'ready' : 'planned',
+      current: directUploadEnabled ? 'enabled' : 'disabled',
+      next:
+        directUploadEnabled && objectStorageEnvReady && objectStorageEndpointReady
+          ? 'Browser direct upload is enabled.'
+          : 'Keep disabled for local testing. Enable METROVAN_DIRECT_UPLOAD_ENABLED only after bucket CORS is configured.'
     },
     {
       id: 'executor.provider',
@@ -70,6 +90,15 @@ export function buildDeploymentReadiness(input: {
       status: remoteExecutorEnvReady ? 'ready' : 'planned',
       current: remoteExecutorEnvReady ? 'configured' : 'not configured',
       next: 'Runpod worker must implement POST /jobs and GET /jobs/:id as documented in the commercial cutover contract.'
+    },
+    {
+      id: 'executor.object_io',
+      status: remoteObjectIoEnabled && objectStorageEnvReady && objectStorageEndpointReady ? 'ready' : 'planned',
+      current: remoteObjectIoEnabled ? 'enabled' : 'disabled',
+      next:
+        remoteObjectIoEnabled && objectStorageEnvReady && objectStorageEndpointReady
+          ? 'Remote executor can receive object keys/presigned URLs instead of base64 image payloads.'
+          : 'After S3/R2 is configured, set METROVAN_REMOTE_EXECUTOR_OBJECT_IO=true to avoid large base64 payloads.'
     },
     {
       id: 'payment.stripe_env',

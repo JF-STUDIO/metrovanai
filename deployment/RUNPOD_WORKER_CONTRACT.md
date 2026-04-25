@@ -18,11 +18,23 @@ Set these values in `deployment/local-server.production.json` when you want to u
   "remoteExecutorToken": "replace-with-a-long-random-secret",
   "remoteExecutorPollMs": 2500,
   "remoteExecutorTimeoutSeconds": 1800,
-  "remoteExecutorMaxInFlight": 2
+  "remoteExecutorMaxInFlight": 5
 }
 ```
 
 If `taskExecutor` remains `local-runninghub`, these values are ignored.
+
+Equivalent environment variables are also supported:
+
+```env
+METROVAN_TASK_EXECUTOR=runpod-http
+METROVAN_REMOTE_EXECUTOR_URL=https://your-runpod-worker.example.com
+METROVAN_REMOTE_EXECUTOR_TOKEN=replace-with-a-long-random-secret
+METROVAN_REMOTE_EXECUTOR_POLL_MS=2500
+METROVAN_REMOTE_EXECUTOR_TIMEOUT_SECONDS=1800
+METROVAN_REMOTE_EXECUTOR_MAX_IN_FLIGHT=5
+METROVAN_REMOTE_EXECUTOR_OBJECT_IO=false
+```
 
 ## Current split of responsibility
 
@@ -62,6 +74,23 @@ Request body:
   "inputFileName": "kitchen-01.jpg",
   "inputMimeType": "image/jpeg",
   "inputImageBase64": "<base64 jpeg>"
+}
+```
+
+When S3/R2 object storage is configured and `METROVAN_REMOTE_EXECUTOR_OBJECT_IO=true`, the backend can send object references instead of base64:
+
+```json
+{
+  "projectId": "abc123",
+  "hdrItemId": "hdr001",
+  "title": "Kitchen 01",
+  "sceneType": "interior",
+  "colorMode": "default",
+  "replacementColor": null,
+  "inputFileName": "kitchen-01.jpg",
+  "inputMimeType": "image/jpeg",
+  "inputStorageKey": "projects/user/project/work/kitchen-01.jpg",
+  "inputDownloadUrl": "https://signed-download-url"
 }
 ```
 
@@ -118,6 +147,19 @@ Alternative completed payload:
 }
 ```
 
+Object-storage completed payload:
+```json
+{
+  "jobId": "job_123",
+  "status": "completed",
+  "progress": 100,
+  "result": {
+    "fileName": "kitchen-01.png",
+    "storageKey": "projects/user/project/results/kitchen-01.png"
+  }
+}
+```
+
 Failure payload:
 ```json
 {
@@ -128,6 +170,6 @@ Failure payload:
 ```
 
 ## Notes
-- The current remote executor contract sends merged JPEG data as base64 because local storage is still disk-based.
-- After storage moves to S3, the contract should switch from `inputImageBase64` to `inputStorageKey` or presigned URLs.
-- The backend already normalizes the remote result back into a local JPEG result file so the rest of the product does not change.
+- Base64 mode remains the compatibility fallback.
+- Object I/O mode is the production path for large files because it avoids sending image bytes through JSON.
+- The backend normalizes every remote result back into the existing project result record, so the public API and frontend do not change.

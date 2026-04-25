@@ -307,7 +307,7 @@ export class ProjectProcessor {
       const completedAt = new Date().toISOString();
       this.store.setHdrItemState(projectId, hdrItemId, (item) => ({
         ...item,
-        resultKey: this.store.toStorageKey(result.resultPath),
+        resultKey: result.resultStorageKey ?? this.store.toStorageKey(result.resultPath),
         resultPath: result.resultPath,
         resultUrl: this.store.toStorageUrl(result.resultPath),
         resultFileName: result.resultFileName,
@@ -463,7 +463,7 @@ export class ProjectProcessor {
         }));
 
         try {
-          const { mergedFileName, mergedPath } = await taskExecution.ensureMergedHdrItem(
+          const { mergedFileName, mergedPath, mergedStorageKey } = await taskExecution.ensureMergedHdrItem(
             currentProject ?? initialProject,
             hdrItem,
             projectDirs.hdr
@@ -473,7 +473,7 @@ export class ProjectProcessor {
 
           this.store.setHdrItemState(projectId, hdrItem.id, (item) => ({
             ...item,
-            mergedKey: this.store.toStorageKey(mergedPath),
+            mergedKey: mergedStorageKey ?? this.store.toStorageKey(mergedPath),
             mergedPath,
             mergedUrl,
             status: 'workflow-upload',
@@ -657,13 +657,13 @@ export class ProjectProcessor {
       }));
 
       try {
-        const { mergedFileName, mergedPath } = await taskExecution.ensureMergedHdrItem(currentProject, hdrItem, hdrDir);
+        const { mergedFileName, mergedPath, mergedStorageKey } = await taskExecution.ensureMergedHdrItem(currentProject, hdrItem, hdrDir);
         const mergedUrl = this.store.toStorageUrl(mergedPath);
         mergeProgress.completed += 1;
 
         this.store.setHdrItemState(projectId, hdrItem.id, (item) => ({
           ...item,
-          mergedKey: this.store.toStorageKey(mergedPath),
+          mergedKey: mergedStorageKey ?? this.store.toStorageKey(mergedPath),
           mergedPath,
           mergedUrl,
           status: 'workflow-upload',
@@ -772,7 +772,7 @@ export class ProjectProcessor {
 
         this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
           ...entry,
-          resultKey: this.store.toStorageKey(result.resultPath),
+          resultKey: result.resultStorageKey ?? this.store.toStorageKey(result.resultPath),
           resultPath: result.resultPath,
           resultUrl: this.store.toStorageUrl(result.resultPath),
           resultFileName: result.resultFileName,

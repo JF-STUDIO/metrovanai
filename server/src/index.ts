@@ -39,7 +39,8 @@ import {
   createDirectObjectUploadTarget,
   downloadDirectObjectToFile,
   getDirectObjectUploadCapabilities,
-  isDirectUploadKeyForProject
+  isDirectUploadKeyForProject,
+  restoreObjectToFileIfAvailable
 } from './object-storage.js';
 import {
   constructStripeWebhookEvent,
@@ -1048,15 +1049,30 @@ function respondWithProject(res: express.Response, project: ProjectRecord, statu
   res.status(statusCode).json({ project: buildPublicProject(project) });
 }
 
-function sendProtectedStorageFile(res: express.Response, filePath: string | null) {
+function sendProtectedStorageFile(res: express.Response, filePath: string | null, storageKey?: string | null) {
   if (!filePath) {
     res.status(404).json({ error: 'File not found.' });
     return;
   }
 
   const resolvedPath = path.resolve(filePath);
-  if (!isPathInsideDirectory(resolvedPath, store.getStorageRoot()) || !fs.existsSync(resolvedPath)) {
+  if (!isPathInsideDirectory(resolvedPath, store.getStorageRoot())) {
     res.status(404).json({ error: 'File not found.' });
+    return;
+  }
+
+  if (!fs.existsSync(resolvedPath)) {
+    void restoreObjectToFileIfAvailable(storageKey, resolvedPath)
+      .then((restored) => {
+        if (!restored) {
+          res.status(404).json({ error: 'File not found.' });
+          return;
+        }
+        sendProtectedStorageFile(res, filePath);
+      })
+      .catch(() => {
+        res.status(404).json({ error: 'File not found.' });
+      });
     return;
   }
 
@@ -1567,7 +1583,7 @@ app.get(/^\/storage\/(.+)$/, (req, res) => {
     return;
   }
 
-  sendProtectedStorageFile(res, store.resolveStoragePath(storageKey));
+  sendProtectedStorageFile(res, store.resolveStoragePath(storageKey), storageKey);
 });
 
 app.get('/api/health', (_req, res) => {
@@ -2744,9 +2760,13 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', (req, res) => {
 
   const selectedExposure =
     hdrItem.exposures.find((exposure) => exposure.id === hdrItem.selectedExposureId) ?? hdrItem.exposures[0] ?? null;
+  const previewStorageKey = hdrItem.resultPath
+    ? hdrItem.resultKey
+    : (selectedExposure?.previewPath ? selectedExposure.previewKey : selectedExposure?.storageKey);
   sendProtectedStorageFile(
     res,
-    hdrItem.resultPath ?? selectedExposure?.previewPath ?? selectedExposure?.storagePath ?? null
+    hdrItem.resultPath ?? selectedExposure?.previewPath ?? selectedExposure?.storagePath ?? null,
+    previewStorageKey
   );
 });
 
@@ -2762,7 +2782,7 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/result', (req, res) => {
     return;
   }
 
-  sendProtectedStorageFile(res, hdrItem.resultPath);
+  sendProtectedStorageFile(res, hdrItem.resultPath, hdrItem.resultKey);
 });
 
 app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', (req, res) => {
@@ -2783,7 +2803,7 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', 
     return;
   }
 
-  sendProtectedStorageFile(res, exposure.previewPath ?? exposure.storagePath);
+  sendProtectedStorageFile(res, exposure.previewPath ?? exposure.storagePath, exposure.previewPath ? exposure.previewKey : exposure.storageKey);
 });
 
 app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
@@ -2798,7 +2818,7 @@ app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
     return;
   }
 
-  sendProtectedStorageFile(res, asset.storagePath);
+  sendProtectedStorageFile(res, asset.storagePath, asset.storageKey);
 });
 
 app.delete('/api/projects/:id', (req, res) => {

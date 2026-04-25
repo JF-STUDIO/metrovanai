@@ -5,13 +5,13 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream } from 'node:stream/web';
 import { nanoid } from 'nanoid';
-import { sanitizeSegment, toUnixPath } from './utils.js';
+import { ensureDir, sanitizeSegment, toUnixPath } from './utils.js';
 
 const DEFAULT_UPLOAD_EXPIRES_SECONDS = 15 * 60;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 
 interface ObjectStorageConfig {
-  enabled: boolean;
+  directUploadEnabled: boolean;
   endpoint: string;
   bucket: string;
   region: string;
@@ -19,6 +19,7 @@ interface ObjectStorageConfig {
   secretAccessKey: string;
   forcePathStyle: boolean;
   incomingPrefix: string;
+  persistentPrefix: string;
   uploadExpiresSeconds: number;
   maxFileBytes: number;
 }
@@ -44,33 +45,42 @@ function parsePositiveInt(value: string, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : fallback;
 }
 
-function getObjectStorageConfig(): ObjectStorageConfig | null {
-  const enabled = ['true', '1', 'yes'].includes(env('METROVAN_DIRECT_UPLOAD_ENABLED').toLowerCase());
+function isEnabledEnv(name: string) {
+  return ['true', '1', 'yes'].includes(env(name).toLowerCase());
+}
+
+function getObjectStorageConfig(options: { requireDirectUpload?: boolean } = {}): ObjectStorageConfig | null {
+  const directUploadEnabled = isEnabledEnv('METROVAN_DIRECT_UPLOAD_ENABLED');
   const endpoint = env('METROVAN_OBJECT_STORAGE_ENDPOINT');
   const bucket = env('METROVAN_OBJECT_STORAGE_BUCKET');
   const accessKeyId = env('METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID');
   const secretAccessKey = env('METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY');
 
-  if (!enabled || !endpoint || !bucket || !accessKeyId || !secretAccessKey) {
+  if (options.requireDirectUpload && !directUploadEnabled) {
+    return null;
+  }
+
+  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
     return null;
   }
 
   return {
-    enabled,
+    directUploadEnabled,
     endpoint: endpoint.replace(/\/+$/, ''),
     bucket,
     region: env('METROVAN_OBJECT_STORAGE_REGION') || 'auto',
     accessKeyId,
     secretAccessKey,
-    forcePathStyle: ['true', '1', 'yes'].includes(env('METROVAN_OBJECT_STORAGE_FORCE_PATH_STYLE').toLowerCase()),
+    forcePathStyle: isEnabledEnv('METROVAN_OBJECT_STORAGE_FORCE_PATH_STYLE'),
     incomingPrefix: (env('METROVAN_OBJECT_STORAGE_INCOMING_PREFIX') || 'incoming').replace(/^\/+|\/+$/g, ''),
+    persistentPrefix: (env('METROVAN_OBJECT_STORAGE_PERSISTENT_PREFIX') || 'projects').replace(/^\/+|\/+$/g, ''),
     uploadExpiresSeconds: parsePositiveInt(env('METROVAN_OBJECT_UPLOAD_EXPIRES_SECONDS'), DEFAULT_UPLOAD_EXPIRES_SECONDS),
     maxFileBytes: parsePositiveInt(env('METROVAN_OBJECT_UPLOAD_MAX_FILE_BYTES'), DEFAULT_MAX_FILE_BYTES)
   };
 }
 
 export function getDirectObjectUploadCapabilities() {
-  const config = getObjectStorageConfig();
+  const config = getObjectStorageConfig({ requireDirectUpload: true });
   return {
     enabled: Boolean(config),
     provider: config ? 's3-compatible' : null,
@@ -85,6 +95,10 @@ export function getDirectObjectUploadCapabilities() {
       'METROVAN_OBJECT_STORAGE_REGION'
     ]
   };
+}
+
+export function isObjectStorageConfigured() {
+  return Boolean(getObjectStorageConfig());
 }
 
 function hmac(key: Buffer | string, value: string) {
@@ -155,7 +169,7 @@ function createPresignedUrl(config: ObjectStorageConfig, method: 'GET' | 'PUT', 
 }
 
 function buildIncomingStorageKey(input: { userKey: string; projectId: string; originalName: string }) {
-  const config = getObjectStorageConfig();
+  const config = getObjectStorageConfig({ requireDirectUpload: true });
   if (!config) {
     throw new Error('Direct object upload is not configured.');
   }
@@ -173,7 +187,7 @@ function buildIncomingStorageKey(input: { userKey: string; projectId: string; or
 }
 
 export function assertDirectObjectUploadConfigured() {
-  const config = getObjectStorageConfig();
+  const config = getObjectStorageConfig({ requireDirectUpload: true });
   if (!config) {
     throw new Error('Direct object upload is not configured.');
   }
@@ -222,18 +236,115 @@ export function createDirectObjectUploadTarget(input: {
   } satisfies DirectObjectUploadTarget;
 }
 
-export async function downloadDirectObjectToFile(storageKey: string, targetPath: string) {
-  const config = assertDirectObjectUploadConfigured();
-  const downloadUrl = createPresignedUrl(config, 'GET', storageKey, config.uploadExpiresSeconds);
+export function createObjectDownloadUrl(storageKey: string, expiresSeconds?: number) {
+  const config = getObjectStorageConfig();
+  if (!config) {
+    throw new Error('Object storage is not configured.');
+  }
+  return createPresignedUrl(config, 'GET', storageKey, expiresSeconds ?? config.uploadExpiresSeconds);
+}
+
+export function createPersistentObjectKey(input: {
+  userKey: string;
+  projectId: string;
+  category: 'originals' | 'previews' | 'hdr' | 'results' | 'work';
+  fileName: string;
+}) {
+  const config = getObjectStorageConfig();
+  if (!config) {
+    throw new Error('Object storage is not configured.');
+  }
+
+  const fileName = sanitizeSegment(path.basename(input.fileName.replace(/\\/g, '/'))) || 'asset';
+  return toUnixPath(
+    path.posix.join(
+      config.persistentPrefix,
+      sanitizeSegment(input.userKey) || 'user',
+      sanitizeSegment(input.projectId) || 'project',
+      sanitizeSegment(input.category),
+      nanoid(10),
+      fileName
+    )
+  );
+}
+
+export async function uploadFileToObjectStorage(input: {
+  sourcePath: string;
+  storageKey: string;
+  contentType?: string;
+}) {
+  const config = getObjectStorageConfig();
+  if (!config) {
+    throw new Error('Object storage is not configured.');
+  }
+
+  const uploadUrl = createPresignedUrl(config, 'PUT', input.storageKey, config.uploadExpiresSeconds);
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: input.contentType ? { 'Content-Type': input.contentType } : undefined,
+    body: fs.readFileSync(input.sourcePath)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Object upload failed: ${response.status} ${await response.text().catch(() => '')}`.trim());
+  }
+
+  return {
+    storageKey: input.storageKey,
+    downloadUrl: createObjectDownloadUrl(input.storageKey)
+  };
+}
+
+export async function mirrorLocalFileToObjectStorage(input: {
+  userKey: string;
+  projectId: string;
+  category: 'originals' | 'previews' | 'hdr' | 'results' | 'work';
+  sourcePath: string;
+  fileName?: string;
+  contentType?: string;
+}) {
+  if (!isObjectStorageConfigured() || !fs.existsSync(input.sourcePath)) {
+    return null;
+  }
+
+  const storageKey = createPersistentObjectKey({
+    userKey: input.userKey,
+    projectId: input.projectId,
+    category: input.category,
+    fileName: input.fileName ?? path.basename(input.sourcePath)
+  });
+  return await uploadFileToObjectStorage({
+    sourcePath: input.sourcePath,
+    storageKey,
+    contentType: input.contentType
+  });
+}
+
+export async function downloadObjectToFile(storageKey: string, targetPath: string, options?: { overwrite?: boolean }) {
+  const downloadUrl = createObjectDownloadUrl(storageKey);
   const response = await fetch(downloadUrl);
 
   if (!response.ok || !response.body) {
     throw new Error(`Object download failed: ${response.status}`);
   }
 
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  ensureDir(path.dirname(targetPath));
   await pipeline(
     Readable.fromWeb(response.body as unknown as ReadableStream<Uint8Array>),
-    fs.createWriteStream(targetPath, { flags: 'wx' })
+    fs.createWriteStream(targetPath, { flags: options?.overwrite ? 'w' : 'wx' })
   );
+}
+
+export async function downloadDirectObjectToFile(storageKey: string, targetPath: string) {
+  assertDirectObjectUploadConfigured();
+  await downloadObjectToFile(storageKey, targetPath);
+}
+
+export async function restoreObjectToFileIfAvailable(storageKey: string | null | undefined, targetPath: string | null | undefined) {
+  if (!storageKey || !targetPath || fs.existsSync(targetPath) || !isObjectStorageConfigured()) {
+    return false;
+  }
+
+  await downloadObjectToFile(storageKey, targetPath);
+  return true;
 }
