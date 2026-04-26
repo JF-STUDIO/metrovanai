@@ -69,6 +69,7 @@ import type {
   AdminSystemSettings,
   AdminUserListQuery,
   AdminUserSummary,
+  UploadedObjectReference,
   UploadProgressSnapshot
 } from './api';
 import type {
@@ -2691,7 +2692,19 @@ function App() {
     return Array.from(filesByIdentity.values());
   }
 
-  function buildHdrLayoutPayload(draft: LocalImportDraft) {
+  function buildHdrLayoutPayload(draft: LocalImportDraft, uploadedObjects: UploadedObjectReference[] = []) {
+    const uploadsByIdentity = new Map<string, UploadedObjectReference[]>();
+    for (const uploaded of uploadedObjects) {
+      const key = normalizeFileIdentity(uploaded.originalName);
+      uploadsByIdentity.set(key, [...(uploadsByIdentity.get(key) ?? []), uploaded]);
+    }
+
+    const takeUploadedObject = (exposure: LocalExposureDraft) => {
+      const key = normalizeFileIdentity(exposure.originalName || exposure.fileName);
+      const matches = uploadsByIdentity.get(key);
+      return matches?.shift() ?? null;
+    };
+
     return draft.hdrItems
       .filter((hdrItem) => hdrItem.exposures.length > 0)
       .map((hdrItem) => {
@@ -2699,9 +2712,29 @@ function App() {
           hdrItem.exposures.find((exposure) => exposure.id === hdrItem.selectedExposureId) ??
           hdrItem.exposures[0] ??
           null;
+        const exposures = hdrItem.exposures.map((exposure) => {
+          const uploaded = takeUploadedObject(exposure);
+          return {
+            originalName: exposure.originalName || exposure.fileName,
+            fileName: exposure.fileName,
+            extension: exposure.extension,
+            mimeType: exposure.mimeType || uploaded?.mimeType || 'application/octet-stream',
+            size: exposure.size || uploaded?.size,
+            isRaw: exposure.isRaw,
+            storageKey: uploaded?.storageKey ?? null,
+            captureTime: exposure.captureTime,
+            sequenceNumber: exposure.sequenceNumber,
+            exposureCompensation: exposure.exposureCompensation,
+            exposureSeconds: exposure.exposureSeconds,
+            iso: exposure.iso,
+            fNumber: exposure.fNumber,
+            focalLength: exposure.focalLength
+          };
+        });
         return {
           exposureOriginalNames: hdrItem.exposures.map((exposure) => exposure.originalName || exposure.fileName),
-          selectedOriginalName: selectedExposure?.originalName ?? selectedExposure?.fileName ?? null
+          selectedOriginalName: selectedExposure?.originalName ?? selectedExposure?.fileName ?? null,
+          exposures
         };
       });
   }
@@ -4281,7 +4314,7 @@ function App() {
           upsertProject(uploadStep.project);
         }
 
-        await uploadFiles(currentProject.id, draftFiles, (percent, snapshot) => {
+        const uploadResponse = await uploadFiles(currentProject.id, draftFiles, (percent, snapshot) => {
           setUploadPercent(percent);
           if (snapshot) {
             setUploadSnapshot(snapshot);
@@ -4290,7 +4323,13 @@ function App() {
             setMessage(copy.uploadOriginalsReceived);
           }
         });
-        const layoutResponse = await applyHdrLayout(currentProject.id, buildHdrLayoutPayload(activeLocalDraft));
+        const layoutResponse = await applyHdrLayout(
+          currentProject.id,
+          buildHdrLayoutPayload(
+            activeLocalDraft,
+            'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : []
+          )
+        );
         let syncedProject = layoutResponse.project;
         clearLocalImportDraft(currentProject.id);
         setUploadPercent(100);

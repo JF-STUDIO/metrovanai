@@ -1221,6 +1221,17 @@ function parseDirectUploadCompleteConcurrency() {
   return Math.max(1, Math.min(32, Math.round(raw)));
 }
 
+function shouldStageDirectUploadObjectsLocally() {
+  const raw = String(process.env.METROVAN_DIRECT_UPLOAD_STAGE_LOCAL ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes'].includes(raw)) {
+    return true;
+  }
+  if (['0', 'false', 'no'].includes(raw)) {
+    return false;
+  }
+  return !isProductionRuntime();
+}
+
 async function runWithConcurrency<T>(items: T[], concurrency: number, handler: (item: T, index: number) => Promise<void>) {
   let nextIndex = 0;
   const workerCount = Math.min(Math.max(1, concurrency), items.length);
@@ -1317,15 +1328,17 @@ async function commitStagedOriginals(projectId: string) {
   }
 
   for (const sourcePath of stagedSourcePaths) {
-    if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isFile()) {
+    const exposure = stagedExposureByPath.get(path.resolve(sourcePath).toLowerCase());
+    if ((!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) && isCloudObjectStorageKey(exposure?.storageKey)) {
+      const targetPath = allocateOriginalTargetPath(dirs.originals, path.basename(sourcePath), reservedPaths);
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      committedPaths.set(path.resolve(sourcePath).toLowerCase(), targetPath);
       continue;
     }
 
-    const exposure = stagedExposureByPath.get(path.resolve(sourcePath).toLowerCase());
-    await restoreObjectToFileIfAvailable(exposure?.storageKey, sourcePath);
-  }
-
-  for (const sourcePath of stagedSourcePaths) {
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      await restoreObjectToFileIfAvailable(exposure?.storageKey, sourcePath);
+    }
     if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
       throw new Error(`暂存原图不存在：${path.basename(sourcePath)}`);
     }
@@ -1436,7 +1449,27 @@ const hdrLayoutSchema = z.object({
     .array(
       z.object({
         exposureOriginalNames: z.array(z.string().trim().min(1)).min(1),
-        selectedOriginalName: z.string().trim().min(1).nullable().optional()
+        selectedOriginalName: z.string().trim().min(1).nullable().optional(),
+        exposures: z
+          .array(
+            z.object({
+              originalName: z.string().trim().min(1).max(260),
+              fileName: z.string().trim().min(1).max(260).optional(),
+              extension: z.string().trim().max(24).optional(),
+              mimeType: z.string().trim().max(120).optional(),
+              size: z.number().int().min(1).optional(),
+              isRaw: z.boolean().optional(),
+              storageKey: z.string().trim().min(1).max(1024).nullable().optional(),
+              captureTime: z.string().trim().min(1).nullable().optional(),
+              sequenceNumber: z.number().int().nullable().optional(),
+              exposureCompensation: z.number().nullable().optional(),
+              exposureSeconds: z.number().nullable().optional(),
+              iso: z.number().nullable().optional(),
+              fNumber: z.number().nullable().optional(),
+              focalLength: z.number().nullable().optional()
+            })
+          )
+          .optional()
       })
     )
     .min(1)
@@ -3258,16 +3291,30 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
       };
     });
 
-    await runWithConcurrency(downloadInputs, parseDirectUploadCompleteConcurrency(), async (file) => {
-      await downloadDirectObjectToFile(file.storageKey, file.localPath);
-      manifestEntries[file.index] = {
-        originalName: file.originalName,
-        mimeType: file.mimeType,
-        size: file.size,
-        storageKey: file.storageKey,
-        localPath: file.localPath
-      };
-    });
+    const shouldDownloadToLocalStaging = shouldStageDirectUploadObjectsLocally();
+    if (shouldDownloadToLocalStaging) {
+      await runWithConcurrency(downloadInputs, parseDirectUploadCompleteConcurrency(), async (file) => {
+        await downloadDirectObjectToFile(file.storageKey, file.localPath);
+        manifestEntries[file.index] = {
+          originalName: file.originalName,
+          mimeType: file.mimeType,
+          size: file.size,
+          storageKey: file.storageKey,
+          localPath: file.localPath
+        };
+      });
+    } else {
+      for (const file of downloadInputs) {
+        fs.mkdirSync(path.dirname(file.localPath), { recursive: true });
+        manifestEntries[file.index] = {
+          originalName: file.originalName,
+          mimeType: file.mimeType,
+          size: file.size,
+          storageKey: file.storageKey,
+          localPath: file.localPath
+        };
+      }
+    }
 
     const manifestPath = path.join(dirs.staging, batchId, DIRECT_UPLOAD_MANIFEST_FILE);
     fs.writeFileSync(
@@ -3367,8 +3414,11 @@ app.post('/api/projects/:id/hdr-layout', async (req, res) => {
   }
 
   try {
-    const stagedFiles = store.listProjectStagedFiles(project);
-    if (!stagedFiles.length) {
+    const stagedFiles = store
+      .listProjectStagedFiles(project)
+      .filter((filePath) => path.basename(filePath) !== DIRECT_UPLOAD_MANIFEST_FILE);
+    const hasFrontendExposureMetadata = parsed.data.hdrItems.some((item) => item.exposures?.length);
+    if (!stagedFiles.length && !hasFrontendExposureMetadata) {
       res.status(400).json({ error: 'No uploaded photos are available to group.' });
       return;
     }

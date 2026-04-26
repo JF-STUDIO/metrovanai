@@ -10,12 +10,32 @@ import { getFileStem, isRawExtension } from './utils.js';
 export interface FrontendHdrLayoutItem {
   exposureOriginalNames: string[];
   selectedOriginalName?: string | null;
+  exposures?: FrontendHdrLayoutExposure[];
+}
+
+export interface FrontendHdrLayoutExposure {
+  originalName: string;
+  fileName?: string;
+  extension?: string;
+  mimeType?: string;
+  size?: number;
+  isRaw?: boolean;
+  storageKey?: string | null;
+  captureTime?: string | null;
+  sequenceNumber?: number | null;
+  exposureCompensation?: number | null;
+  exposureSeconds?: number | null;
+  iso?: number | null;
+  fNumber?: number | null;
+  focalLength?: number | null;
 }
 
 interface DirectUploadManifestEntry {
   originalName?: string;
   localPath?: string;
   storageKey?: string;
+  mimeType?: string;
+  size?: number;
 }
 
 const DIRECT_UPLOAD_MANIFEST_FILE = '.metrovan-direct-upload-manifest.json';
@@ -127,6 +147,22 @@ function normalizeFileIdentity(fileName: string) {
   return path.basename(fileName).trim().toLowerCase();
 }
 
+function normalizeExtension(value: string | undefined, fileName: string) {
+  const candidate = value?.trim() || path.extname(fileName);
+  if (!candidate) {
+    return '';
+  }
+  return candidate.startsWith('.') ? candidate.toLowerCase() : `.${candidate.toLowerCase()}`;
+}
+
+function normalizeNullableNumber(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function createExposurePreviewUrl(projectId: string, hdrItemId: string, exposureId: string) {
+  return `/api/projects/${projectId}/hdr-items/${hdrItemId}/exposures/${exposureId}/preview`;
+}
+
 function readDirectUploadManifest(manifestPath: string) {
   try {
     const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { files?: DirectUploadManifestEntry[] };
@@ -138,7 +174,7 @@ function readDirectUploadManifest(manifestPath: string) {
 
 function collectDirectUploadStorageKeys(stagingRoot: string) {
   const byPath = new Map<string, string>();
-  const byName = new Map<string, string[]>();
+  const byName = new Map<string, DirectUploadManifestEntry[]>();
 
   const visit = (directory: string) => {
     if (!fs.existsSync(directory)) {
@@ -167,7 +203,7 @@ function collectDirectUploadStorageKeys(stagingRoot: string) {
 
         if (file.originalName) {
           const normalizedName = normalizeFileIdentity(file.originalName);
-          byName.set(normalizedName, [...(byName.get(normalizedName) ?? []), file.storageKey]);
+          byName.set(normalizedName, [...(byName.get(normalizedName) ?? []), file]);
         }
       }
     }
@@ -187,7 +223,15 @@ function resolveDirectUploadStorageKey(
   }
 
   const byName = directUploadKeys.byName.get(normalizeFileIdentity(frame.name));
-  return byName?.length === 1 ? byName[0] : null;
+  return byName?.length === 1 ? byName[0]?.storageKey ?? null : null;
+}
+
+function takeDirectUploadManifestEntry(
+  fileName: string,
+  directUploadKeys: ReturnType<typeof collectDirectUploadStorageKeys>
+) {
+  const matches = directUploadKeys.byName.get(normalizeFileIdentity(fileName));
+  return matches?.shift() ?? null;
 }
 
 async function createExposureFromFrame(
@@ -226,6 +270,122 @@ async function createExposureFromFrame(
   } satisfies ExposureFile;
 }
 
+function createExposureFromFrontendMetadata(input: {
+  project: ProjectRecord;
+  store: LocalStore;
+  hdrItemId: string;
+  exposure: FrontendHdrLayoutExposure;
+  fallbackOriginalName: string;
+  itemPreviewDir: string;
+  directUploadKeys: ReturnType<typeof collectDirectUploadStorageKeys>;
+}) {
+  const originalName = path.basename(input.exposure.originalName || input.fallbackOriginalName || 'source');
+  const fileName = path.basename(input.exposure.fileName || originalName);
+  const manifestEntry = takeDirectUploadManifestEntry(originalName, input.directUploadKeys);
+  const storageKey = input.exposure.storageKey ?? manifestEntry?.storageKey ?? undefined;
+  const dirs = input.store.ensureProjectDirectories(input.project);
+  const localPath =
+    manifestEntry?.localPath ??
+    path.join(dirs.staging, 'frontend-layout', `${nanoid(8)}-${fileName || originalName}`);
+  const extension = normalizeExtension(input.exposure.extension, fileName || originalName);
+  const exposureId = nanoid(10);
+  const previewPath = path.join(input.itemPreviewDir, `${getFileStem(fileName || originalName)}-${exposureId}.jpg`);
+  const previewUrl = createExposurePreviewUrl(input.project.id, input.hdrItemId, exposureId);
+
+  return {
+    id: exposureId,
+    fileName,
+    originalName,
+    extension,
+    mimeType:
+      input.exposure.mimeType ||
+      manifestEntry?.mimeType ||
+      (isRawExtension(extension) ? 'image/x-raw' : 'image/jpeg'),
+    size: input.exposure.size ?? manifestEntry?.size ?? 1,
+    isRaw: input.exposure.isRaw ?? isRawExtension(extension),
+    storageKey,
+    storagePath: localPath,
+    storageUrl: storageKey ? input.store.toStorageUrlFromKey(storageKey) : input.store.toStorageUrl(localPath),
+    previewKey: null,
+    previewPath,
+    previewUrl,
+    captureTime: input.exposure.captureTime ?? null,
+    sequenceNumber: input.exposure.sequenceNumber ?? null,
+    exposureCompensation: normalizeNullableNumber(input.exposure.exposureCompensation),
+    exposureSeconds: normalizeNullableNumber(input.exposure.exposureSeconds),
+    iso: normalizeNullableNumber(input.exposure.iso),
+    fNumber: normalizeNullableNumber(input.exposure.fNumber),
+    focalLength: normalizeNullableNumber(input.exposure.focalLength)
+  } satisfies ExposureFile;
+}
+
+async function buildHdrItemsFromFrontendMetadata(
+  project: ProjectRecord,
+  store: LocalStore,
+  layout: FrontendHdrLayoutItem[],
+  directUploadKeys: ReturnType<typeof collectDirectUploadStorageKeys>
+) {
+  const dirs = store.ensureProjectDirectories(project);
+  if (fs.existsSync(dirs.previews)) {
+    fs.rmSync(dirs.previews, { recursive: true, force: true });
+  }
+  fs.mkdirSync(dirs.previews, { recursive: true });
+
+  const hdrItems: HdrItem[] = [];
+  for (const item of layout) {
+    const metadataExposures =
+      item.exposures?.length
+        ? item.exposures
+        : item.exposureOriginalNames.map((originalName) => ({ originalName }));
+    if (!metadataExposures.length) {
+      continue;
+    }
+
+    const hdrItemId = nanoid(10);
+    const itemPreviewDir = path.join(dirs.previews, hdrItemId);
+    fs.mkdirSync(itemPreviewDir, { recursive: true });
+
+    const exposures = metadataExposures.map((exposure, index) =>
+      createExposureFromFrontendMetadata({
+        project,
+        store,
+        hdrItemId,
+        exposure,
+        fallbackOriginalName: item.exposureOriginalNames[index] ?? exposure.originalName,
+        itemPreviewDir,
+        directUploadKeys
+      })
+    );
+    const selectedName = normalizeFileIdentity(item.selectedOriginalName ?? '');
+    const selectedExposure =
+      exposures.find((exposure) => normalizeFileIdentity(exposure.originalName) === selectedName) ??
+      pickDefaultExposure(exposures) ??
+      exposures[0] ??
+      null;
+    const index = hdrItems.length + 1;
+    hdrItems.push({
+      id: hdrItemId,
+      index,
+      title: `HDR ${index}`,
+      groupId: '',
+      sceneType: 'pending',
+      selectedExposureId: selectedExposure?.id ?? exposures[0]?.id ?? '',
+      previewUrl: selectedExposure?.previewUrl ?? exposures[0]?.previewUrl ?? null,
+      status: 'review',
+      statusText: '待确认',
+      errorMessage: null,
+      mergedPath: null,
+      mergedUrl: null,
+      resultPath: null,
+      resultUrl: null,
+      resultFileName: null,
+      exposures
+    });
+  }
+
+  return hdrItems;
+}
+
 export async function buildHdrItemsFromFrontendLayout(
   project: ProjectRecord,
   store: LocalStore,
@@ -234,6 +394,10 @@ export async function buildHdrItemsFromFrontendLayout(
 ) {
   const dirs = store.ensureProjectDirectories(project);
   const directUploadKeys = collectDirectUploadStorageKeys(dirs.staging);
+  const canUseFrontendMetadata = layout.some((item) => item.exposures?.length) && sourceFiles.length === 0;
+  if (canUseFrontendMetadata) {
+    return await buildHdrItemsFromFrontendMetadata(project, store, layout, directUploadKeys);
+  }
 
   if (fs.existsSync(dirs.previews)) {
     fs.rmSync(dirs.previews, { recursive: true, force: true });

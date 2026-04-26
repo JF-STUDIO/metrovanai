@@ -1431,7 +1431,11 @@ export class LocalStore {
       const exposures = item.exposures.map((exposure) => {
         const storageKey = exposure.storageKey ?? this.deriveStorageKey(exposure.storagePath);
         const previewKey =
-          exposure.previewPath !== null ? exposure.previewKey ?? this.deriveStorageKey(exposure.previewPath) : null;
+          exposure.previewPath !== null
+            ? exposure.previewKey !== undefined
+              ? exposure.previewKey
+              : this.deriveStorageKey(exposure.previewPath)
+            : null;
         return {
           ...exposure,
           storageKey: storageKey ?? undefined,

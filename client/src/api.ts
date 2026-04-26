@@ -153,6 +153,13 @@ interface DirectUploadTarget {
   expiresAt: string;
 }
 
+export interface UploadedObjectReference {
+  originalName: string;
+  size: number;
+  mimeType: string;
+  storageKey: string;
+}
+
 export interface AdminUserSummary {
   id: string;
   userKey: string;
@@ -650,6 +657,22 @@ export async function moveHdrItem(projectId: string, hdrItemId: string, targetGr
 export interface HdrLayoutItemPayload {
   exposureOriginalNames: string[];
   selectedOriginalName?: string | null;
+  exposures?: Array<{
+    originalName: string;
+    fileName?: string;
+    extension?: string;
+    mimeType?: string;
+    size?: number;
+    isRaw?: boolean;
+    storageKey?: string | null;
+    captureTime?: string | null;
+    sequenceNumber?: number | null;
+    exposureCompensation?: number | null;
+    exposureSeconds?: number | null;
+    iso?: number | null;
+    fNumber?: number | null;
+    focalLength?: number | null;
+  }>;
 }
 
 export async function applyHdrLayout(projectId: string, hdrItems: HdrLayoutItemPayload[]) {
@@ -1004,7 +1027,18 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
     uploadedFiles: files.length,
     totalFiles: files.length
   });
-  return response;
+  return {
+    ...response,
+    directUploadFiles: targets.map((target, index) => {
+      const file = files[index];
+      return {
+        originalName: target.originalName || file?.name || `upload-${index + 1}`,
+        mimeType: file?.type || target.mimeType || 'application/octet-stream',
+        size: file?.size || target.size,
+        storageKey: target.storageKey
+      };
+    })
+  };
 }
 
 export async function uploadFiles(projectId: string, files: File[], onProgress: UploadProgressHandler) {
