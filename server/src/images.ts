@@ -75,6 +75,16 @@ function deleteIfExists(targetPath: string) {
   }
 }
 
+const FALLBACK_PREVIEW_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Ar//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z',
+  'base64'
+);
+
+function writeFallbackPreview(destinationPath: string) {
+  ensureParent(destinationPath);
+  fs.writeFileSync(destinationPath, FALLBACK_PREVIEW_JPEG);
+}
+
 function isJpegExtension(extension: string) {
   return extension === '.jpg' || extension === '.jpeg';
 }
@@ -610,11 +620,28 @@ export async function extractPreviewOrConvertToJpeg(
     }
 
     deleteIfExists(tempPath);
-    throw new Error(`exiftool preview extraction failed: ${path.basename(sourcePath)}`);
+    console.warn(`RAW preview extraction failed, using fallback preview: ${path.basename(sourcePath)}`);
   }
 
   if (toolPaths.magick) {
-    await convertToJpegWithMagick(sourcePath, destinationPath, quality, resizeLongEdge);
+    try {
+      await convertToJpegWithMagick(sourcePath, destinationPath, quality, resizeLongEdge);
+      return;
+    } catch (error) {
+      if (!isRawExtension(extension)) {
+        throw error;
+      }
+
+      console.warn(
+        `RAW preview conversion failed, using fallback preview: ${path.basename(sourcePath)} ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  if (isRawExtension(extension)) {
+    writeFallbackPreview(destinationPath);
     return;
   }
 
