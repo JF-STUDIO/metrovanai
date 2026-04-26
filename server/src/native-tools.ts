@@ -19,7 +19,8 @@ export interface ProcessResult {
   stderr: string;
 }
 
-function resolveExecutable(fileName: string, candidates: string[]) {
+function resolveExecutable(fileName: string | string[], candidates: string[]) {
+  const fileNames = Array.isArray(fileName) ? fileName : [fileName];
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) {
       return candidate;
@@ -27,14 +28,16 @@ function resolveExecutable(fileName: string, candidates: string[]) {
   }
 
   const pathValue = process.env.PATH ?? '';
-  for (const directory of pathValue.split(';').filter(Boolean)) {
-    try {
-      const fullPath = path.join(directory.trim(), fileName);
-      if (fs.existsSync(fullPath)) {
-        return fullPath;
+  for (const directory of pathValue.split(path.delimiter).filter(Boolean)) {
+    for (const name of fileNames) {
+      try {
+        const fullPath = path.join(directory.trim(), name);
+        if (fs.existsSync(fullPath)) {
+          return fullPath;
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
     }
   }
 
@@ -42,27 +45,27 @@ function resolveExecutable(fileName: string, candidates: string[]) {
 }
 
 export const toolPaths: ToolPaths = {
-  magick: resolveExecutable('magick.exe', [
+  magick: resolveExecutable(['magick.exe', 'magick', 'convert'], [
     'C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI\\magick.exe',
     'C:\\Program Files\\ImageMagick-7.1.1-Q16-HDRI\\magick.exe'
   ]),
-  exiftool: resolveExecutable('ExifTool.exe', [
+  exiftool: resolveExecutable(['ExifTool.exe', 'exiftool'], [
     path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'ExifTool', 'ExifTool.exe')
   ]),
-  alignImageStack: resolveExecutable('align_image_stack.exe', [
+  alignImageStack: resolveExecutable(['align_image_stack.exe', 'align_image_stack'], [
     'C:\\Program Files\\Hugin\\bin\\align_image_stack.exe',
     'C:\\Program Files (x86)\\Hugin\\bin\\align_image_stack.exe',
     'C:\\Program Files\\Hugin\\bin\\hugin\\bin\\align_image_stack.exe'
   ]),
-  enfuse: resolveExecutable('enfuse.exe', [
+  enfuse: resolveExecutable(['enfuse.exe', 'enfuse'], [
     'C:\\Program Files\\Hugin\\bin\\enfuse.exe',
     'C:\\Program Files (x86)\\Hugin\\bin\\enfuse.exe',
     'C:\\Program Files\\Hugin\\bin\\hugin\\bin\\enfuse.exe'
   ]),
-  rawTherapeeCli: resolveExecutable('rawtherapee-cli.exe', [
+  rawTherapeeCli: resolveExecutable(['rawtherapee-cli.exe', 'rawtherapee-cli'], [
     'C:\\Program Files\\RawTherapee\\5.12\\rawtherapee-cli.exe'
   ]),
-  comfyPython: resolveExecutable('python.exe', ['E:\\comfy\\.venv\\Scripts\\python.exe']),
+  comfyPython: resolveExecutable(['python.exe', 'python3', 'python'], ['E:\\comfy\\.venv\\Scripts\\python.exe']),
   wallColorAlignerNode:
     [
       'E:\\comfy\\custom_nodes\\comfyui_wall_color_aligner\\wall_color_aligner.py',

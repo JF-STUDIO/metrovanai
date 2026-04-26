@@ -75,6 +75,10 @@ function deleteIfExists(targetPath: string) {
   }
 }
 
+function isJpegExtension(extension: string) {
+  return extension === '.jpg' || extension === '.jpeg';
+}
+
 function pickReferenceInput(inputs: HdrSourceInput[]) {
   const withExposure = inputs.filter((input) => Number.isFinite(input.exposureCompensation));
   const exposureValues = withExposure.map((input) => Number(input.exposureCompensation ?? 0));
@@ -576,7 +580,7 @@ export async function extractPreviewOrConvertToJpeg(
   const extension = path.extname(sourcePath).toLowerCase();
   ensureParent(destinationPath);
 
-  if ((extension === '.jpg' || extension === '.jpeg') && !resizeLongEdge) {
+  if (isJpegExtension(extension) && (!resizeLongEdge || !toolPaths.magick)) {
     fs.copyFileSync(sourcePath, destinationPath);
     return;
   }
