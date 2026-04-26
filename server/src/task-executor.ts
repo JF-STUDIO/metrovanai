@@ -1468,7 +1468,8 @@ export function createTaskExecutionProvider(
   provider: string | undefined,
   options: { repoRoot: string; store: LocalStore }
 ): TaskExecutionProvider {
-  const normalizedProvider = (provider ?? 'local-runninghub').trim().toLowerCase();
+  const defaultProvider = process.env.NODE_ENV === 'production' ? 'runpod-native' : 'local-runninghub';
+  const normalizedProvider = (provider ?? defaultProvider).trim().toLowerCase();
   if (normalizedProvider === 'local-runninghub') {
     return new LocalRunningHubTaskExecutionProvider(options.repoRoot, options.store);
   }

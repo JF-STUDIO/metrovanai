@@ -74,6 +74,67 @@ const clientDistRoot = path.join(repoRoot, 'client', 'dist');
 const clientIndexPath = path.join(clientDistRoot, 'index.html');
 const port = Number(process.env.PORT ?? 8787);
 const app = express();
+
+function isEnabledEnv(name: string) {
+  const value = String(process.env[name] ?? '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
+function isProductionRuntime() {
+  return process.env.NODE_ENV === 'production' || isEnabledEnv('METROVAN_CLOUD_ONLY_MODE');
+}
+
+function assertCloudProductionRuntime() {
+  if (!isProductionRuntime() || isEnabledEnv('METROVAN_ALLOW_LOCAL_PRODUCTION')) {
+    return;
+  }
+
+  const missing: string[] = [];
+  const metadataProvider = String(process.env.METROVAN_METADATA_PROVIDER ?? '').trim().toLowerCase();
+  const taskExecutor = String(process.env.METROVAN_TASK_EXECUTOR ?? '').trim().toLowerCase();
+
+  if (!['postgres-json', 'supabase-postgres'].includes(metadataProvider)) {
+    missing.push('METROVAN_METADATA_PROVIDER=postgres-json');
+  }
+  if (!String(process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? '').trim()) {
+    missing.push('SUPABASE_DB_URL or DATABASE_URL');
+  }
+  if (!isEnabledEnv('METROVAN_DIRECT_UPLOAD_ENABLED')) {
+    missing.push('METROVAN_DIRECT_UPLOAD_ENABLED=true');
+  }
+
+  for (const key of [
+    'METROVAN_OBJECT_STORAGE_ENDPOINT',
+    'METROVAN_OBJECT_STORAGE_BUCKET',
+    'METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID',
+    'METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY'
+  ]) {
+    if (!String(process.env[key] ?? '').trim()) {
+      missing.push(key);
+    }
+  }
+
+  if (!['runpod-native', 'runpod-serverless', 'runpod-http', 'remote-http'].includes(taskExecutor)) {
+    missing.push('METROVAN_TASK_EXECUTOR=runpod-native');
+  }
+  if (taskExecutor === 'runpod-native' || taskExecutor === 'runpod-serverless') {
+    for (const key of ['METROVAN_RUNPOD_ENDPOINT_ID', 'METROVAN_RUNPOD_API_KEY']) {
+      if (!String(process.env[key] ?? '').trim()) {
+        missing.push(key);
+      }
+    }
+  }
+
+  if (missing.length) {
+    throw new Error(`Cloud production configuration is incomplete: ${Array.from(new Set(missing)).join(', ')}`);
+  }
+}
+
+function isLocalProxyUploadEnabled() {
+  return !isProductionRuntime() || isEnabledEnv('METROVAN_LOCAL_PROXY_UPLOAD_ENABLED');
+}
+
+assertCloudProductionRuntime();
 const store = new LocalStore(repoRoot);
 await store.initialize();
 const processor = new ProjectProcessor(repoRoot, store);
@@ -1672,7 +1733,7 @@ app.get(/^\/storage\/(.+)$/, (req, res) => {
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
-    service: 'metrovan-ai-local-server'
+    service: 'metrovan-ai-api'
   });
 });
 
@@ -1694,12 +1755,13 @@ app.get('/api/auth/session', (req, res) => {
 });
 
 app.get('/api/upload/capabilities', (_req, res) => {
+  const localProxyEnabled = isLocalProxyUploadEnabled();
   res.json({
     localProxy: {
-      enabled: true,
+      enabled: localProxyEnabled,
       maxBatchBytes: 40 * 1024 * 1024,
       maxBatchFiles: 16,
-      recommendedConcurrency: 24
+      recommendedConcurrency: localProxyEnabled ? 24 : 0
     },
     directObject: getDirectObjectUploadCapabilities()
   });
@@ -3202,6 +3264,11 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
 });
 
 app.post('/api/projects/:id/files', (req, res, next) => {
+  if (!isLocalProxyUploadEnabled()) {
+    res.status(409).json({ error: 'Cloud direct upload is required.' });
+    return;
+  }
+
   upload.array('files')(req, res, (error) => {
     if (error) {
       res.status(400).json({ error: getPublicErrorMessage(error, '上传失败，请重新选择照片。') });
@@ -3566,7 +3633,7 @@ if (fs.existsSync(clientIndexPath)) {
 }
 
 app.listen(port, () => {
-  console.log(`Metrovan AI local server listening on http://127.0.0.1:${port}`);
+  console.log(`Metrovan AI API listening on port ${port}`);
 
   void processor
     .recoverInterruptedProjects()

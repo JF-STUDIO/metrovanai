@@ -24,6 +24,15 @@ function resolveApiRoot() {
 const API_ROOT = resolveApiRoot();
 let csrfToken = '';
 
+function isLocalDevelopmentOrigin() {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const hostname = window.location.hostname.toLowerCase();
+  return hostname === 'localhost' || hostname === '127.0.0.1';
+}
+
 export interface AuthSessionPayload {
   csrfToken?: string;
   user: {
@@ -961,5 +970,9 @@ export async function uploadFiles(projectId: string, files: File[], onProgress: 
     return await uploadFilesViaDirectObject(projectId, files, onProgress);
   }
 
-  return await uploadFilesViaLocalProxy(projectId, files, onProgress);
+  if ((capabilities?.localProxy.enabled || !capabilities) && isLocalDevelopmentOrigin()) {
+    return await uploadFilesViaLocalProxy(projectId, files, onProgress);
+  }
+
+  throw new Error('Cloud upload is not available right now. Please try again later.');
 }

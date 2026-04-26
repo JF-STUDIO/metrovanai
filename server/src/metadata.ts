@@ -224,7 +224,9 @@ export function createMetadataProvider(
   provider: string | undefined,
   options: JsonFileMetadataProviderOptions
 ): MetadataProvider {
-  const normalizedProvider = (provider ?? 'json-file').trim().toLowerCase();
+  const defaultProvider =
+    process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL ? 'postgres-json' : 'json-file';
+  const normalizedProvider = (provider ?? defaultProvider).trim().toLowerCase();
   if (normalizedProvider === 'json-file') {
     return new JsonFileMetadataProvider(options.filePath);
   }

@@ -55,11 +55,16 @@ export function buildDeploymentReadiness(input: {
     },
     {
       id: 'storage.provider',
-      status: input.storage.provider === 'local-disk' ? 'planned' : 'ready',
+      status:
+        input.storage.provider === 'local-disk' && !(objectStorageEnvReady && objectStorageEndpointReady)
+          ? 'action-required'
+          : 'ready',
       current: input.storage.provider,
       next:
         input.storage.provider === 'local-disk'
-          ? 'Keep local-disk for testing. For commercial cutover, implement s3-compatible using existing storageKey values.'
+          ? objectStorageEnvReady && objectStorageEndpointReady
+            ? 'Local disk is only scratch space. Persistent originals and results are backed by object storage.'
+            : 'Configure R2/S3 object storage so local disk is not the persistent source of truth.'
           : 'Object storage provider is active.'
     },
     {
@@ -73,25 +78,25 @@ export function buildDeploymentReadiness(input: {
     },
     {
       id: 'storage.direct_upload',
-      status: directUploadEnabled && objectStorageEnvReady && objectStorageEndpointReady ? 'ready' : 'planned',
+      status: directUploadEnabled && objectStorageEnvReady && objectStorageEndpointReady ? 'ready' : 'action-required',
       current: directUploadEnabled ? 'enabled' : 'disabled',
       next:
         directUploadEnabled && objectStorageEnvReady && objectStorageEndpointReady
           ? 'Browser direct upload is enabled.'
-          : 'Keep disabled for local testing. Enable METROVAN_DIRECT_UPLOAD_ENABLED only after bucket CORS is configured.'
+          : 'Enable METROVAN_DIRECT_UPLOAD_ENABLED and configure R2/S3 before production traffic.'
     },
     {
       id: 'executor.provider',
-      status: input.executor.provider === 'local-runninghub' ? 'planned' : 'ready',
+      status: input.executor.provider === 'local-runninghub' ? 'action-required' : 'ready',
       current: describeProvider(input.executor),
       next:
         input.executor.provider === 'local-runninghub'
-          ? 'Keep local-runninghub for testing. For commercial cloud processing, set METROVAN_TASK_EXECUTOR=runpod-native with Runpod endpoint envs, or runpod-http with a custom adapter.'
+          ? 'Production must use METROVAN_TASK_EXECUTOR=runpod-native or runpod-http. Do not process customer photos on this computer.'
           : 'Remote executor provider is active.'
     },
     {
       id: 'executor.remote_env',
-      status: remoteExecutorEnvReady ? 'ready' : 'planned',
+      status: remoteExecutorEnvReady ? 'ready' : 'action-required',
       current: remoteExecutorEnvReady ? 'configured' : 'not configured',
       next: runpodNativeExecutorEnvReady
         ? 'Runpod native env is configured. Worker input contract is metrovan.runpod.v1.'

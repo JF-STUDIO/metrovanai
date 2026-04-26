@@ -1,4 +1,4 @@
-const apiRoot = (process.env.METROVAN_CHECK_API_ROOT || 'https://metrovan-ai-api.onrender.com').replace(/\/+$/, '');
+const apiRoot = (process.env.METROVAN_CHECK_API_ROOT || 'https://api.metrovanai.com').replace(/\/+$/, '');
 const adminKey = process.env.METROVAN_CHECK_ADMIN_KEY || '';
 
 const checks = [];
@@ -57,6 +57,11 @@ async function main() {
     record('direct_object_upload', Boolean(upload.payload.directObject.enabled), {
       enabled: Boolean(upload.payload.directObject.enabled),
       requiredEnv: upload.payload.directObject.requiredEnv
+    });
+  }
+  if (upload.payload?.localProxy) {
+    record('no_production_local_proxy_upload', upload.payload.localProxy.enabled === false, {
+      enabled: Boolean(upload.payload.localProxy.enabled)
     });
   }
 
