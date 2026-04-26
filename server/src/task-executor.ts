@@ -303,6 +303,12 @@ function isRunpodFailedStatus(status: string | undefined) {
   return ['failed', 'failure', 'cancelled', 'canceled', 'timed_out', 'timeout'].includes(normalizeRunpodStatus(status));
 }
 
+function shouldFallbackToIndividualRunpodJobs(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const lower = message.toLowerCase();
+  return lower.includes('job output contract is missing') || lower.includes('output contract is missing');
+}
+
 function getNestedString(value: unknown, pathSegments: string[]) {
   let current = value;
   for (const segment of pathSegments) {
@@ -1235,7 +1241,58 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       options?: WorkflowExecutionOptions
     ): Promise<WorkflowBatchExecutionResult[]> => {
       const mode = options?.mode ?? 'default';
+      const executeItemsIndividually = async () =>
+        await Promise.all(
+          items.map(async (item) => {
+            try {
+              const artifact = await executeWorkflowTask(
+                project,
+                item.hdrItem,
+                item.mergedPath,
+                item.mergedFileName,
+                onProgress,
+                options
+              );
+              return { hdrItemId: item.hdrItem.id, artifact };
+            } catch (error) {
+              return {
+                hdrItemId: item.hdrItem.id,
+                errorMessage: error instanceof Error ? error.message : String(error)
+              };
+            }
+          })
+        );
+
       if (mode !== 'default' || items.length <= 1) {
+        return await executeItemsIndividually();
+      }
+
+      try {
+        return await executeRunpodBatchWorkflow(project, items, onProgress, options);
+      } catch (error) {
+        if (shouldFallbackToIndividualRunpodJobs(error)) {
+          onProgress?.({
+            monitorState: 'fallback',
+            detail: 'Cloud batch worker is updating. Retrying photos individually.',
+            remoteProgress: 0,
+            queuePosition: 0,
+            workflowName: 'runpod-native',
+            taskId: 'batch-fallback'
+          });
+          return await executeItemsIndividually();
+        }
+
+        throw error;
+      }
+    };
+
+    const executeRunpodBatchWorkflow = async (
+      project: ProjectRecord,
+      items: WorkflowBatchExecutionItem[],
+      onProgress?: (update: WorkflowExecutionProgress) => void,
+      options?: WorkflowExecutionOptions
+    ): Promise<WorkflowBatchExecutionResult[]> => {
+      if (items.length <= 1) {
         return await Promise.all(
           items.map(async (item) => {
             try {
