@@ -157,6 +157,11 @@ function shouldUseObjectStorageForRemoteExecutor() {
   return (value === 'true' || value === '1' || value === 'yes') && isObjectStorageConfigured();
 }
 
+function shouldRunpodPostWorkflow() {
+  const value = String(process.env.METROVAN_RUNPOD_POST_WORKFLOW_ENABLED ?? 'false').trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
 function trimStoragePrefix(value: string | undefined, fallback: string) {
   return String(value ?? fallback)
     .trim()
@@ -488,6 +493,96 @@ function createRunpodManifestContext() {
   };
 }
 
+async function executeRunningHubWorkflowFromFile(input: {
+  store: LocalStore;
+  workflowConfig: ReturnType<typeof loadWorkflowConfig>;
+  runningHub: RunningHubClient;
+  project: ProjectRecord;
+  hdrItem: HdrItem;
+  inputPath: string;
+  inputFileName: string;
+  onProgress?: (update: WorkflowExecutionProgress) => void;
+  options?: WorkflowExecutionOptions;
+}) {
+  const group = input.project.groups.find((entry) => entry.id === input.hdrItem.groupId);
+  if (!group) {
+    throw new Error(`Missing project group for HDR item ${input.hdrItem.id}.`);
+  }
+
+  const route = resolveWorkflowRoute(input.workflowConfig, group, {
+    mode: input.options?.mode ?? 'default',
+    colorCardNo: input.options?.colorCardNo ?? null
+  });
+  const normalizedPrompt = normalizeHex(route.promptText);
+  const upload = await input.runningHub.uploadFile(input.workflowConfig.apiKey, input.inputPath, 'input');
+  const nodeInfoList = buildRunningHubNodeInfoList(route.workflow, upload, normalizedPrompt);
+  const taskId = await input.runningHub.createTask(
+    input.workflowConfig.apiKey,
+    route.workflow.workflowId ?? '',
+    nodeInfoList,
+    route.workflow.instanceType ?? 'plus'
+  );
+
+  input.onProgress?.({
+    monitorState: 'submitted',
+    detail: `task ${taskId} submitted`,
+    remoteProgress: 0,
+    queuePosition: 0,
+    workflowName: route.workflow.name,
+    taskId
+  });
+
+  const outputs = await input.runningHub.waitTask(
+    input.workflowConfig.apiKey,
+    taskId,
+    (update) => {
+      input.onProgress?.({
+        monitorState: update.monitorState,
+        detail: update.detail,
+        remoteProgress: update.remoteProgress,
+        queuePosition: update.queuePosition,
+        workflowName: route.workflow.name,
+        taskId
+      });
+    },
+    3600
+  );
+
+  const outputUrl = outputs.fileUrls[0];
+  if (!outputUrl) {
+    throw new Error('RunningHub result is missing output URL.');
+  }
+
+  const tempDownloadPath = path.join(
+    process.env.TEMP ?? process.cwd(),
+    'metrovan_downloads',
+    `${taskId}${path.extname(outputUrl.split('?')[0] ?? '.png') || '.png'}`
+  );
+  await input.runningHub.downloadFile(outputUrl, tempDownloadPath);
+
+  const resultPath = buildWorkflowResultTargetPath(input.store, input.project, input.inputFileName, input.options);
+  await extractPreviewOrConvertToJpeg(tempDownloadPath, resultPath, 95);
+  const mirrored = await mirrorLocalFileToObjectStorage({
+    userKey: input.project.userKey,
+    projectId: input.project.id,
+    category: 'results',
+    sourcePath: resultPath,
+    fileName: path.basename(resultPath),
+    contentType: 'image/jpeg'
+  });
+  try {
+    fs.rmSync(tempDownloadPath, { force: true });
+  } catch {
+    // ignore
+  }
+
+  return {
+    resultPath,
+    resultFileName: path.basename(resultPath),
+    resultStorageKey: mirrored?.storageKey ?? null
+  };
+}
+
 class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
   constructor(
     private readonly repoRoot: string,
@@ -514,83 +609,17 @@ class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
       onProgress?: (update: WorkflowExecutionProgress) => void,
       options?: WorkflowExecutionOptions
     ) => {
-      const group = project.groups.find((entry) => entry.id === hdrItem.groupId);
-      if (!group) {
-        throw new Error(`Missing project group for HDR item ${hdrItem.id}.`);
-      }
-
-      const route = resolveWorkflowRoute(workflowConfig, group, {
-        mode: options?.mode ?? 'default',
-        colorCardNo: options?.colorCardNo ?? null
+      return await executeRunningHubWorkflowFromFile({
+        store: this.store,
+        workflowConfig,
+        runningHub,
+        project,
+        hdrItem,
+        inputPath: mergedPath,
+        inputFileName: mergedFileName,
+        onProgress,
+        options
       });
-      const normalizedPrompt = normalizeHex(route.promptText);
-      const upload = await runningHub.uploadFile(workflowConfig.apiKey, mergedPath, 'input');
-      const nodeInfoList = buildRunningHubNodeInfoList(route.workflow, upload, normalizedPrompt);
-      const taskId = await runningHub.createTask(
-        workflowConfig.apiKey,
-        route.workflow.workflowId ?? '',
-        nodeInfoList,
-        route.workflow.instanceType ?? 'plus'
-      );
-
-      onProgress?.({
-        monitorState: 'submitted',
-        detail: `task ${taskId} submitted`,
-        remoteProgress: 0,
-        queuePosition: 0,
-        workflowName: route.workflow.name,
-        taskId
-      });
-
-      const outputs = await runningHub.waitTask(
-        workflowConfig.apiKey,
-        taskId,
-        (update) => {
-          onProgress?.({
-            monitorState: update.monitorState,
-            detail: update.detail,
-            remoteProgress: update.remoteProgress,
-            queuePosition: update.queuePosition,
-            workflowName: route.workflow.name,
-            taskId
-          });
-        },
-        3600
-      );
-
-      const outputUrl = outputs.fileUrls[0];
-      if (!outputUrl) {
-        throw new Error('RunningHub result is missing output URL.');
-      }
-
-      const tempDownloadPath = path.join(
-        process.env.TEMP ?? process.cwd(),
-        'metrovan_downloads',
-        `${taskId}${path.extname(outputUrl.split('?')[0] ?? '.png') || '.png'}`
-      );
-      await runningHub.downloadFile(outputUrl, tempDownloadPath);
-
-      const resultPath = buildWorkflowResultTargetPath(this.store, project, mergedFileName, options);
-      await extractPreviewOrConvertToJpeg(tempDownloadPath, resultPath, 95);
-      const mirrored = await mirrorLocalFileToObjectStorage({
-        userKey: project.userKey,
-        projectId: project.id,
-        category: 'results',
-        sourcePath: resultPath,
-        fileName: path.basename(resultPath),
-        contentType: 'image/jpeg'
-      });
-      try {
-        fs.rmSync(tempDownloadPath, { force: true });
-      } catch {
-        // ignore
-      }
-
-      return {
-        resultPath,
-        resultFileName: path.basename(resultPath),
-        resultStorageKey: mirrored?.storageKey ?? null
-      };
     };
 
     return {
@@ -801,7 +830,10 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
 }
 
 class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
-  constructor(private readonly store: LocalStore) {}
+  constructor(
+    private readonly repoRoot: string,
+    private readonly store: LocalStore
+  ) {}
 
   getInfo(): TaskExecutionProviderInfo {
     return {
@@ -814,6 +846,9 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
     const config = resolveRunpodNativeTaskExecutorConfig();
     const manifestContext = createRunpodManifestContext();
     const endpointBaseUrl = `${config.apiBaseUrl}/${encodeURIComponent(config.endpointId)}`;
+    const postWorkflowEnabled = shouldRunpodPostWorkflow();
+    const workflowConfig = postWorkflowEnabled ? loadWorkflowConfig(this.repoRoot) : null;
+    const runningHub = postWorkflowEnabled ? new RunningHubClient() : null;
 
     const ensureObjectBackedFile = async (input: {
       project: ProjectRecord;
@@ -973,16 +1008,42 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         throw new Error(`Missing project group for HDR item ${hdrItem.id}.`);
       }
 
+      const mode = options?.mode ?? 'default';
+      if (mode === 'regenerate' && postWorkflowEnabled) {
+        if (!workflowConfig || !runningHub) {
+          throw new Error('Post workflow is enabled but RunningHub workflow config is not available.');
+        }
+
+        return await executeRunningHubWorkflowFromFile({
+          store: this.store,
+          workflowConfig,
+          runningHub,
+          project,
+          hdrItem,
+          inputPath: mergedPath,
+          inputFileName: mergedFileName,
+          onProgress,
+          options
+        });
+      }
+
+      const shouldRunPostWorkflow = mode === 'default' && postWorkflowEnabled;
       const resultPath = buildWorkflowResultTargetPath(this.store, project, mergedFileName, options);
       const resultFileName = path.basename(resultPath);
+      const runpodStageFileName = shouldRunPostWorkflow
+        ? `${path.basename(resultFileName, path.extname(resultFileName))}_runpod-stage.jpg`
+        : resultFileName;
+      const runpodStagePath = shouldRunPostWorkflow
+        ? path.join(this.store.getProjectDirectories(project).hdr, runpodStageFileName)
+        : resultPath;
+      fs.mkdirSync(path.dirname(runpodStagePath), { recursive: true });
       const outputStorageKey = createPersistentObjectKey({
         userKey: project.userKey,
         projectId: project.id,
-        category: 'results',
-        fileName: resultFileName
+        category: shouldRunPostWorkflow ? 'work' : 'results',
+        fileName: runpodStageFileName
       });
 
-      const mode = options?.mode ?? 'default';
       const inputPayload =
         mode === 'regenerate'
           ? {
@@ -1017,7 +1078,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
             outputSuffix: options?.outputSuffix ?? null,
             output: {
               storageKey: outputStorageKey,
-              fileName: resultFileName,
+              fileName: runpodStageFileName,
               contentType: 'image/jpeg'
             },
             ...inputPayload
@@ -1078,9 +1139,27 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
           project,
           jobId,
           result,
-          resultPath,
+          resultPath: runpodStagePath,
           outputStorageKey
         });
+
+        if (shouldRunPostWorkflow) {
+          if (!workflowConfig || !runningHub) {
+            throw new Error('Post workflow is enabled but RunningHub workflow config is not available.');
+          }
+
+          return await executeRunningHubWorkflowFromFile({
+            store: this.store,
+            workflowConfig,
+            runningHub,
+            project,
+            hdrItem,
+            inputPath: runpodStagePath,
+            inputFileName: mergedFileName,
+            onProgress,
+            options
+          });
+        }
 
         return {
           resultPath,
@@ -1119,7 +1198,7 @@ export function createTaskExecutionProvider(
   }
 
   if (normalizedProvider === 'runpod-native' || normalizedProvider === 'runpod-serverless') {
-    return new RunpodNativeTaskExecutionProvider(options.store);
+    return new RunpodNativeTaskExecutionProvider(options.repoRoot, options.store);
   }
 
   throw new Error(`Unsupported task execution provider: ${provider}`);

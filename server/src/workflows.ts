@@ -14,7 +14,7 @@ export interface WorkflowRouteOptions {
 
 export function loadWorkflowConfig(repoRoot: string) {
   const workflowsPath = path.join(repoRoot, 'server-runtime', 'workflows.json');
-  return loadJson<WorkflowConfigFile>(workflowsPath, {
+  const config = loadJson<WorkflowConfigFile>(workflowsPath, {
     active: '',
     apiKey: '',
     settings: {
@@ -28,6 +28,98 @@ export function loadWorkflowConfig(repoRoot: string) {
     },
     items: []
   });
+
+  applyWorkflowEnvOverrides(config);
+  return config;
+}
+
+function env(name: string) {
+  return process.env[name]?.trim() ?? '';
+}
+
+function parsePositiveInt(value: string, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : fallback;
+}
+
+function upsertWorkflowItem(config: WorkflowConfigFile, item: WorkflowConfigItem) {
+  const index = config.items.findIndex((current) => current.name.trim().toLowerCase() === item.name.trim().toLowerCase());
+  if (index >= 0) {
+    config.items[index] = item;
+    return;
+  }
+  config.items.push(item);
+}
+
+function applyWorkflowEnvOverrides(config: WorkflowConfigFile) {
+  const apiKey = env('METROVAN_RUNNINGHUB_API_KEY') || env('RUNNINGHUB_API_KEY');
+  if (apiKey) {
+    config.apiKey = apiKey;
+  }
+
+  config.settings.workflowMaxInFlight = parsePositiveInt(
+    env('METROVAN_RUNNINGHUB_MAX_IN_FLIGHT') || env('METROVAN_WORKFLOW_MAX_IN_FLIGHT'),
+    config.settings.workflowMaxInFlight
+  );
+
+  const defaultWorkflowId = env('METROVAN_RUNNINGHUB_DEFAULT_WORKFLOW_ID');
+  if (defaultWorkflowId) {
+    const name = env('METROVAN_RUNNINGHUB_DEFAULT_WORKFLOW_NAME') || 'default-runninghub';
+    config.active = env('METROVAN_RUNNINGHUB_ACTIVE_WORKFLOW') || name;
+    upsertWorkflowItem(config, {
+      name,
+      type: 'runninghub',
+      workflowId: defaultWorkflowId,
+      instanceType: env('METROVAN_RUNNINGHUB_DEFAULT_INSTANCE_TYPE') || 'plus',
+      inputs: [
+        {
+          nodeId: env('METROVAN_RUNNINGHUB_DEFAULT_INPUT_NODE_ID') || '61',
+          fieldName: env('METROVAN_RUNNINGHUB_DEFAULT_INPUT_FIELD') || 'image',
+          mode: env('METROVAN_RUNNINGHUB_DEFAULT_INPUT_MODE') || 'image'
+        }
+      ],
+      outputs: [
+        {
+          nodeId: env('METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_NODE_ID') || '41',
+          fieldName: env('METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_FIELD') || 'output',
+          mode: env('METROVAN_RUNNINGHUB_DEFAULT_OUTPUT_MODE') || 'file'
+        }
+      ]
+    });
+  } else if (env('METROVAN_RUNNINGHUB_ACTIVE_WORKFLOW')) {
+    config.active = env('METROVAN_RUNNINGHUB_ACTIVE_WORKFLOW');
+  }
+
+  const regenerateWorkflowId = env('METROVAN_RUNNINGHUB_REGEN_WORKFLOW_ID');
+  if (regenerateWorkflowId) {
+    upsertWorkflowItem(config, {
+      name: env('METROVAN_RUNNINGHUB_REGEN_WORKFLOW_NAME') || 'regenerate-runninghub',
+      type: 'runninghub',
+      purpose: 'regenerate',
+      workflowId: regenerateWorkflowId,
+      instanceType: env('METROVAN_RUNNINGHUB_REGEN_INSTANCE_TYPE') || 'plus',
+      inputs: [
+        {
+          nodeId: env('METROVAN_RUNNINGHUB_REGEN_INPUT_NODE_ID') || '1',
+          fieldName: env('METROVAN_RUNNINGHUB_REGEN_INPUT_FIELD') || 'image',
+          mode: env('METROVAN_RUNNINGHUB_REGEN_INPUT_MODE') || 'image'
+        }
+      ],
+      outputs: [
+        {
+          nodeId: env('METROVAN_RUNNINGHUB_REGEN_OUTPUT_NODE_ID') || '46',
+          fieldName: env('METROVAN_RUNNINGHUB_REGEN_OUTPUT_FIELD') || 'output',
+          mode: env('METROVAN_RUNNINGHUB_REGEN_OUTPUT_MODE') || 'file'
+        }
+      ],
+      prompt: {
+        nodeId: env('METROVAN_RUNNINGHUB_REGEN_PROMPT_NODE_ID') || '35',
+        fieldName: env('METROVAN_RUNNINGHUB_REGEN_PROMPT_FIELD') || 'color',
+        mode: 'text',
+        defaultText: env('METROVAN_RUNNINGHUB_REGEN_PROMPT_DEFAULT') || '#F2E8D8'
+      }
+    });
+  }
 }
 
 export function getWorkflowByName(config: WorkflowConfigFile, name: string) {
