@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -75,20 +74,142 @@ export async function buildProjectDownloadArchive(project: ProjectRecord, input?
     }
   }
 
-  execFileSync(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-Command',
-      `Compress-Archive -LiteralPath '${stagingRoot.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`
-    ],
-    { stdio: 'pipe' }
-  );
+  writeZipArchive(stagingRoot, zipPath, baseName);
 
   return {
     zipPath,
     downloadName: `${baseName}.zip`
   };
+}
+
+const crc32Table = new Uint32Array(256);
+for (let index = 0; index < crc32Table.length; index += 1) {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  crc32Table[index] = value >>> 0;
+}
+
+function crc32(buffer: Buffer) {
+  let value = 0xffffffff;
+  for (const byte of buffer) {
+    value = crc32Table[(value ^ byte) & 0xff] ^ (value >>> 8);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function toDosDateTime(date: Date) {
+  const year = Math.max(1980, date.getFullYear());
+  const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { dosTime, dosDate };
+}
+
+function listFiles(root: string) {
+  const files: string[] = [];
+  const visit = (current: string) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const absolutePath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolutePath);
+      } else if (entry.isFile()) {
+        files.push(absolutePath);
+      }
+    }
+  };
+  visit(root);
+  return files;
+}
+
+function assertZip32Limit(value: number, label: string) {
+  if (value > 0xffffffff) {
+    throw new Error(`Download archive is too large for ZIP32 (${label}).`);
+  }
+}
+
+function writeZipArchive(sourceRoot: string, zipPath: string, rootFolderName: string) {
+  const files = listFiles(sourceRoot);
+  if (!files.length) {
+    throw new Error('No files were prepared for download.');
+  }
+  if (files.length > 0xffff) {
+    throw new Error('Too many files for a single download archive.');
+  }
+
+  const localChunks: Buffer[] = [];
+  const centralChunks: Buffer[] = [];
+  let offset = 0;
+
+  for (const filePath of files) {
+    const data = fs.readFileSync(filePath);
+    const relativeName = path
+      .join(rootFolderName, path.relative(sourceRoot, filePath))
+      .split(path.sep)
+      .join('/');
+    const name = Buffer.from(relativeName, 'utf8');
+    const stats = fs.statSync(filePath);
+    const { dosTime, dosDate } = toDosDateTime(stats.mtime);
+    const checksum = crc32(data);
+
+    assertZip32Limit(data.length, relativeName);
+    assertZip32Limit(offset, `${relativeName} offset`);
+
+    const localHeader = Buffer.alloc(30 + name.length);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0x0800, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(dosTime, 10);
+    localHeader.writeUInt16LE(dosDate, 12);
+    localHeader.writeUInt32LE(checksum, 14);
+    localHeader.writeUInt32LE(data.length, 18);
+    localHeader.writeUInt32LE(data.length, 22);
+    localHeader.writeUInt16LE(name.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    name.copy(localHeader, 30);
+
+    const centralHeader = Buffer.alloc(46 + name.length);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(dosTime, 12);
+    centralHeader.writeUInt16LE(dosDate, 14);
+    centralHeader.writeUInt32LE(checksum, 16);
+    centralHeader.writeUInt32LE(data.length, 20);
+    centralHeader.writeUInt32LE(data.length, 24);
+    centralHeader.writeUInt16LE(name.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+    name.copy(centralHeader, 46);
+
+    localChunks.push(localHeader, data);
+    centralChunks.push(centralHeader);
+    offset += localHeader.length + data.length;
+  }
+
+  const centralOffset = offset;
+  const centralSize = centralChunks.reduce((total, chunk) => total + chunk.length, 0);
+  assertZip32Limit(centralOffset, 'central directory offset');
+  assertZip32Limit(centralSize, 'central directory size');
+
+  const endRecord = Buffer.alloc(22);
+  endRecord.writeUInt32LE(0x06054b50, 0);
+  endRecord.writeUInt16LE(0, 4);
+  endRecord.writeUInt16LE(0, 6);
+  endRecord.writeUInt16LE(files.length, 8);
+  endRecord.writeUInt16LE(files.length, 10);
+  endRecord.writeUInt32LE(centralSize, 12);
+  endRecord.writeUInt32LE(centralOffset, 16);
+  endRecord.writeUInt16LE(0, 20);
+
+  fs.writeFileSync(zipPath, Buffer.concat([...localChunks, ...centralChunks, endRecord]));
 }
 
 function normalizeDownloadOptions(input?: ProjectDownloadOptions): ProjectDownloadOptions {
