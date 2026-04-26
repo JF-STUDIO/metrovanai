@@ -1113,6 +1113,28 @@ function createUploadBatchId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const DIRECT_UPLOAD_MANIFEST_FILE = '.metrovan-direct-upload-manifest.json';
+
+function trimObjectStoragePrefix(value: string | undefined, fallback: string) {
+  return String(value ?? fallback)
+    .trim()
+    .replace(/^\/+|\/+$/g, '');
+}
+
+function isCloudObjectStorageKey(storageKey: string | null | undefined) {
+  if (!storageKey) {
+    return false;
+  }
+
+  const normalizedKey = storageKey.replace(/\\/g, '/').replace(/^\/+/, '');
+  const prefixes = [
+    trimObjectStoragePrefix(process.env.METROVAN_OBJECT_STORAGE_INCOMING_PREFIX, 'incoming'),
+    trimObjectStoragePrefix(process.env.METROVAN_OBJECT_STORAGE_PERSISTENT_PREFIX, 'projects')
+  ].filter(Boolean);
+
+  return prefixes.some((prefix) => normalizedKey === prefix || normalizedKey.startsWith(`${prefix}/`));
+}
+
 function allocateOriginalTargetPath(originalsDir: string, desiredFileName: string, reservedPaths: Set<string>) {
   const parsed = path.parse(desiredFileName);
   const safeStem = sanitizeSegment(parsed.name) || 'source';
@@ -1187,7 +1209,7 @@ function commitStagedOriginals(projectId: string) {
         return {
           ...exposure,
           fileName: path.basename(committedPath),
-          storageKey: store.toStorageKey(committedPath),
+          storageKey: isCloudObjectStorageKey(exposure.storageKey) ? exposure.storageKey : store.toStorageKey(committedPath),
           storagePath: committedPath,
           storageUrl: store.toStorageUrl(committedPath)
         };
@@ -2966,6 +2988,13 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
 
   const dirs = store.ensureProjectDirectories(project);
   const batchId = createUploadBatchId();
+  const manifestEntries: Array<{
+    originalName: string;
+    mimeType: string;
+    size: number;
+    storageKey: string;
+    localPath: string;
+  }> = [];
 
   try {
     for (const [index, file] of parsed.data.files.entries()) {
@@ -2979,7 +3008,29 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
       const destination = path.join(dirs.staging, batchId, String(index).padStart(4, '0'));
       const targetPath = path.join(destination, normalizeUploadedFileName(file.originalName));
       await downloadDirectObjectToFile(file.storageKey, targetPath);
+      manifestEntries.push({
+        originalName: normalizeUploadedFileName(file.originalName),
+        mimeType: file.mimeType,
+        size: file.size,
+        storageKey: file.storageKey,
+        localPath: targetPath
+      });
     }
+
+    const manifestPath = path.join(dirs.staging, batchId, DIRECT_UPLOAD_MANIFEST_FILE);
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify(
+        {
+          version: 1,
+          createdAt: new Date().toISOString(),
+          files: manifestEntries
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
 
     const updated = store.updateProject(projectId, (current) => ({
       ...current,

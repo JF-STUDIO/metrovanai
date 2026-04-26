@@ -279,11 +279,13 @@ export async function uploadFileToObjectStorage(input: {
   }
 
   const uploadUrl = createPresignedUrl(config, 'PUT', input.storageKey, config.uploadExpiresSeconds);
-  const response = await fetch(uploadUrl, {
+  const requestInit = {
     method: 'PUT',
     headers: input.contentType ? { 'Content-Type': input.contentType } : undefined,
-    body: fs.readFileSync(input.sourcePath)
-  });
+    body: fs.createReadStream(input.sourcePath) as unknown as BodyInit,
+    duplex: 'half'
+  } as RequestInit & { duplex: 'half' };
+  const response = await fetch(uploadUrl, requestInit);
 
   if (!response.ok) {
     throw new Error(`Object upload failed: ${response.status} ${await response.text().catch(() => '')}`.trim());

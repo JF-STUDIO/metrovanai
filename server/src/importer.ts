@@ -12,6 +12,14 @@ export interface FrontendHdrLayoutItem {
   selectedOriginalName?: string | null;
 }
 
+interface DirectUploadManifestEntry {
+  originalName?: string;
+  localPath?: string;
+  storageKey?: string;
+}
+
+const DIRECT_UPLOAD_MANIFEST_FILE = '.metrovan-direct-upload-manifest.json';
+
 function pickDefaultExposure(exposures: ExposureFile[]) {
   const byPlusOne = exposures
     .filter((exposure) => exposure.exposureCompensation !== null)
@@ -119,10 +127,80 @@ function normalizeFileIdentity(fileName: string) {
   return path.basename(fileName).trim().toLowerCase();
 }
 
-async function createExposureFromFrame(project: ProjectRecord, store: LocalStore, frame: GroupingFrame, itemPreviewDir: string) {
+function readDirectUploadManifest(manifestPath: string) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { files?: DirectUploadManifestEntry[] };
+    return Array.isArray(parsed.files) ? parsed.files : [];
+  } catch {
+    return [];
+  }
+}
+
+function collectDirectUploadStorageKeys(stagingRoot: string) {
+  const byPath = new Map<string, string>();
+  const byName = new Map<string, string[]>();
+
+  const visit = (directory: string) => {
+    if (!fs.existsSync(directory)) {
+      return;
+    }
+
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(entryPath);
+        continue;
+      }
+
+      if (!entry.isFile() || entry.name !== DIRECT_UPLOAD_MANIFEST_FILE) {
+        continue;
+      }
+
+      for (const file of readDirectUploadManifest(entryPath)) {
+        if (!file.storageKey) {
+          continue;
+        }
+
+        if (file.localPath) {
+          byPath.set(path.resolve(file.localPath).toLowerCase(), file.storageKey);
+        }
+
+        if (file.originalName) {
+          const normalizedName = normalizeFileIdentity(file.originalName);
+          byName.set(normalizedName, [...(byName.get(normalizedName) ?? []), file.storageKey]);
+        }
+      }
+    }
+  };
+
+  visit(stagingRoot);
+  return { byPath, byName };
+}
+
+function resolveDirectUploadStorageKey(
+  frame: GroupingFrame,
+  directUploadKeys: ReturnType<typeof collectDirectUploadStorageKeys>
+) {
+  const exact = directUploadKeys.byPath.get(path.resolve(frame.path).toLowerCase());
+  if (exact) {
+    return exact;
+  }
+
+  const byName = directUploadKeys.byName.get(normalizeFileIdentity(frame.name));
+  return byName?.length === 1 ? byName[0] : null;
+}
+
+async function createExposureFromFrame(
+  project: ProjectRecord,
+  store: LocalStore,
+  frame: GroupingFrame,
+  itemPreviewDir: string,
+  directUploadKeys: ReturnType<typeof collectDirectUploadStorageKeys>
+) {
   const extension = path.extname(frame.path).toLowerCase();
   const previewPath = path.join(itemPreviewDir, `${getFileStem(frame.name)}.jpg`);
   await extractPreviewOrConvertToJpeg(frame.path, previewPath, 88, 1600);
+  const storageKey = resolveDirectUploadStorageKey(frame, directUploadKeys) ?? store.toStorageKey(frame.path);
 
   return {
     id: nanoid(10),
@@ -132,7 +210,7 @@ async function createExposureFromFrame(project: ProjectRecord, store: LocalStore
     mimeType: isRawExtension(extension) ? 'image/x-raw' : 'image/jpeg',
     size: fs.statSync(frame.path).size,
     isRaw: isRawExtension(extension),
-    storageKey: store.toStorageKey(frame.path),
+    storageKey,
     storagePath: frame.path,
     storageUrl: store.toStorageUrl(frame.path),
     previewKey: store.toStorageKey(previewPath),
@@ -155,6 +233,7 @@ export async function buildHdrItemsFromFrontendLayout(
   layout: FrontendHdrLayoutItem[]
 ) {
   const dirs = store.ensureProjectDirectories(project);
+  const directUploadKeys = collectDirectUploadStorageKeys(dirs.staging);
 
   if (fs.existsSync(dirs.previews)) {
     fs.rmSync(dirs.previews, { recursive: true, force: true });
@@ -178,7 +257,7 @@ export async function buildHdrItemsFromFrontendLayout(
     const exposures: ExposureFile[] = [];
     for (const frame of framesForItem) {
       usedNames.add(normalizeFileIdentity(frame.name));
-      exposures.push(await createExposureFromFrame(project, store, frame, itemPreviewDir));
+      exposures.push(await createExposureFromFrame(project, store, frame, itemPreviewDir, directUploadKeys));
     }
 
     const selectedName = normalizeFileIdentity(selectedOriginalName ?? '');
