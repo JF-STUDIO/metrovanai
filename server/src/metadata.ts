@@ -15,6 +15,7 @@ import type {
 import { ensureDir, loadJson, saveJson } from './utils.js';
 
 const { Pool } = pg;
+export const MAX_RUNPOD_HDR_BATCH_SIZE = 50;
 
 export interface DatabaseShape {
   projects: ProjectRecord[];
@@ -63,7 +64,10 @@ function createEmptyDatabase(): DatabaseShape {
 function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): SystemSettings {
   const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? 10);
   return {
-    runpodHdrBatchSize: Math.max(1, Math.min(10, Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : 10))
+    runpodHdrBatchSize: Math.max(
+      1,
+      Math.min(MAX_RUNPOD_HDR_BATCH_SIZE, Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : 10)
+    )
   };
 }
 

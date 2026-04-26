@@ -33,7 +33,7 @@ import {
   type TrashFileInput,
   type TrashRetentionCategory
 } from './storage.js';
-import { createMetadataProvider, type DatabaseShape, type MetadataProvider } from './metadata.js';
+import { createMetadataProvider, MAX_RUNPOD_HDR_BATCH_SIZE, type DatabaseShape, type MetadataProvider } from './metadata.js';
 
 interface GroupTemplate {
   sceneType: SceneType;
@@ -70,7 +70,10 @@ const PROJECT_DELETE_RETENTION_DAYS: Record<TrashRetentionCategory, number> = {
 function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): SystemSettings {
   const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? 10);
   return {
-    runpodHdrBatchSize: Math.max(1, Math.min(10, Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : 10))
+    runpodHdrBatchSize: Math.max(
+      1,
+      Math.min(MAX_RUNPOD_HDR_BATCH_SIZE, Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : 10)
+    )
   };
 }
 

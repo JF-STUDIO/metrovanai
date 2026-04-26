@@ -4,6 +4,7 @@ import type { HdrItem, ProjectRecord } from './types.js';
 import type { LocalStore } from './store.js';
 import { normalizeHex, sanitizeSegment } from './utils.js';
 import { estimateReferenceWhiteBalanceGains, extractPreviewOrConvertToJpeg, fuseToJpeg } from './images.js';
+import { MAX_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
 import {
   createObjectDownloadUrl,
   createPersistentObjectKey,
@@ -256,7 +257,10 @@ function resolveRunpodNativeTaskExecutorConfig(): RunpodNativeTaskExecutorConfig
       process.env.METROVAN_RUNPOD_MAX_IN_FLIGHT ?? process.env.METROVAN_REMOTE_EXECUTOR_MAX_IN_FLIGHT,
       5
     ),
-    batchSize: Math.max(1, Math.min(10, parsePositiveIntEnv(process.env.METROVAN_RUNPOD_BATCH_SIZE, 10))),
+    batchSize: Math.max(
+      1,
+      Math.min(MAX_RUNPOD_HDR_BATCH_SIZE, parsePositiveIntEnv(process.env.METROVAN_RUNPOD_BATCH_SIZE, 10))
+    ),
     objectUrlExpiresSeconds: parsePositiveIntEnv(process.env.METROVAN_RUNPOD_OBJECT_URL_EXPIRES_SECONDS, 6 * 60 * 60)
   };
 }
@@ -904,7 +908,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       ...resolvedConfig,
       batchSize: Math.max(
         1,
-        Math.min(10, this.store.getSystemSettings?.().runpodHdrBatchSize ?? resolvedConfig.batchSize)
+        Math.min(MAX_RUNPOD_HDR_BATCH_SIZE, this.store.getSystemSettings?.().runpodHdrBatchSize ?? resolvedConfig.batchSize)
       )
     };
     const manifestContext = createRunpodManifestContext();

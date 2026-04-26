@@ -89,6 +89,8 @@ type AuthMode = 'signin' | 'signup' | 'reset-request' | 'reset-confirm' | 'verif
 type UiLocale = 'zh' | 'en';
 type AppRoute = 'home' | 'studio' | 'admin';
 
+const MAX_RUNPOD_HDR_BATCH_SIZE = 50;
+
 interface SessionState {
   id: string;
   userKey: string;
@@ -3416,8 +3418,8 @@ function App() {
 
   async function handleAdminSaveSystemSettings() {
     const runpodHdrBatchSize = Number(adminSystemDraft.runpodHdrBatchSize);
-    if (!Number.isFinite(runpodHdrBatchSize) || runpodHdrBatchSize < 1 || runpodHdrBatchSize > 10) {
-      setAdminMessage('Runpod HDR 批量数量必须是 1 到 10。');
+    if (!Number.isFinite(runpodHdrBatchSize) || runpodHdrBatchSize < 1 || runpodHdrBatchSize > MAX_RUNPOD_HDR_BATCH_SIZE) {
+      setAdminMessage(`Runpod HDR 批量数量必须是 1 到 ${MAX_RUNPOD_HDR_BATCH_SIZE}。`);
       return;
     }
 
@@ -4916,14 +4918,14 @@ function App() {
                   onChange={(event) => setAdminSystemDraft({ runpodHdrBatchSize: event.target.value })}
                   inputMode="numeric"
                   min={1}
-                  max={10}
+                  max={MAX_RUNPOD_HDR_BATCH_SIZE}
                   disabled={adminSystemBusy}
                 />
               </label>
               <div className="admin-session-card">
                 <span>当前生效</span>
                 <strong>{adminSystemSettings?.runpodHdrBatchSize ?? '—'} 组 / 任务</strong>
-                <small>支持 1-10。新启动的处理任务会使用最新设置。</small>
+                <small>支持 1-{MAX_RUNPOD_HDR_BATCH_SIZE}。新启动的处理任务会使用最新设置。</small>
               </div>
               <div className="admin-activation-actions">
                 <button
