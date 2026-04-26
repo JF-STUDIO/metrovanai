@@ -766,7 +766,6 @@ export async function fuseToJpeg(
         groupGains = referenceAutoPath ? await estimateRgbGains(referencePreparedPath, referenceAutoPath) : null;
       }
       if (groupGains && !fastPreprocess) {
-        console.log('[white-balance] group gains', groupGains);
         preparedForAlign = await applyGroupWhiteBalanceToPreparedInputs(prepared, groupGains, wbInputsDir);
         toneTargetPath = referenceAutoPath;
       }
@@ -806,9 +805,6 @@ export async function fuseToJpeg(
     let toneAdjustments: ToneAdjustments | null = null;
     if (!options.disableToneAdjustments && toneTargetPath && fs.existsSync(toneTargetPath)) {
       toneAdjustments = await estimateToneAdjustments(fusedTif, toneTargetPath, null);
-      if (toneAdjustments) {
-        console.log('[tone-map] adjustments', toneAdjustments);
-      }
     }
 
     await applyImageAdjustments(fusedTif, outputPath, quality, fastPreprocess ? groupGains : null, toneAdjustments);

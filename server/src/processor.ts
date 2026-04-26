@@ -457,8 +457,6 @@ export class ProjectProcessor {
 
     const taskExecution = this.taskExecution.createRunContext();
     const projectDirs = this.store.getProjectDirectories(initialProject);
-    let mergeCompleted = 0;
-
     this.store.updateProject(projectId, (project) => ({
       ...project,
       status: 'processing',
@@ -473,83 +471,6 @@ export class ProjectProcessor {
     }));
 
     await this.runParallelMergeAndWorkflow(projectId, pendingHdrItems, taskExecution, projectDirs.hdr);
-    pendingHdrItems.splice(0, pendingHdrItems.length);
-    const queue = { push: (_item: WorkflowQueueItem) => undefined, close: () => undefined };
-    const workers: Array<Promise<void>> = [];
-
-    try {
-      for (const queuedHdrItem of pendingHdrItems) {
-        const currentProject = this.store.getProject(projectId);
-        const hdrItem = currentProject?.hdrItems.find((item) => item.id === queuedHdrItem.id);
-        if (!hdrItem || this.isHdrItemCompleted(hdrItem)) {
-          continue;
-        }
-
-        this.store.setHdrItemState(projectId, hdrItem.id, (item) => ({
-          ...item,
-          status: 'hdr-processing',
-          statusText: createProcessingText('hdr-processing'),
-          errorMessage: null
-        }));
-        this.store.setJobState(projectId, (job) => ({
-          ...job,
-          label: '澶勭悊涓?',
-          detail: `姝ｅ湪鍚堝苟 ${hdrItem.title}`,
-          currentHdrItemId: hdrItem.id
-        }));
-
-        try {
-          const { mergedFileName, mergedPath, mergedStorageKey } = await taskExecution.ensureMergedHdrItem(
-            currentProject ?? initialProject,
-            hdrItem,
-            projectDirs.hdr
-          );
-          const mergedUrl = this.store.toStorageUrl(mergedPath);
-          mergeCompleted += 1;
-
-          this.store.setHdrItemState(projectId, hdrItem.id, (item) => ({
-            ...item,
-            mergedKey: mergedStorageKey ?? this.store.toStorageKey(mergedPath),
-            mergedPath,
-            mergedUrl,
-            status: 'workflow-upload',
-            statusText: createProcessingText('workflow-upload'),
-            errorMessage: null
-          }));
-          this.store.setJobState(projectId, (job) => ({
-            ...job,
-            percent: Math.max(job.percent, Math.round((mergeCompleted / Math.max(1, pendingHdrItems.length)) * 45)),
-            detail: `HDR 宸插悎骞?${mergeCompleted}/${pendingHdrItems.length}`
-          }));
-          queue.push({
-            hdrItemId: hdrItem.id,
-            mergedPath,
-            mergedFileName
-          });
-        } catch (error) {
-          mergeCompleted += 1;
-          const message = error instanceof Error ? error.message : String(error);
-          this.store.setHdrItemState(projectId, hdrItem.id, (item) => ({
-            ...item,
-            status: 'error',
-            statusText: createProcessingText('error'),
-            errorMessage: message
-          }));
-          this.store.setJobState(projectId, (job) => ({
-            ...job,
-            workflowRealtime: {
-              ...job.workflowRealtime,
-              failed: job.workflowRealtime.failed + 1
-            },
-            detail: message
-          }));
-        }
-      }
-    } finally {
-      queue.close();
-    }
-
-    await Promise.all(workers);
     const finalProject = this.store.getProject(projectId);
     const hasSuccess = Boolean(finalProject?.resultAssets.length);
     const finalFailed = finalProject?.job?.workflowRealtime.failed ?? 0;
