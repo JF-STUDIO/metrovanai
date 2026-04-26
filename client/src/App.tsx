@@ -63,7 +63,14 @@ import {
   uploadFiles,
   logoutAdminUserSessions
 } from './api';
-import type { AdminActivationCode, AdminAuditLogEntry, AdminSystemSettings, AdminUserListQuery, AdminUserSummary } from './api';
+import type {
+  AdminActivationCode,
+  AdminAuditLogEntry,
+  AdminSystemSettings,
+  AdminUserListQuery,
+  AdminUserSummary,
+  UploadProgressSnapshot
+} from './api';
 import type {
   BillingEntry,
   BillingPackage,
@@ -543,11 +550,19 @@ const UI_TEXT = {
     addPhotos: '添加照片',
     uploadStarting: '正在读取照片...',
     uploadProgress: (value: number) => `导入 ${value}%`,
+    uploadFileProgress: (uploaded: number, total: number) => `已上传 ${uploaded}/${total} 张`,
+    uploadFinalizeProgress: (total: number) => `${total} 张已上传，正在生成分组`,
     uploadOriginalsProgress: (value: number) => `上传 ${value}%`,
     uploadOriginalsTitle: '正在上传照片',
     uploadOriginalsDoNotClose: '正在上传照片，请勿退出浏览器。',
     uploadOriginalsReceived: '照片已上传到后端，正在启动自动处理。',
     uploadOriginalsCanClose: '照片已上传到服务器并开始自动处理，现在可以关闭浏览器。',
+    processingGroupsTitle: '照片处理中',
+    processingGroupsHint: '每组照片会自动显示处理状态，完成后直接显示结果图。',
+    hdrItemReady: '等待上传',
+    hdrItemProcessing: '处理中',
+    hdrItemCompleted: '已完成',
+    hdrItemFailed: '处理失败',
     demoVerticalFix: '垂直校正',
     demoCheckGrouping: '确认分组',
     demoAdjustGrouping: '调整分组',
@@ -899,11 +914,19 @@ const UI_TEXT = {
     addPhotos: 'Add Photos',
     uploadStarting: 'Reading photos...',
     uploadProgress: (value: number) => `Importing ${value}%`,
+    uploadFileProgress: (uploaded: number, total: number) => `Uploaded ${uploaded}/${total}`,
+    uploadFinalizeProgress: (total: number) => `${total} uploaded. Building groups`,
     uploadOriginalsProgress: (value: number) => `Uploading ${value}%`,
     uploadOriginalsTitle: 'Uploading photos',
     uploadOriginalsDoNotClose: 'Uploading photos. Please do not close the browser.',
     uploadOriginalsReceived: 'Photos are uploaded to the backend. Starting automatic processing.',
     uploadOriginalsCanClose: 'Photos are uploaded and processing has started. You can close the browser now.',
+    processingGroupsTitle: 'Processing photos',
+    processingGroupsHint: 'Each group shows live status. Finished groups switch to the processed photo automatically.',
+    hdrItemReady: 'Waiting to upload',
+    hdrItemProcessing: 'Processing',
+    hdrItemCompleted: 'Completed',
+    hdrItemFailed: 'Failed',
     demoVerticalFix: 'Vertical Fix',
     demoCheckGrouping: 'Check Groups',
     demoAdjustGrouping: 'Adjust Groups',
@@ -1697,6 +1720,38 @@ function formatGroupSummary(groupCount: number, photoCount: number, locale: UiLo
     : `${groupCount} 组 / ${photoCount} 张照片`;
 }
 
+function formatUploadProgressLabel(
+  snapshot: UploadProgressSnapshot | null,
+  fallbackPercent: number,
+  copy: (typeof UI_TEXT)[UiLocale]
+) {
+  if (!snapshot) {
+    return fallbackPercent > 0 ? copy.uploadProgress(fallbackPercent) : copy.uploadStarting;
+  }
+
+  if (snapshot.stage === 'finalizing') {
+    return copy.uploadFinalizeProgress(snapshot.totalFiles);
+  }
+
+  if (snapshot.stage === 'completed') {
+    return copy.uploadFileProgress(snapshot.totalFiles, snapshot.totalFiles);
+  }
+
+  return copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles);
+}
+
+function isHdrItemProcessing(status: HdrItem['status']) {
+  return status === 'hdr-processing' || status === 'workflow-upload' || status === 'workflow-running' || status === 'processing';
+}
+
+function getHdrItemStatusLabel(hdrItem: HdrItem, locale: UiLocale) {
+  const copy = UI_TEXT[locale];
+  if (hdrItem.status === 'completed') return copy.hdrItemCompleted;
+  if (hdrItem.status === 'error') return hdrItem.errorMessage ? `${copy.hdrItemFailed} / ${hdrItem.errorMessage}` : copy.hdrItemFailed;
+  if (isHdrItemProcessing(hdrItem.status)) return copy.hdrItemProcessing;
+  return copy.hdrItemReady;
+}
+
 function getProjectProgress(project: ProjectRecord, uploadPercent: number) {
   if (project.status === 'importing' || project.status === 'uploading') return uploadPercent;
   if (project.status === 'processing') {
@@ -2099,6 +2154,7 @@ function App() {
   const [uploadActive, setUploadActive] = useState(false);
   const [uploadMode, setUploadMode] = useState<'local' | 'originals' | null>(null);
   const [uploadPercent, setUploadPercent] = useState(0);
+  const [uploadSnapshot, setUploadSnapshot] = useState<UploadProgressSnapshot | null>(null);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(() => (isDemoMode ? DEMO_BILLING_SUMMARY : null));
   const [billingEntries, setBillingEntries] = useState<BillingEntry[]>(() => (isDemoMode ? DEMO_BILLING_ENTRIES : []));
@@ -2300,12 +2356,14 @@ function App() {
   const hasResultContent = displayResultAssets.length > 0;
   const showUploadStepContent = currentWorkspaceStep === 1 && !activeLocalDraft;
   const showUploadProgress = showUploadStepContent && uploadActive;
-  const uploadProgressLabel = uploadPercent > 0 ? copy.uploadProgress(uploadPercent) : copy.uploadStarting;
+  const uploadProgressLabel = formatUploadProgressLabel(uploadSnapshot, uploadPercent, copy);
   const uploadProgressWidth = uploadPercent > 0 ? uploadPercent : 6;
-  const showReviewStepContent = currentWorkspaceStep === 2 && hasReviewContent;
+  const showReviewStepContent = (currentWorkspaceStep === 2 || currentWorkspaceStep === 3) && hasReviewContent;
+  const showReviewActions = !isDemoMode && currentWorkspaceStep === 2;
+  const showProcessingGroupGrid = !isDemoMode && currentWorkspaceStep === 3 && hasReviewContent;
   const showReviewLocalImportProgress = showReviewStepContent && uploadActive && uploadMode === 'local';
   const showReviewUploadProgress =
-    showReviewStepContent && uploadActive && uploadMode === 'originals' && Boolean(activeLocalDraft);
+    currentWorkspaceStep === 2 && uploadActive && uploadMode === 'originals' && Boolean(activeLocalDraft);
   const showAdvancedGroupingControls = false;
   const showProcessingStepContent = currentWorkspaceStep === 3;
   const showProcessingUploadProgress = showProcessingStepContent && uploadActive && uploadMode === 'originals';
@@ -2313,7 +2371,7 @@ function App() {
     ? copy.uploadOriginalsTitle
     : currentProject?.job?.label || copy.waitingProcessing;
   const processingPanelDetail = showProcessingUploadProgress
-    ? copy.uploadOriginalsDoNotClose
+    ? `${uploadProgressLabel} · ${copy.uploadOriginalsDoNotClose}`
     : currentProject?.job?.detail || copy.waitingProcessingHint;
   const showResultsStepContent = currentWorkspaceStep === 4 && hasResultContent;
   const adminTotals = useMemo(
@@ -3863,6 +3921,7 @@ function App() {
     setUploadActive(true);
     setUploadMode('local');
     setUploadPercent(0);
+    setUploadSnapshot(null);
     setDragActive(false);
     try {
       const nextDraft = await buildLocalImportDraft(currentProject.id, supported, setUploadPercent);
@@ -3884,10 +3943,12 @@ function App() {
       setUploadActive(false);
       setUploadMode(null);
       setUploadPercent(0);
+      setUploadSnapshot(null);
     } catch (error) {
       setUploadActive(false);
       setUploadMode(null);
       setUploadPercent(0);
+      setUploadSnapshot(null);
       setMessage(getUserFacingErrorMessage(error, copy.uploadFailed, locale));
     } finally {
       setBusy(false);
@@ -4203,9 +4264,16 @@ function App() {
     setBusy(true);
     try {
       if (activeLocalDraft) {
+        const draftFiles = collectLocalDraftFiles(activeLocalDraft);
         setUploadActive(true);
         setUploadMode('originals');
         setUploadPercent(1);
+        setUploadSnapshot({
+          stage: 'preparing',
+          percent: 1,
+          uploadedFiles: 0,
+          totalFiles: draftFiles.length
+        });
         setMessage(copy.uploadOriginalsDoNotClose);
 
         const uploadStep = await patchProject(currentProject.id, { currentStep: 3, status: 'uploading' }).catch(() => null);
@@ -4213,8 +4281,11 @@ function App() {
           upsertProject(uploadStep.project);
         }
 
-        await uploadFiles(currentProject.id, collectLocalDraftFiles(activeLocalDraft), (percent) => {
+        await uploadFiles(currentProject.id, draftFiles, (percent, snapshot) => {
           setUploadPercent(percent);
+          if (snapshot) {
+            setUploadSnapshot(snapshot);
+          }
           if (percent >= 100) {
             setMessage(copy.uploadOriginalsReceived);
           }
@@ -4231,6 +4302,7 @@ function App() {
         setUploadActive(false);
         setUploadMode(null);
         setUploadPercent(100);
+        setUploadSnapshot(null);
         setMessage(copy.uploadOriginalsCanClose);
       } else {
         const response = await startProcessing(currentProject.id);
@@ -4241,6 +4313,7 @@ function App() {
       setUploadActive(false);
       setUploadMode(null);
       setUploadPercent(0);
+      setUploadSnapshot(null);
       setMessage(getUserFacingErrorMessage(error, copy.startProcessingFailed, locale));
     } finally {
       setBusy(false);
@@ -6048,32 +6121,34 @@ function App() {
                       {!isDemoMode && (
                         <div className="panel-head">
                           <div>
-                            <strong>{copy.reviewGrouping}</strong>
-                            <span className="muted">{copy.reviewGroupingHint}</span>
+                            <strong>{showProcessingGroupGrid ? copy.processingGroupsTitle : copy.reviewGrouping}</strong>
+                            <span className="muted">{showProcessingGroupGrid ? copy.processingGroupsHint : copy.reviewGroupingHint}</span>
                           </div>
-                          <div className="review-actions">
-                            {showAdvancedGroupingControls && (
-                              <button className="ghost-button small" type="button" onClick={() => void handleCreateGroup()}>
-                                {copy.createGroup}
+                          {showReviewActions && (
+                            <div className="review-actions">
+                              {showAdvancedGroupingControls && (
+                                <button className="ghost-button small" type="button" onClick={() => void handleCreateGroup()}>
+                                  {copy.createGroup}
+                                </button>
+                              )}
+                              <button
+                                className="ghost-button small"
+                                type="button"
+                                onClick={triggerFilePicker}
+                                disabled={busy || uploadActive}
+                              >
+                                {copy.addPhotos}
                               </button>
-                            )}
-                            <button
-                              className="ghost-button small"
-                              type="button"
-                              onClick={triggerFilePicker}
-                              disabled={busy || uploadActive}
-                            >
-                              {copy.addPhotos}
-                            </button>
-                            <button
-                              className="solid-button small"
-                              type="button"
-                              onClick={() => void handleStartProcessing()}
-                              disabled={busy || !workspaceHdrItems.length}
-                            >
-                              {showReviewUploadProgress ? copy.uploadOriginalsTitle : copy.confirmSend}
-                            </button>
-                          </div>
+                              <button
+                                className="solid-button small"
+                                type="button"
+                                onClick={() => void handleStartProcessing()}
+                                disabled={busy || !workspaceHdrItems.length}
+                              >
+                                {showReviewUploadProgress ? copy.uploadOriginalsTitle : copy.confirmSend}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -6194,6 +6269,9 @@ function App() {
                                   const previewUrl = getHdrPreviewUrl(hdrItem);
                                   const selectedExposure = getSelectedExposure(hdrItem);
                                   const selectedIndex = hdrItem.exposures.findIndex((exposure) => exposure.id === hdrItem.selectedExposureId);
+                                  const hdrItemProcessing = showProcessingGroupGrid && isHdrItemProcessing(hdrItem.status);
+                                  const hdrItemCompleted = showProcessingGroupGrid && hdrItem.status === 'completed';
+                                  const hdrItemFailed = showProcessingGroupGrid && hdrItem.status === 'error';
                                   const localReviewState = activeLocalDraft ? getHdrLocalReviewState(hdrItem) : null;
                                   const localReviewCopy =
                                     localReviewState && localReviewState !== 'normal'
@@ -6201,21 +6279,37 @@ function App() {
                                       : null;
                                   const emptyPreviewLabel = activeLocalDraft ? copy.localPreviewUnavailable : copy.noPreview;
                                   return (
-                                    <article key={hdrItem.id} className={`asset-card${localReviewState ? ` local-review-${localReviewState}` : ''}`}>
+                                    <article
+                                      key={hdrItem.id}
+                                      className={`asset-card${localReviewState ? ` local-review-${localReviewState}` : ''}${
+                                        hdrItemProcessing ? ' is-processing' : ''
+                                      }${hdrItemCompleted ? ' is-completed' : ''}${hdrItemFailed ? ' is-error' : ''}`}
+                                    >
                                       <div className="asset-frame">
                                         {previewUrl ? (
                                           <img src={previewUrl} alt={hdrItem.title} loading="lazy" decoding="async" />
                                         ) : (
                                           <div className={`asset-empty${isDemoMode ? ' demo-asset-empty' : ''}`}>{isDemoMode ? '' : emptyPreviewLabel}</div>
                                         )}
+                                        {hdrItemProcessing && (
+                                          <div className="asset-processing-layer" aria-label={copy.hdrItemProcessing}>
+                                            <span className="asset-spinner" />
+                                            <strong>{copy.hdrItemProcessing}</strong>
+                                          </div>
+                                        )}
                                         <div className="asset-overlay">
                                           <span className="asset-index">{hdrItem.index}</span>
                                           <span className="asset-count">{selectedIndex + 1}/{hdrItem.exposures.length}</span>
-                                          <button className="asset-delete" type="button" onClick={() => void handleDeleteHdr(hdrItem)}>
+                                          <button
+                                            className="asset-delete"
+                                            type="button"
+                                            onClick={() => void handleDeleteHdr(hdrItem)}
+                                            disabled={showProcessingGroupGrid}
+                                          >
                                             {copy.delete}
                                           </button>
                                         </div>
-                                        {hdrItem.exposures.length > 1 && (
+                                        {hdrItem.exposures.length > 1 && !showProcessingGroupGrid && (
                                           <>
                                             <button className="viewer-arrow left" type="button" onClick={() => void handleShiftExposure(hdrItem, -1)}>
                                               {'<'}
@@ -6228,10 +6322,7 @@ function App() {
                                       </div>
                                       <div className="asset-body">
                                         <strong>{selectedExposure?.originalName ?? hdrItem.title}</strong>
-                                        <span>
-                                          {hdrItem.statusText}
-                                          {hdrItem.errorMessage ? ` / ${hdrItem.errorMessage}` : ''}
-                                        </span>
+                                        <span>{showProcessingGroupGrid ? getHdrItemStatusLabel(hdrItem, locale) : hdrItem.statusText}</span>
                                         {localReviewCopy && (
                                           <div className={`asset-local-review ${localReviewState}`}>
                                             <strong>{localReviewCopy.title}</strong>

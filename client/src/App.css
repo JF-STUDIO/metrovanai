@@ -1500,6 +1500,56 @@ img {
   transform: scale(1.035);
 }
 
+.asset-card.is-processing .asset-frame img {
+  filter: brightness(0.72) saturate(0.86);
+}
+
+.asset-card.is-completed .asset-frame {
+  box-shadow: inset 0 0 0 1px rgba(126, 255, 191, 0.22);
+}
+
+.asset-card.is-error .asset-frame {
+  box-shadow: inset 0 0 0 1px rgba(255, 110, 110, 0.28);
+}
+
+.asset-processing-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  gap: 0.6rem;
+  align-content: center;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(129, 220, 255, 0.22), transparent 34%),
+    rgba(5, 7, 10, 0.48);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  backdrop-filter: blur(3px);
+}
+
+.asset-spinner {
+  width: 2.8rem;
+  height: 2.8rem;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(130, 224, 255, 0.96);
+  border-right-color: rgba(130, 224, 255, 0.48);
+  box-shadow:
+    0 0 24px rgba(130, 224, 255, 0.28),
+    inset 0 0 18px rgba(130, 224, 255, 0.12);
+  animation: asset-spin 900ms linear infinite;
+}
+
+@keyframes asset-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .result-regenerate-controls {
   position: absolute;
   top: 0.72rem;
@@ -1784,6 +1834,11 @@ img {
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: #fff;
   background: rgba(9, 9, 10, 0.82);
+}
+
+.asset-delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .viewer-arrow {

@@ -130,6 +130,17 @@ export interface UploadCapabilitiesPayload {
   };
 }
 
+export type UploadProgressStage = 'preparing' | 'uploading' | 'finalizing' | 'completed';
+
+export interface UploadProgressSnapshot {
+  stage: UploadProgressStage;
+  percent: number;
+  uploadedFiles: number;
+  totalFiles: number;
+}
+
+export type UploadProgressHandler = (percent: number, snapshot?: UploadProgressSnapshot) => void;
+
 interface DirectUploadTarget {
   id: string;
   originalName: string;
@@ -870,13 +881,14 @@ function splitUploadBatches(files: File[]) {
   return batches;
 }
 
-async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProgress: (percent: number) => void) {
+async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProgress: UploadProgressHandler) {
   const batches = splitUploadBatches(files);
   const totalBytes = Math.max(
     1,
     files.reduce((sum, file) => sum + Math.max(1, file.size), 0)
   );
   let uploadedBytes = 0;
+  let uploadedFiles = 0;
   let latestProject: ProjectRecord | null = null;
   const batchLoadedBytes = new Array<number>(batches.length).fill(0);
   let nextBatchIndex = 0;
@@ -884,7 +896,13 @@ async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProg
   const reportProgress = () => {
     const activeLoadedBytes = batchLoadedBytes.reduce((sum, value) => sum + Math.max(0, value), 0);
     const overallBytes = Math.min(totalBytes, uploadedBytes + activeLoadedBytes);
-    onProgress(Math.round((overallBytes / totalBytes) * 100));
+    const percent = Math.round((overallBytes / totalBytes) * 100);
+    onProgress(percent, {
+      stage: percent >= 100 ? 'completed' : 'uploading',
+      percent,
+      uploadedFiles,
+      totalFiles: files.length
+    });
   };
 
   async function worker() {
@@ -899,6 +917,7 @@ async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProg
       });
       latestProject = response.project;
       uploadedBytes += batchBytes;
+      uploadedFiles += batch.length;
       batchLoadedBytes[batchIndex] = 0;
       reportProgress();
     }
@@ -914,7 +933,13 @@ async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProg
   return { project: latestProject };
 }
 
-async function uploadFilesViaDirectObject(projectId: string, files: File[], onProgress: (percent: number) => void) {
+async function uploadFilesViaDirectObject(projectId: string, files: File[], onProgress: UploadProgressHandler) {
+  onProgress(1, {
+    stage: 'preparing',
+    percent: 1,
+    uploadedFiles: 0,
+    totalFiles: files.length
+  });
   const { targets } = await createDirectUploadTargets(projectId, files);
   if (targets.length !== files.length) {
     throw new Error('Direct upload target count mismatch.');
@@ -926,12 +951,19 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
   );
   const loadedByFile = new Array<number>(files.length).fill(0);
   let completedBytes = 0;
+  let uploadedFiles = 0;
   let nextFileIndex = 0;
 
   const reportProgress = () => {
     const activeBytes = loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0);
     const percent = Math.round((Math.min(totalBytes, completedBytes + activeBytes) / totalBytes) * 95);
-    onProgress(Math.max(0, Math.min(95, percent)));
+    const safePercent = Math.max(1, Math.min(95, percent));
+    onProgress(safePercent, {
+      stage: 'uploading',
+      percent: safePercent,
+      uploadedFiles,
+      totalFiles: files.length
+    });
   };
 
   async function worker() {
@@ -950,6 +982,7 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
       });
 
       completedBytes += Math.max(1, file.size);
+      uploadedFiles += 1;
       loadedByFile[fileIndex] = 0;
       reportProgress();
     }
@@ -958,13 +991,23 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
   const workerCount = Math.min(MAX_UPLOAD_CONCURRENT_BATCHES, files.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  onProgress(96);
+  onProgress(96, {
+    stage: 'finalizing',
+    percent: 96,
+    uploadedFiles: files.length,
+    totalFiles: files.length
+  });
   const response = await completeDirectObjectUpload(projectId, files, targets);
-  onProgress(100);
+  onProgress(100, {
+    stage: 'completed',
+    percent: 100,
+    uploadedFiles: files.length,
+    totalFiles: files.length
+  });
   return response;
 }
 
-export async function uploadFiles(projectId: string, files: File[], onProgress: (percent: number) => void) {
+export async function uploadFiles(projectId: string, files: File[], onProgress: UploadProgressHandler) {
   const capabilities = await fetchUploadCapabilities().catch(() => null);
   if (capabilities?.directObject.enabled) {
     return await uploadFilesViaDirectObject(projectId, files, onProgress);

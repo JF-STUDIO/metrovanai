@@ -1213,6 +1213,33 @@ function createUploadBatchId() {
 
 const DIRECT_UPLOAD_MANIFEST_FILE = '.metrovan-direct-upload-manifest.json';
 
+function parseDirectUploadCompleteConcurrency() {
+  const raw = Number(process.env.METROVAN_DIRECT_UPLOAD_COMPLETE_CONCURRENCY ?? 16);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 16;
+  }
+  return Math.max(1, Math.min(32, Math.round(raw)));
+}
+
+async function runWithConcurrency<T>(items: T[], concurrency: number, handler: (item: T, index: number) => Promise<void>) {
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const item = items[index];
+      if (item === undefined) {
+        continue;
+      }
+      await handler(item, index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+}
+
 function trimObjectStoragePrefix(value: string | undefined, fallback: string) {
   return String(value ?? fallback)
     .trim()
@@ -3208,10 +3235,10 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
     size: number;
     storageKey: string;
     localPath: string;
-  }> = [];
+  } | null> = new Array(parsed.data.files.length).fill(null);
 
   try {
-    for (const [index, file] of parsed.data.files.entries()) {
+    const downloadInputs = parsed.data.files.map((file, index) => {
       if (!isSupportedUploadFileName(file.originalName)) {
         throw new Error('Only RAW and JPG files are supported.');
       }
@@ -3221,15 +3248,26 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
 
       const destination = path.join(dirs.staging, batchId, String(index).padStart(4, '0'));
       const targetPath = path.join(destination, normalizeUploadedFileName(file.originalName));
-      await downloadDirectObjectToFile(file.storageKey, targetPath);
-      manifestEntries.push({
+      return {
+        index,
         originalName: normalizeUploadedFileName(file.originalName),
         mimeType: file.mimeType,
         size: file.size,
         storageKey: file.storageKey,
         localPath: targetPath
-      });
-    }
+      };
+    });
+
+    await runWithConcurrency(downloadInputs, parseDirectUploadCompleteConcurrency(), async (file) => {
+      await downloadDirectObjectToFile(file.storageKey, file.localPath);
+      manifestEntries[file.index] = {
+        originalName: file.originalName,
+        mimeType: file.mimeType,
+        size: file.size,
+        storageKey: file.storageKey,
+        localPath: file.localPath
+      };
+    });
 
     const manifestPath = path.join(dirs.staging, batchId, DIRECT_UPLOAD_MANIFEST_FILE);
     fs.writeFileSync(
@@ -3238,7 +3276,7 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
         {
           version: 1,
           createdAt: new Date().toISOString(),
-          files: manifestEntries
+          files: manifestEntries.filter((entry): entry is NonNullable<(typeof manifestEntries)[number]> => Boolean(entry))
         },
         null,
         2

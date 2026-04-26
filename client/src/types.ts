@@ -9,7 +9,14 @@ export type ProjectStatus =
 
 export type SceneType = 'interior' | 'exterior' | 'pending';
 export type ColorMode = 'default' | 'replace';
-export type HdrItemStatus = 'review' | 'processing' | 'completed' | 'error';
+export type HdrItemStatus =
+  | 'review'
+  | 'hdr-processing'
+  | 'workflow-upload'
+  | 'workflow-running'
+  | 'processing'
+  | 'completed'
+  | 'error';
 export type LocalImportReviewState = 'normal' | 'preview-missing' | 'manual-review';
 export type LocalImportMetadataState = 'exif' | 'fallback';
 export type LocalImportPreviewState = 'ready' | 'missing';
