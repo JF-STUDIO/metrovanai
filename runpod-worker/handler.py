@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,15 @@ RAW_EXTENSIONS = {".arw", ".cr2", ".cr3", ".nef", ".raf", ".dng", ".rw2", ".orf"
 
 def env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
+
+
+def parse_positive_int(value: str, default: int, minimum: int = 1, maximum: int = 16) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+
+    return max(minimum, min(maximum, parsed))
 
 
 def sanitize_file_name(value: str, fallback: str = "input") -> str:
@@ -190,45 +200,62 @@ def upload_result(output_path: Path, output: dict[str, Any]) -> str:
     return storage_key
 
 
+def produce_batch_item(
+    index: int,
+    raw_item: Any,
+    common_payload: dict[str, Any],
+    work_dir: Path,
+) -> dict[str, Any]:
+    if not isinstance(raw_item, dict):
+        return {"hdrItemId": f"item-{index}", "errorMessage": "Batch item must be an object."}
+
+    hdr_item_id = str(raw_item.get("hdrItemId") or f"item-{index}")
+    item_output = raw_item.get("output")
+    if not isinstance(item_output, dict):
+        return {"hdrItemId": hdr_item_id, "errorMessage": "Batch item output contract is missing."}
+
+    item_dir = work_dir / f"item_{index:03d}_{sanitize_file_name(hdr_item_id, f'item-{index}')}"
+    item_dir.mkdir(parents=True, exist_ok=True)
+    item_payload = {**common_payload, **raw_item}
+    output_file_name = sanitize_file_name(str(item_output.get("fileName") or f"{hdr_item_id}.jpg"), f"{hdr_item_id}.jpg")
+    output_path = item_dir / output_file_name
+
+    try:
+        produce_result(item_payload, item_dir, output_path)
+        storage_key = upload_result(output_path, item_output)
+        return {
+            "hdrItemId": hdr_item_id,
+            "storageKey": storage_key,
+            "fileName": output_file_name,
+            "progress": 100,
+        }
+    except Exception as exc:
+        return {"hdrItemId": hdr_item_id, "errorMessage": str(exc)}
+
+
 def produce_batch_results(input_payload: dict[str, Any], work_dir: Path) -> list[dict[str, Any]]:
     items = input_payload.get("items")
     if not isinstance(items, list) or not items:
         raise RuntimeError("Batch job input must include a non-empty items array.")
 
     common_payload = {key: value for key, value in input_payload.items() if key not in {"items", "output"}}
-    results: list[dict[str, Any]] = []
-    for index, raw_item in enumerate(items):
-        if not isinstance(raw_item, dict):
-            results.append({"hdrItemId": f"item-{index}", "errorMessage": "Batch item must be an object."})
-            continue
+    max_concurrency = min(8, len(items))
+    concurrency = parse_positive_int(env("METROVAN_BATCH_ITEM_CONCURRENCY", "2"), 2, 1, max_concurrency)
+    results: list[dict[str, Any] | None] = [None] * len(items)
 
-        hdr_item_id = str(raw_item.get("hdrItemId") or f"item-{index}")
-        item_output = raw_item.get("output")
-        if not isinstance(item_output, dict):
-            results.append({"hdrItemId": hdr_item_id, "errorMessage": "Batch item output contract is missing."})
-            continue
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = {
+            executor.submit(produce_batch_item, index, raw_item, common_payload, work_dir): index
+            for index, raw_item in enumerate(items)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                results[index] = future.result()
+            except Exception as exc:
+                results[index] = {"hdrItemId": f"item-{index}", "errorMessage": str(exc)}
 
-        item_dir = work_dir / f"item_{index:03d}_{sanitize_file_name(hdr_item_id, f'item-{index}')}"
-        item_dir.mkdir(parents=True, exist_ok=True)
-        item_payload = {**common_payload, **raw_item}
-        output_file_name = sanitize_file_name(str(item_output.get("fileName") or f"{hdr_item_id}.jpg"), f"{hdr_item_id}.jpg")
-        output_path = item_dir / output_file_name
-
-        try:
-            produce_result(item_payload, item_dir, output_path)
-            storage_key = upload_result(output_path, item_output)
-            results.append(
-                {
-                    "hdrItemId": hdr_item_id,
-                    "storageKey": storage_key,
-                    "fileName": output_file_name,
-                    "progress": 100,
-                }
-            )
-        except Exception as exc:
-            results.append({"hdrItemId": hdr_item_id, "errorMessage": str(exc)})
-
-    return results
+    return [result for result in results if result is not None]
 
 
 def handler(job: dict[str, Any]) -> dict[str, Any]:

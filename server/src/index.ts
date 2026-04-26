@@ -994,6 +994,14 @@ function getPublicErrorMessage(error: unknown, fallback = '处理失败，请稍
   return message || fallback;
 }
 
+function canServeExposurePreview(exposure: ExposureFile) {
+  if (exposure.previewPath && exposure.previewKey !== null && fs.existsSync(exposure.previewPath)) {
+    return true;
+  }
+
+  return Boolean(exposure.storagePath && fs.existsSync(exposure.storagePath));
+}
+
 function buildPublicExposure(projectId: string, hdrItemId: string, exposure: ExposureFile) {
   return {
     id: exposure.id,
@@ -1003,10 +1011,9 @@ function buildPublicExposure(projectId: string, hdrItemId: string, exposure: Exp
     mimeType: exposure.mimeType,
     size: exposure.size,
     isRaw: exposure.isRaw,
-    previewUrl:
-      exposure.previewPath || exposure.storagePath
-        ? buildProjectAssetRoute(projectId, ['hdr-items', hdrItemId, 'exposures', exposure.id, 'preview'])
-        : null,
+    previewUrl: canServeExposurePreview(exposure)
+      ? buildProjectAssetRoute(projectId, ['hdr-items', hdrItemId, 'exposures', exposure.id, 'preview'])
+      : null,
     captureTime: exposure.captureTime,
     sequenceNumber: exposure.sequenceNumber,
     exposureCompensation: exposure.exposureCompensation,
@@ -1020,8 +1027,10 @@ function buildPublicExposure(projectId: string, hdrItemId: string, exposure: Exp
 function buildPublicHdrItem(project: ProjectRecord, hdrItem: HdrItem) {
   const status = getPublicHdrItemStatus(hdrItem.status);
   const resultVersion = getRegeneratedAssetVersion(hdrItem.regeneration);
+  const selectedExposure =
+    hdrItem.exposures.find((exposure) => exposure.id === hdrItem.selectedExposureId) ?? hdrItem.exposures[0] ?? null;
   const previewUrl =
-    hdrItem.resultPath || hdrItem.exposures.length
+    hdrItem.resultPath || (selectedExposure && canServeExposurePreview(selectedExposure))
       ? appendAssetVersion(
           buildProjectAssetRoute(project.id, ['hdr-items', hdrItem.id, 'preview']),
           hdrItem.resultPath ? resultVersion : null
@@ -1213,6 +1222,55 @@ function createUploadBatchId() {
 
 const DIRECT_UPLOAD_MANIFEST_FILE = '.metrovan-direct-upload-manifest.json';
 
+type DirectUploadManifestEntry = {
+  originalName?: string;
+  storageKey?: string;
+  localPath?: string;
+};
+
+function normalizeDirectUploadManifestName(value: string) {
+  return path.basename(value.replace(/\\/g, '/')).trim().toLowerCase();
+}
+
+function collectDirectUploadManifestEntriesByName(stagingRoot: string) {
+  const byName = new Map<string, DirectUploadManifestEntry[]>();
+
+  const visit = (directory: string) => {
+    if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) {
+      return;
+    }
+
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(entryPath);
+        continue;
+      }
+
+      if (!entry.isFile() || entry.name !== DIRECT_UPLOAD_MANIFEST_FILE) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(fs.readFileSync(entryPath, 'utf8')) as { files?: DirectUploadManifestEntry[] };
+        for (const file of parsed.files ?? []) {
+          if (!file.originalName || !file.storageKey) {
+            continue;
+          }
+
+          const normalizedName = normalizeDirectUploadManifestName(file.originalName);
+          byName.set(normalizedName, [...(byName.get(normalizedName) ?? []), file]);
+        }
+      } catch (error) {
+        console.warn('Direct upload manifest read failed:', error);
+      }
+    }
+  };
+
+  visit(stagingRoot);
+  return byName;
+}
+
 function parseDirectUploadCompleteConcurrency() {
   const raw = Number(process.env.METROVAN_DIRECT_UPLOAD_COMPLETE_CONCURRENCY ?? 16);
   if (!Number.isFinite(raw) || raw <= 0) {
@@ -1316,6 +1374,8 @@ async function commitStagedOriginals(projectId: string) {
       .map((filePath) => path.resolve(filePath).toLowerCase())
   );
   const committedPaths = new Map<string, string>();
+  const committedStorageKeys = new Map<string, string>();
+  const manifestEntriesByName = collectDirectUploadManifestEntriesByName(dirs.staging);
   const stagedExposureByPath = new Map<string, (typeof project.hdrItems)[number]['exposures'][number]>();
 
   for (const hdrItem of project.hdrItems) {
@@ -1329,15 +1389,25 @@ async function commitStagedOriginals(projectId: string) {
 
   for (const sourcePath of stagedSourcePaths) {
     const exposure = stagedExposureByPath.get(path.resolve(sourcePath).toLowerCase());
-    if ((!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) && isCloudObjectStorageKey(exposure?.storageKey)) {
+    const normalizedSourcePath = path.resolve(sourcePath).toLowerCase();
+    let storageKey = exposure?.storageKey ?? null;
+    if (!isCloudObjectStorageKey(storageKey) && exposure) {
+      const manifestEntry = manifestEntriesByName
+        .get(normalizeDirectUploadManifestName(exposure.originalName || exposure.fileName || path.basename(sourcePath)))
+        ?.shift();
+      storageKey = manifestEntry?.storageKey ?? storageKey;
+    }
+
+    if ((!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) && isCloudObjectStorageKey(storageKey)) {
       const targetPath = allocateOriginalTargetPath(dirs.originals, path.basename(sourcePath), reservedPaths);
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-      committedPaths.set(path.resolve(sourcePath).toLowerCase(), targetPath);
+      committedPaths.set(normalizedSourcePath, targetPath);
+      committedStorageKeys.set(normalizedSourcePath, storageKey as string);
       continue;
     }
 
     if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
-      await restoreObjectToFileIfAvailable(exposure?.storageKey, sourcePath);
+      await restoreObjectToFileIfAvailable(storageKey, sourcePath);
     }
     if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
       throw new Error(`暂存原图不存在：${path.basename(sourcePath)}`);
@@ -1345,7 +1415,7 @@ async function commitStagedOriginals(projectId: string) {
 
     const targetPath = allocateOriginalTargetPath(dirs.originals, path.basename(sourcePath), reservedPaths);
     fs.copyFileSync(sourcePath, targetPath);
-    committedPaths.set(path.resolve(sourcePath).toLowerCase(), targetPath);
+    committedPaths.set(normalizedSourcePath, targetPath);
   }
 
   const updated = store.updateProject(projectId, (current) => ({
@@ -1362,13 +1432,16 @@ async function commitStagedOriginals(projectId: string) {
         if (!committedPath) {
           throw new Error(`找不到已提交的原图：${exposure.originalName || exposure.fileName}`);
         }
+        const cloudStorageKey = committedStorageKeys.get(resolvedSourcePath.toLowerCase()) ?? exposure.storageKey;
+        const storageKey =
+          isCloudObjectStorageKey(cloudStorageKey) && cloudStorageKey ? cloudStorageKey : store.toStorageKey(committedPath);
 
         return {
           ...exposure,
           fileName: path.basename(committedPath),
-          storageKey: isCloudObjectStorageKey(exposure.storageKey) ? exposure.storageKey : store.toStorageKey(committedPath),
+          storageKey,
           storagePath: committedPath,
-          storageUrl: store.toStorageUrl(committedPath)
+          storageUrl: isCloudObjectStorageKey(storageKey) ? store.toStorageUrlFromKey(storageKey) : store.toStorageUrl(committedPath)
         };
       })
     }))

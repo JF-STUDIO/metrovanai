@@ -415,6 +415,7 @@ const UI_TEXT = {
     shiftExposureFailed: '切换曝光失败。',
     importPhotosFirst: '请先导入照片。',
     startProcessingFailed: '启动处理失败。',
+    retryProcessing: '重新处理失败照片',
     reorderResultsFailed: '保存结果排序失败。',
     home: '首页',
     plansNav: '方案',
@@ -779,6 +780,7 @@ const UI_TEXT = {
     shiftExposureFailed: 'Failed to switch the exposure.',
     importPhotosFirst: 'Import photos first.',
     startProcessingFailed: 'Failed to start processing.',
+    retryProcessing: 'Retry failed photos',
     reorderResultsFailed: 'Failed to save the result order.',
     home: 'Home',
     plansNav: 'Plans',
@@ -1522,6 +1524,42 @@ function getGroupItems(group: ProjectGroup, project: { hdrItems: HdrItem[] }) {
 
 function normalizeFileIdentity(fileName: string) {
   return fileName.trim().toLowerCase();
+}
+
+function mergeProjectItemsWithLocalPreviews(projectItems: HdrItem[], draft: LocalImportDraft | null) {
+  if (!draft || !projectItems.length) {
+    return projectItems;
+  }
+
+  const localItemsByIndex = new Map(draft.hdrItems.map((item) => [item.index, item]));
+
+  return projectItems.map((item) => {
+    const localItem = localItemsByIndex.get(item.index);
+    if (!localItem) {
+      return item;
+    }
+
+    const localExposuresByName = new Map(
+      localItem.exposures.map((exposure) => [normalizeFileIdentity(exposure.originalName || exposure.fileName), exposure])
+    );
+    const exposures = item.exposures.map((exposure) => {
+      const localExposure = localExposuresByName.get(normalizeFileIdentity(exposure.originalName || exposure.fileName));
+      return localExposure?.previewUrl && !item.resultUrl
+        ? {
+            ...exposure,
+            previewUrl: localExposure.previewUrl
+          }
+        : exposure;
+    });
+    const selectedExposure =
+      exposures.find((exposure) => exposure.id === item.selectedExposureId) ?? exposures[0] ?? null;
+
+    return {
+      ...item,
+      previewUrl: item.resultUrl ?? selectedExposure?.previewUrl ?? localItem.previewUrl ?? item.previewUrl,
+      exposures
+    };
+  });
 }
 
 function createClientId() {
@@ -2345,8 +2383,13 @@ function App() {
     currentViewerRegeneration?.status === 'running';
   const currentViewerRegenerateUsed = Boolean(currentViewerRegeneration?.freeUsed);
   const currentWorkspaceStep = currentProject?.currentStep ?? 1;
-  const workspaceHdrItems = activeLocalDraft?.hdrItems ?? currentProject?.hdrItems ?? [];
-  const workspaceGroups = activeLocalDraft?.groups ?? currentProject?.groups ?? [];
+  const useLocalReviewDraft = Boolean(activeLocalDraft && currentWorkspaceStep <= 2);
+  const workspaceHdrItems = useLocalReviewDraft
+    ? activeLocalDraft?.hdrItems ?? []
+    : currentProject
+      ? mergeProjectItemsWithLocalPreviews(currentProject.hdrItems, activeLocalDraft)
+      : [];
+  const workspaceGroups = useLocalReviewDraft ? activeLocalDraft?.groups ?? [] : currentProject?.groups ?? [];
   const workspacePointsEstimate = activeLocalDraft ? workspaceHdrItems.length : currentProject?.pointsEstimate ?? 0;
   const workspaceReviewProject = currentProject ? { hdrItems: workspaceHdrItems as HdrItem[], groups: workspaceGroups } : null;
   const localDraftDiagnostics = activeLocalDraft?.diagnostics ?? null;
@@ -2368,6 +2411,8 @@ function App() {
   const showAdvancedGroupingControls = false;
   const showProcessingStepContent = currentWorkspaceStep === 3;
   const showProcessingUploadProgress = showProcessingStepContent && uploadActive && uploadMode === 'originals';
+  const showRetryProcessingAction =
+    Boolean(currentProject && currentProject.status === 'failed') && showProcessingStepContent && !uploadActive;
   const processingPanelTitle = showProcessingUploadProgress
     ? copy.uploadOriginalsTitle
     : currentProject?.job?.label || copy.waitingProcessing;
@@ -2667,6 +2712,32 @@ function App() {
       document.removeEventListener('mousedown', handlePointerDown);
     };
   }, [userMenuOpen]);
+
+  useEffect(() => {
+    const completedProjectId = currentProject?.status === 'completed' ? currentProject.id : null;
+    if (!completedProjectId || !localImportDrafts[completedProjectId]) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setLocalImportDrafts((current) => {
+        const existing = current[completedProjectId];
+        if (!existing) {
+          return current;
+        }
+
+        revokeLocalImportDraftUrls(existing);
+        const next = { ...current };
+        delete next[completedProjectId];
+        return next;
+      });
+      void deleteStoredLocalImportDraft(completedProjectId).catch(() => {
+        // Ignore cleanup failures; stale local drafts are overwritten on the next import.
+      });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [currentProject?.id, currentProject?.status, localImportDrafts]);
 
   function upsertProject(project: ProjectRecord) {
     setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)]);
@@ -4331,7 +4402,6 @@ function App() {
           )
         );
         let syncedProject = layoutResponse.project;
-        clearLocalImportDraft(currentProject.id);
         setUploadPercent(100);
         setMessage(copy.uploadOriginalsReceived);
         upsertProject(syncedProject);
@@ -6097,6 +6167,11 @@ function App() {
                          <span>{copy.estimatedPoints}</span>
                         <strong>{workspacePointsEstimate}</strong>
                       </div>
+                      {showRetryProcessingAction && (
+                        <button className="ghost-button compact" type="button" onClick={() => void handleStartProcessing()} disabled={busy}>
+                          {copy.retryProcessing}
+                        </button>
+                      )}
                     </div>
                     <div className="progress-bar">
                       <span style={{ width: `${getProjectProgress(currentProject, uploadPercent)}%` }} />
