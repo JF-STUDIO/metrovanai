@@ -110,6 +110,15 @@ Staging deploy: live
 Staging /api/health: passed
 Staging direct R2 upload capability: enabled
 Commercial readiness check against staging: 0 failed public checks
+Full staging E2E: passed
+  - register and email verification
+  - test credit via signed Stripe webhook
+  - direct R2 upload
+  - frontend HDR layout confirmation
+  - Runpod processing and result return
+  - single result download
+  - free color-card regeneration
+  - project ZIP download
 ```
 
 The staging API uses the same production database and R2 bucket. Keep full upload/process tests limited to a deliberate test account or a known disposable project so production user data is not accidentally changed.
