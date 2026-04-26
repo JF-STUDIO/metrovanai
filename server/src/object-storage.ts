@@ -279,9 +279,16 @@ export async function uploadFileToObjectStorage(input: {
   }
 
   const uploadUrl = createPresignedUrl(config, 'PUT', input.storageKey, config.uploadExpiresSeconds);
+  const contentLength = fs.statSync(input.sourcePath).size;
+  const headers: Record<string, string> = {
+    'Content-Length': String(contentLength)
+  };
+  if (input.contentType) {
+    headers['Content-Type'] = input.contentType;
+  }
   const requestInit = {
     method: 'PUT',
-    headers: input.contentType ? { 'Content-Type': input.contentType } : undefined,
+    headers,
     body: fs.createReadStream(input.sourcePath) as unknown as BodyInit,
     duplex: 'half'
   } as RequestInit & { duplex: 'half' };
