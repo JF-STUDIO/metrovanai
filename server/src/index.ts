@@ -33,6 +33,7 @@ import {
 } from './auth.js';
 import { buildProjectDownloadArchive, getDefaultDownloadOptions } from './downloads.js';
 import { buildHdrItemsFromFrontendLayout } from './importer.js';
+import { extractPreviewOrConvertToJpeg } from './images.js';
 import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js';
 import {
   assertDirectObjectUploadConfigured,
@@ -1088,6 +1089,42 @@ function sendProtectedStorageFile(res: express.Response, filePath: string | null
   res.sendFile(resolvedPath);
 }
 
+async function ensureExposurePreviewFile(exposure: ExposureFile) {
+  try {
+    if (!exposure.previewPath) {
+      return null;
+    }
+
+    const previewPath = path.resolve(exposure.previewPath);
+    const storageRoot = store.getStorageRoot();
+    if (!isPathInsideDirectory(previewPath, storageRoot)) {
+      return null;
+    }
+
+    if (fs.existsSync(previewPath) && fs.statSync(previewPath).isFile()) {
+      return previewPath;
+    }
+
+    const sourcePath = path.resolve(exposure.storagePath);
+    if (!isPathInsideDirectory(sourcePath, storageRoot)) {
+      return null;
+    }
+
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      await restoreObjectToFileIfAvailable(exposure.storageKey, sourcePath);
+    }
+
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      return null;
+    }
+
+    await extractPreviewOrConvertToJpeg(sourcePath, previewPath, 88, 1600);
+    return previewPath;
+  } catch {
+    return null;
+  }
+}
+
 function getOwnedProjectFromRequest(req: express.Request, res: express.Response) {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
@@ -1153,7 +1190,7 @@ function allocateOriginalTargetPath(originalsDir: string, desiredFileName: strin
   }
 }
 
-function commitStagedOriginals(projectId: string) {
+async function commitStagedOriginals(projectId: string) {
   const project = store.getProject(projectId);
   if (!project) {
     return null;
@@ -1180,6 +1217,25 @@ function commitStagedOriginals(projectId: string) {
       .map((filePath) => path.resolve(filePath).toLowerCase())
   );
   const committedPaths = new Map<string, string>();
+  const stagedExposureByPath = new Map<string, (typeof project.hdrItems)[number]['exposures'][number]>();
+
+  for (const hdrItem of project.hdrItems) {
+    for (const exposure of hdrItem.exposures) {
+      const resolvedStoragePath = path.resolve(exposure.storagePath);
+      if (isPathInsideDirectory(resolvedStoragePath, dirs.staging)) {
+        stagedExposureByPath.set(resolvedStoragePath.toLowerCase(), exposure);
+      }
+    }
+  }
+
+  for (const sourcePath of stagedSourcePaths) {
+    if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isFile()) {
+      continue;
+    }
+
+    const exposure = stagedExposureByPath.get(path.resolve(sourcePath).toLowerCase());
+    await restoreObjectToFileIfAvailable(exposure?.storageKey, sourcePath);
+  }
 
   for (const sourcePath of stagedSourcePaths) {
     if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
@@ -2860,7 +2916,7 @@ app.patch('/api/projects/:id', (req, res) => {
   respondWithProject(res, project);
 });
 
-app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', (req, res) => {
+app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', async (req, res) => {
   const owned = getOwnedProjectFromRequest(req, res);
   if (!owned) {
     return;
@@ -2874,14 +2930,17 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', (req, res) => {
 
   const selectedExposure =
     hdrItem.exposures.find((exposure) => exposure.id === hdrItem.selectedExposureId) ?? hdrItem.exposures[0] ?? null;
-  const previewStorageKey = hdrItem.resultPath
-    ? hdrItem.resultKey
-    : (selectedExposure?.previewPath ? selectedExposure.previewKey : selectedExposure?.storageKey);
-  sendProtectedStorageFile(
-    res,
-    hdrItem.resultPath ?? selectedExposure?.previewPath ?? selectedExposure?.storagePath ?? null,
-    previewStorageKey
-  );
+  if (hdrItem.resultPath) {
+    sendProtectedStorageFile(res, hdrItem.resultPath, hdrItem.resultKey);
+    return;
+  }
+
+  let previewPath: string | null = null;
+  if (selectedExposure) {
+    previewPath = await ensureExposurePreviewFile(selectedExposure);
+  }
+
+  sendProtectedStorageFile(res, previewPath ?? selectedExposure?.storagePath ?? null, previewPath ? selectedExposure?.previewKey : selectedExposure?.storageKey);
 });
 
 app.get('/api/projects/:id/hdr-items/:hdrItemId/result', (req, res) => {
@@ -2899,7 +2958,7 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/result', (req, res) => {
   sendProtectedStorageFile(res, hdrItem.resultPath, hdrItem.resultKey);
 });
 
-app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', (req, res) => {
+app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', async (req, res) => {
   const owned = getOwnedProjectFromRequest(req, res);
   if (!owned) {
     return;
@@ -2917,7 +2976,8 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', 
     return;
   }
 
-  sendProtectedStorageFile(res, exposure.previewPath ?? exposure.storagePath, exposure.previewPath ? exposure.previewKey : exposure.storageKey);
+  const previewPath = await ensureExposurePreviewFile(exposure);
+  sendProtectedStorageFile(res, previewPath ?? exposure.storagePath, previewPath ? exposure.previewKey : exposure.storageKey);
 });
 
 app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
@@ -3447,7 +3507,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
       return;
     }
 
-    commitStagedOriginals(projectId);
+    await commitStagedOriginals(projectId);
     const reservation = store.reserveProjectProcessingCredits(projectId, POINT_PRICE_USD);
     if (!reservation.ok) {
       res.status(402).json({
