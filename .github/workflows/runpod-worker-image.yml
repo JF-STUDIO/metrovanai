@@ -1,0 +1,114 @@
+name: Runpod Worker Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/runpod-worker-image.yml"
+      - "runpod-worker/**"
+      - "scripts/smoke-runpod-worker.mjs"
+      - "package.json"
+  pull_request:
+    paths:
+      - ".github/workflows/runpod-worker-image.yml"
+      - "runpod-worker/**"
+      - "scripts/smoke-runpod-worker.mjs"
+      - "package.json"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  smoke:
+    name: Smoke test worker contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+          run_install: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install worker Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r runpod-worker/requirements.txt
+
+      - name: Run worker smoke test
+        run: pnpm smoke:runpod-worker
+
+  build:
+    name: Build and publish GHCR image
+    runs-on: ubuntu-latest
+    needs: smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          repo="${repo,,}"
+          echo "name=ghcr.io/${owner}/${repo}-runpod-worker" >> "$GITHUB_OUTPUT"
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=ref,event=tag
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./runpod-worker
+          file: ./runpod-worker/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Print Runpod image
+        run: |
+          echo "Use this image in Runpod:"
+          echo "${{ steps.image.outputs.name }}:latest"

@@ -8,6 +8,7 @@
     "dev:client": "pnpm --filter metrovan-ai-client dev",
     "dev:server": "pnpm --filter metrovan-ai-server dev",
     "build": "pnpm --filter metrovan-ai-server build && pnpm --filter metrovan-ai-client build",
+    "smoke:runpod-worker": "node ./scripts/smoke-runpod-worker.mjs",
     "check:commercial": "node ./scripts/check-commercial-readiness.mjs"
   }
 }

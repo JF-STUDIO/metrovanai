@@ -6,6 +6,7 @@ import { normalizeHex, sanitizeSegment } from './utils.js';
 import { estimateReferenceWhiteBalanceGains, extractPreviewOrConvertToJpeg, fuseToJpeg } from './images.js';
 import {
   createObjectDownloadUrl,
+  createPersistentObjectKey,
   isObjectStorageConfigured,
   mirrorLocalFileToObjectStorage
 } from './object-storage.js';
@@ -94,6 +95,39 @@ interface RemoteHttpJobStatusResponse {
   result?: RemoteHttpJobResultPayload;
 }
 
+interface RunpodNativeTaskExecutorConfig {
+  apiBaseUrl: string;
+  endpointId: string;
+  apiKey: string;
+  pollMs: number;
+  timeoutSeconds: number;
+  maxInFlight: number;
+  objectUrlExpiresSeconds: number;
+}
+
+interface RunpodNativeJobCreateResponse {
+  id?: string;
+  jobId?: string;
+  status?: string;
+  error?: string;
+}
+
+interface RunpodNativeJobStatusResponse {
+  id?: string;
+  status?: string;
+  output?: unknown;
+  error?: string;
+  delayTime?: number;
+  executionTime?: number;
+}
+
+interface RunpodResultArtifactPayload {
+  storageKey?: string;
+  downloadUrl?: string;
+  base64Data?: string;
+  fileName?: string;
+}
+
 function parsePositiveIntEnv(rawValue: string | undefined, fallback: number) {
   const parsed = Number(rawValue ?? '');
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -123,6 +157,26 @@ function shouldUseObjectStorageForRemoteExecutor() {
   return (value === 'true' || value === '1' || value === 'yes') && isObjectStorageConfigured();
 }
 
+function trimStoragePrefix(value: string | undefined, fallback: string) {
+  return String(value ?? fallback)
+    .trim()
+    .replace(/^\/+|\/+$/g, '');
+}
+
+function isLikelyObjectStorageKey(storageKey: string | null | undefined) {
+  if (!storageKey) {
+    return false;
+  }
+
+  const normalizedKey = storageKey.replace(/\\/g, '/').replace(/^\/+/, '');
+  const prefixes = [
+    trimStoragePrefix(process.env.METROVAN_OBJECT_STORAGE_INCOMING_PREFIX, 'incoming'),
+    trimStoragePrefix(process.env.METROVAN_OBJECT_STORAGE_PERSISTENT_PREFIX, 'projects')
+  ].filter(Boolean);
+
+  return prefixes.some((prefix) => normalizedKey === prefix || normalizedKey.startsWith(`${prefix}/`));
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, '');
 }
@@ -139,6 +193,42 @@ function resolveRemoteHttpTaskExecutorConfig(): RemoteHttpTaskExecutorConfig {
     pollMs: parsePositiveIntEnv(process.env.METROVAN_REMOTE_EXECUTOR_POLL_MS, 2500),
     timeoutSeconds: parsePositiveIntEnv(process.env.METROVAN_REMOTE_EXECUTOR_TIMEOUT_SECONDS, 1800),
     maxInFlight: parsePositiveIntEnv(process.env.METROVAN_REMOTE_EXECUTOR_MAX_IN_FLIGHT, 2)
+  };
+}
+
+function resolveRunpodNativeTaskExecutorConfig(): RunpodNativeTaskExecutorConfig {
+  const endpointId = String(process.env.METROVAN_RUNPOD_ENDPOINT_ID ?? '').trim();
+  const apiKey = String(process.env.METROVAN_RUNPOD_API_KEY ?? '').trim();
+
+  if (!endpointId) {
+    throw new Error('METROVAN_RUNPOD_ENDPOINT_ID is required when task executor is runpod-native.');
+  }
+
+  if (!apiKey) {
+    throw new Error('METROVAN_RUNPOD_API_KEY is required when task executor is runpod-native.');
+  }
+
+  if (!isObjectStorageConfigured()) {
+    throw new Error('Object storage is required when task executor is runpod-native.');
+  }
+
+  return {
+    apiBaseUrl: trimTrailingSlash(String(process.env.METROVAN_RUNPOD_API_BASE_URL ?? 'https://api.runpod.ai/v2').trim()),
+    endpointId,
+    apiKey,
+    pollMs: parsePositiveIntEnv(
+      process.env.METROVAN_RUNPOD_POLL_MS ?? process.env.METROVAN_REMOTE_EXECUTOR_POLL_MS,
+      2500
+    ),
+    timeoutSeconds: parsePositiveIntEnv(
+      process.env.METROVAN_RUNPOD_TIMEOUT_SECONDS ?? process.env.METROVAN_REMOTE_EXECUTOR_TIMEOUT_SECONDS,
+      3600
+    ),
+    maxInFlight: parsePositiveIntEnv(
+      process.env.METROVAN_RUNPOD_MAX_IN_FLIGHT ?? process.env.METROVAN_REMOTE_EXECUTOR_MAX_IN_FLIGHT,
+      5
+    ),
+    objectUrlExpiresSeconds: parsePositiveIntEnv(process.env.METROVAN_RUNPOD_OBJECT_URL_EXPIRES_SECONDS, 6 * 60 * 60)
   };
 }
 
@@ -163,6 +253,90 @@ async function readRemoteJson<T>(response: Response, fallbackMessage: string): P
   }
 
   return (parsed ?? {}) as T;
+}
+
+function createRunpodHeaders(config: RunpodNativeTaskExecutorConfig) {
+  const headers = new Headers();
+  headers.set('Authorization', `Bearer ${config.apiKey}`);
+  headers.set('Content-Type', 'application/json');
+  return headers;
+}
+
+function normalizeRunpodStatus(status: string | undefined) {
+  return String(status ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function isRunpodCompletedStatus(status: string | undefined) {
+  return ['completed', 'complete', 'success', 'succeeded'].includes(normalizeRunpodStatus(status));
+}
+
+function isRunpodFailedStatus(status: string | undefined) {
+  return ['failed', 'failure', 'cancelled', 'canceled', 'timed_out', 'timeout'].includes(normalizeRunpodStatus(status));
+}
+
+function getNestedString(value: unknown, pathSegments: string[]) {
+  let current = value;
+  for (const segment of pathSegments) {
+    if (!current || typeof current !== 'object' || !(segment in current)) {
+      return '';
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return typeof current === 'string' ? current : '';
+}
+
+function extractRunpodProgress(payload: RunpodNativeJobStatusResponse) {
+  const output = payload.output;
+  const candidates = [
+    typeof output === 'object' && output ? (output as Record<string, unknown>).progress : null,
+    typeof output === 'object' && output ? (output as Record<string, unknown>).progressPercent : null,
+    typeof output === 'object' && output ? (output as Record<string, unknown>).percent : null
+  ];
+  const numeric = candidates.find((entry) => typeof entry === 'number' && Number.isFinite(entry));
+  if (typeof numeric !== 'number') {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function extractRunpodResultArtifact(output: unknown): RunpodResultArtifactPayload {
+  if (!output || typeof output !== 'object') {
+    return {};
+  }
+
+  const outputRecord = output as Record<string, unknown>;
+  const result =
+    outputRecord.result && typeof outputRecord.result === 'object'
+      ? (outputRecord.result as Record<string, unknown>)
+      : {};
+  const results =
+    Array.isArray(outputRecord.results) && outputRecord.results[0] && typeof outputRecord.results[0] === 'object'
+      ? (outputRecord.results[0] as Record<string, unknown>)
+      : {};
+
+  return {
+    storageKey:
+      getNestedString(outputRecord, ['storageKey']) ||
+      getNestedString(outputRecord, ['resultStorageKey']) ||
+      getNestedString(result, ['storageKey']) ||
+      getNestedString(results, ['storageKey']),
+    downloadUrl:
+      getNestedString(outputRecord, ['downloadUrl']) ||
+      getNestedString(outputRecord, ['url']) ||
+      getNestedString(result, ['downloadUrl']) ||
+      getNestedString(result, ['url']) ||
+      getNestedString(results, ['downloadUrl']) ||
+      getNestedString(results, ['url']),
+    base64Data:
+      getNestedString(outputRecord, ['base64Data']) ||
+      getNestedString(outputRecord, ['imageBase64']) ||
+      getNestedString(result, ['base64Data']) ||
+      getNestedString(results, ['base64Data']),
+    fileName:
+      getNestedString(outputRecord, ['fileName']) ||
+      getNestedString(result, ['fileName']) ||
+      getNestedString(results, ['fileName'])
+  };
 }
 
 function createLocalHdrMergeContext(store: LocalStore) {
@@ -264,6 +438,48 @@ function createLocalHdrMergeContext(store: LocalStore) {
       mergedPath,
       mergedFileName,
       mergedStorageKey: mirrored?.storageKey ?? null
+    };
+  };
+
+  return {
+    ensureMergedHdrItem
+  };
+}
+
+function createRunpodManifestContext() {
+  const ensureMergedHdrItem = async (_project: ProjectRecord, hdrItem: HdrItem, hdrDir: string) => {
+    const selectedExposure =
+      hdrItem.exposures.find((exposure) => exposure.id === hdrItem.selectedExposureId) ?? hdrItem.exposures[0];
+    const baseName =
+      sanitizeSegment(
+        path.basename(selectedExposure?.originalName ?? hdrItem.title, path.extname(selectedExposure?.originalName ?? ''))
+      ) || sanitizeSegment(hdrItem.id);
+    const mergedFileName = `${baseName || 'hdr'}.jpg`;
+    const mergedPath = path.join(hdrDir, `${baseName || 'hdr'}_runpod-input.json`);
+
+    fs.mkdirSync(hdrDir, { recursive: true });
+    fs.writeFileSync(
+      mergedPath,
+      JSON.stringify(
+        {
+          version: 1,
+          executor: 'runpod-native',
+          hdrItemId: hdrItem.id,
+          title: hdrItem.title,
+          selectedExposureId: hdrItem.selectedExposureId,
+          exposureIds: hdrItem.exposures.map((exposure) => exposure.id),
+          createdAt: new Date().toISOString()
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+
+    return {
+      mergedPath,
+      mergedFileName,
+      mergedStorageKey: null
     };
   };
 
@@ -584,6 +800,311 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
   }
 }
 
+class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
+  constructor(private readonly store: LocalStore) {}
+
+  getInfo(): TaskExecutionProviderInfo {
+    return {
+      provider: 'runpod-native',
+      workflowEngine: 'runpod-serverless'
+    };
+  }
+
+  createRunContext(): TaskExecutionRunContext {
+    const config = resolveRunpodNativeTaskExecutorConfig();
+    const manifestContext = createRunpodManifestContext();
+    const endpointBaseUrl = `${config.apiBaseUrl}/${encodeURIComponent(config.endpointId)}`;
+
+    const ensureObjectBackedFile = async (input: {
+      project: ProjectRecord;
+      filePath: string | null | undefined;
+      fileName: string;
+      storageKey?: string | null;
+      category: 'originals' | 'results' | 'work';
+      contentType?: string;
+    }) => {
+      if (isLikelyObjectStorageKey(input.storageKey)) {
+        return {
+          storageKey: input.storageKey as string,
+          downloadUrl: createObjectDownloadUrl(input.storageKey as string, config.objectUrlExpiresSeconds)
+        };
+      }
+
+      if (!input.filePath || !fs.existsSync(input.filePath)) {
+        throw new Error(`Source file is missing for ${input.fileName}.`);
+      }
+
+      const mirrored = await mirrorLocalFileToObjectStorage({
+        userKey: input.project.userKey,
+        projectId: input.project.id,
+        category: input.category,
+        sourcePath: input.filePath,
+        fileName: input.fileName,
+        contentType: input.contentType ?? 'application/octet-stream'
+      });
+
+      if (!mirrored?.storageKey) {
+        throw new Error(`Could not prepare cloud source for ${input.fileName}.`);
+      }
+
+      return {
+        storageKey: mirrored.storageKey,
+        downloadUrl: createObjectDownloadUrl(mirrored.storageKey, config.objectUrlExpiresSeconds)
+      };
+    };
+
+    const buildExposurePayload = async (project: ProjectRecord, hdrItem: HdrItem) =>
+      await Promise.all(
+        hdrItem.exposures.map(async (exposure) => {
+          const objectSource = await ensureObjectBackedFile({
+            project,
+            filePath: exposure.storagePath,
+            fileName: exposure.originalName || exposure.fileName,
+            storageKey: exposure.storageKey,
+            category: 'originals',
+            contentType: exposure.mimeType || 'application/octet-stream'
+          });
+
+          return {
+            id: exposure.id,
+            fileName: exposure.fileName,
+            originalName: exposure.originalName,
+            extension: exposure.extension,
+            mimeType: exposure.mimeType,
+            size: exposure.size,
+            isRaw: exposure.isRaw,
+            storageKey: objectSource.storageKey,
+            downloadUrl: objectSource.downloadUrl,
+            captureTime: exposure.captureTime,
+            sequenceNumber: exposure.sequenceNumber,
+            exposureCompensation: exposure.exposureCompensation,
+            exposureSeconds: exposure.exposureSeconds,
+            iso: exposure.iso,
+            fNumber: exposure.fNumber,
+            focalLength: exposure.focalLength
+          };
+        })
+      );
+
+    const writeResultArtifact = async (input: {
+      project: ProjectRecord;
+      jobId: string;
+      result: RunpodResultArtifactPayload;
+      resultPath: string;
+      outputStorageKey: string;
+    }) => {
+      let outputBuffer: Buffer;
+      let outputExtension = path.extname(input.result.fileName ?? '') || '.jpg';
+      let mirroredStorageKey: string | null = null;
+
+      if (input.result.base64Data) {
+        outputBuffer = Buffer.from(input.result.base64Data, 'base64');
+      } else if (input.result.storageKey) {
+        const objectDownloadResponse = await fetch(
+          createObjectDownloadUrl(input.result.storageKey, config.objectUrlExpiresSeconds)
+        );
+        if (!objectDownloadResponse.ok) {
+          throw new Error(`Failed to download cloud result (${objectDownloadResponse.status}).`);
+        }
+        outputBuffer = Buffer.from(await objectDownloadResponse.arrayBuffer());
+        outputExtension = path.extname(input.result.storageKey) || outputExtension;
+        mirroredStorageKey = input.result.storageKey;
+      } else if (input.result.downloadUrl) {
+        const downloadResponse = await fetch(input.result.downloadUrl);
+        if (!downloadResponse.ok) {
+          throw new Error(`Failed to download cloud result (${downloadResponse.status}).`);
+        }
+        outputBuffer = Buffer.from(await downloadResponse.arrayBuffer());
+        try {
+          outputExtension = path.extname(new URL(input.result.downloadUrl).pathname) || outputExtension;
+        } catch {
+          // Keep the fallback extension.
+        }
+      } else {
+        const objectDownloadResponse = await fetch(createObjectDownloadUrl(input.outputStorageKey, config.objectUrlExpiresSeconds));
+        if (!objectDownloadResponse.ok) {
+          throw new Error('Runpod job completed without returning a result artifact.');
+        }
+        outputBuffer = Buffer.from(await objectDownloadResponse.arrayBuffer());
+        mirroredStorageKey = input.outputStorageKey;
+      }
+
+      const tempDownloadPath = path.join(
+        process.env.TEMP ?? process.cwd(),
+        'metrovan_runpod_results',
+        `${input.jobId}${outputExtension || '.jpg'}`
+      );
+      fs.mkdirSync(path.dirname(tempDownloadPath), { recursive: true });
+      fs.writeFileSync(tempDownloadPath, outputBuffer);
+
+      await extractPreviewOrConvertToJpeg(tempDownloadPath, input.resultPath, 95);
+
+      if (!mirroredStorageKey) {
+        const mirrored = await mirrorLocalFileToObjectStorage({
+          userKey: input.project.userKey,
+          projectId: input.project.id,
+          category: 'results',
+          sourcePath: input.resultPath,
+          fileName: path.basename(input.resultPath),
+          contentType: 'image/jpeg'
+        });
+        mirroredStorageKey = mirrored?.storageKey ?? null;
+      }
+
+      try {
+        fs.rmSync(tempDownloadPath, { force: true });
+      } catch {
+        // ignore
+      }
+
+      return mirroredStorageKey;
+    };
+
+    const executeWorkflowTask = async (
+      project: ProjectRecord,
+      hdrItem: HdrItem,
+      mergedPath: string,
+      mergedFileName: string,
+      onProgress?: (update: WorkflowExecutionProgress) => void,
+      options?: WorkflowExecutionOptions
+    ) => {
+      const group = project.groups.find((entry) => entry.id === hdrItem.groupId);
+      if (!group) {
+        throw new Error(`Missing project group for HDR item ${hdrItem.id}.`);
+      }
+
+      const resultPath = buildWorkflowResultTargetPath(this.store, project, mergedFileName, options);
+      const resultFileName = path.basename(resultPath);
+      const outputStorageKey = createPersistentObjectKey({
+        userKey: project.userKey,
+        projectId: project.id,
+        category: 'results',
+        fileName: resultFileName
+      });
+
+      const mode = options?.mode ?? 'default';
+      const inputPayload =
+        mode === 'regenerate'
+          ? {
+              sourceImage: await ensureObjectBackedFile({
+                project,
+                filePath: mergedPath,
+                fileName: mergedFileName,
+                storageKey: hdrItem.resultKey,
+                category: 'results',
+                contentType: 'image/jpeg'
+              })
+            }
+          : {
+              exposures: await buildExposurePayload(project, hdrItem)
+            };
+
+      const createResponse = await fetch(`${endpointBaseUrl}/run`, {
+        method: 'POST',
+        headers: createRunpodHeaders(config),
+        body: JSON.stringify({
+          input: {
+            contractVersion: 'metrovan.runpod.v1',
+            projectId: project.id,
+            userKey: project.userKey,
+            hdrItemId: hdrItem.id,
+            title: hdrItem.title,
+            sceneType: group.sceneType,
+            colorMode: group.colorMode,
+            replacementColor: normalizeHex(group.replacementColor),
+            workflowMode: mode,
+            colorCardNo: options?.colorCardNo ?? null,
+            outputSuffix: options?.outputSuffix ?? null,
+            output: {
+              storageKey: outputStorageKey,
+              fileName: resultFileName,
+              contentType: 'image/jpeg'
+            },
+            ...inputPayload
+          }
+        })
+      });
+      const created = await readRemoteJson<RunpodNativeJobCreateResponse>(
+        createResponse,
+        'Runpod job submission failed.'
+      );
+      const jobId = created.id ?? created.jobId;
+      if (!jobId) {
+        throw new Error(created.error || 'Runpod did not return a job id.');
+      }
+
+      onProgress?.({
+        monitorState: created.status ?? 'submitted',
+        detail: `cloud job ${jobId} submitted`,
+        remoteProgress: 0,
+        queuePosition: 0,
+        workflowName: 'runpod-native',
+        taskId: jobId
+      });
+
+      const deadline = Date.now() + config.timeoutSeconds * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, config.pollMs));
+
+        const statusResponse = await fetch(`${endpointBaseUrl}/status/${encodeURIComponent(jobId)}`, {
+          headers: createRunpodHeaders(config)
+        });
+        const statusPayload = await readRemoteJson<RunpodNativeJobStatusResponse>(
+          statusResponse,
+          'Runpod status check failed.'
+        );
+        const remoteProgress = extractRunpodProgress(statusPayload);
+        const status = statusPayload.status ?? 'processing';
+
+        onProgress?.({
+          monitorState: status,
+          detail: `cloud job ${jobId} ${status}`,
+          remoteProgress,
+          queuePosition: Math.max(0, Math.round((statusPayload.delayTime ?? 0) / 1000)),
+          workflowName: 'runpod-native',
+          taskId: jobId
+        });
+
+        if (isRunpodFailedStatus(status)) {
+          throw new Error(statusPayload.error || `Cloud job ${jobId} failed.`);
+        }
+
+        if (!isRunpodCompletedStatus(status)) {
+          continue;
+        }
+
+        const result = extractRunpodResultArtifact(statusPayload.output);
+        const resultStorageKey = await writeResultArtifact({
+          project,
+          jobId,
+          result,
+          resultPath,
+          outputStorageKey
+        });
+
+        return {
+          resultPath,
+          resultFileName,
+          resultStorageKey
+        };
+      }
+
+      throw new Error(`Cloud job timed out after ${config.timeoutSeconds} seconds.`);
+    };
+
+    return {
+      getMergeConcurrency(totalPendingItems: number) {
+        return Math.max(1, Math.min(config.maxInFlight, totalPendingItems));
+      },
+      getMaxConcurrency(totalPendingItems: number) {
+        return Math.max(1, Math.min(config.maxInFlight, totalPendingItems));
+      },
+      ensureMergedHdrItem: manifestContext.ensureMergedHdrItem,
+      executeWorkflowTask
+    };
+  }
+}
+
 export function createTaskExecutionProvider(
   provider: string | undefined,
   options: { repoRoot: string; store: LocalStore }
@@ -595,6 +1116,10 @@ export function createTaskExecutionProvider(
 
   if (normalizedProvider === 'runpod-http' || normalizedProvider === 'remote-http') {
     return new RemoteHttpTaskExecutionProvider(options.store);
+  }
+
+  if (normalizedProvider === 'runpod-native' || normalizedProvider === 'runpod-serverless') {
+    return new RunpodNativeTaskExecutionProvider(options.store);
   }
 
   throw new Error(`Unsupported task execution provider: ${provider}`);

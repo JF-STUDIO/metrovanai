@@ -37,7 +37,11 @@ export function buildDeploymentReadiness(input: {
   const objectStorageEndpointReady = hasEnv('METROVAN_OBJECT_STORAGE_ENDPOINT');
   const directUploadEnabled = isEnabledEnv('METROVAN_DIRECT_UPLOAD_ENABLED');
   const remoteObjectIoEnabled = isEnabledEnv('METROVAN_REMOTE_EXECUTOR_OBJECT_IO');
-  const remoteExecutorEnvReady = hasEnv('METROVAN_REMOTE_EXECUTOR_URL');
+  const remoteHttpExecutorEnvReady = hasEnv('METROVAN_REMOTE_EXECUTOR_URL');
+  const runpodNativeExecutorEnvReady = hasEnv('METROVAN_RUNPOD_ENDPOINT_ID') && hasEnv('METROVAN_RUNPOD_API_KEY');
+  const remoteExecutorEnvReady = remoteHttpExecutorEnvReady || runpodNativeExecutorEnvReady;
+  const remoteObjectTransportReady =
+    (remoteObjectIoEnabled || runpodNativeExecutorEnvReady) && objectStorageEnvReady && objectStorageEndpointReady;
   const stripeEnvReady = hasEnv('METROVAN_STRIPE_SECRET_KEY') && hasEnv('METROVAN_STRIPE_WEBHOOK_SECRET');
   const checks: DeploymentReadinessCheck[] = [
     {
@@ -82,23 +86,25 @@ export function buildDeploymentReadiness(input: {
       current: describeProvider(input.executor),
       next:
         input.executor.provider === 'local-runninghub'
-          ? 'Keep local-runninghub for testing. For Runpod, set taskExecutor=runpod-http and METROVAN_REMOTE_EXECUTOR_URL.'
+          ? 'Keep local-runninghub for testing. For commercial cloud processing, set METROVAN_TASK_EXECUTOR=runpod-native with Runpod endpoint envs, or runpod-http with a custom adapter.'
           : 'Remote executor provider is active.'
     },
     {
       id: 'executor.remote_env',
       status: remoteExecutorEnvReady ? 'ready' : 'planned',
       current: remoteExecutorEnvReady ? 'configured' : 'not configured',
-      next: 'Runpod worker must implement POST /jobs and GET /jobs/:id as documented in the commercial cutover contract.'
+      next: runpodNativeExecutorEnvReady
+        ? 'Runpod native env is configured. Worker input contract is metrovan.runpod.v1.'
+        : 'For Runpod native set METROVAN_RUNPOD_ENDPOINT_ID and METROVAN_RUNPOD_API_KEY. For a custom adapter set METROVAN_REMOTE_EXECUTOR_URL.'
     },
     {
       id: 'executor.object_io',
-      status: remoteObjectIoEnabled && objectStorageEnvReady && objectStorageEndpointReady ? 'ready' : 'planned',
-      current: remoteObjectIoEnabled ? 'enabled' : 'disabled',
+      status: remoteObjectTransportReady ? 'ready' : 'planned',
+      current: runpodNativeExecutorEnvReady ? 'required by runpod-native' : remoteObjectIoEnabled ? 'enabled' : 'disabled',
       next:
-        remoteObjectIoEnabled && objectStorageEnvReady && objectStorageEndpointReady
-          ? 'Remote executor can receive object keys/presigned URLs instead of base64 image payloads.'
-          : 'After S3/R2 is configured, set METROVAN_REMOTE_EXECUTOR_OBJECT_IO=true to avoid large base64 payloads.'
+        remoteObjectTransportReady
+          ? 'Remote executor can receive object keys/presigned URLs instead of large base64 payloads.'
+          : 'After S3/R2 is configured, use runpod-native or set METROVAN_REMOTE_EXECUTOR_OBJECT_IO=true for the custom adapter.'
     },
     {
       id: 'payment.stripe_env',
