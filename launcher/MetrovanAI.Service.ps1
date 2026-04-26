@@ -5,6 +5,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$localWatchdogEnabled = [string]$env:METROVAN_LOCAL_WATCHDOG_ENABLED
+if ($localWatchdogEnabled.Trim().ToLowerInvariant() -notin @('1', 'true', 'yes', 'on')) {
+  exit 0
+}
+
 . (Join-Path $PSScriptRoot 'MetrovanAI.Common.ps1')
 
 $mutex = Acquire-WatchdogMutex
