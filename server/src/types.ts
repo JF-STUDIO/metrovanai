@@ -235,6 +235,10 @@ export interface AuditLogEntry {
   createdAt: string;
 }
 
+export interface SystemSettings {
+  runpodHdrBatchSize: number;
+}
+
 export interface SessionRecord {
   id: string;
   userId: string;

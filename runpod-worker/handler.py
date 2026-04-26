@@ -190,10 +190,60 @@ def upload_result(output_path: Path, output: dict[str, Any]) -> str:
     return storage_key
 
 
+def produce_batch_results(input_payload: dict[str, Any], work_dir: Path) -> list[dict[str, Any]]:
+    items = input_payload.get("items")
+    if not isinstance(items, list) or not items:
+        raise RuntimeError("Batch job input must include a non-empty items array.")
+
+    common_payload = {key: value for key, value in input_payload.items() if key not in {"items", "output"}}
+    results: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(items):
+        if not isinstance(raw_item, dict):
+            results.append({"hdrItemId": f"item-{index}", "errorMessage": "Batch item must be an object."})
+            continue
+
+        hdr_item_id = str(raw_item.get("hdrItemId") or f"item-{index}")
+        item_output = raw_item.get("output")
+        if not isinstance(item_output, dict):
+            results.append({"hdrItemId": hdr_item_id, "errorMessage": "Batch item output contract is missing."})
+            continue
+
+        item_dir = work_dir / f"item_{index:03d}_{sanitize_file_name(hdr_item_id, f'item-{index}')}"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        item_payload = {**common_payload, **raw_item}
+        output_file_name = sanitize_file_name(str(item_output.get("fileName") or f"{hdr_item_id}.jpg"), f"{hdr_item_id}.jpg")
+        output_path = item_dir / output_file_name
+
+        try:
+            produce_result(item_payload, item_dir, output_path)
+            storage_key = upload_result(output_path, item_output)
+            results.append(
+                {
+                    "hdrItemId": hdr_item_id,
+                    "storageKey": storage_key,
+                    "fileName": output_file_name,
+                    "progress": 100,
+                }
+            )
+        except Exception as exc:
+            results.append({"hdrItemId": hdr_item_id, "errorMessage": str(exc)})
+
+    return results
+
+
 def handler(job: dict[str, Any]) -> dict[str, Any]:
     input_payload = job.get("input")
     if not isinstance(input_payload, dict):
         raise RuntimeError("Runpod job input must be an object.")
+
+    if isinstance(input_payload.get("items"), list):
+        with tempfile.TemporaryDirectory(prefix="metrovan-runpod-batch-") as temp_root:
+            work_dir = Path(temp_root)
+            results = produce_batch_results(input_payload, work_dir)
+        return {
+            "results": results,
+            "progress": 100,
+        }
 
     output = input_payload.get("output")
     if not isinstance(output, dict):

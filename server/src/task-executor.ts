@@ -19,6 +19,7 @@ export interface TaskExecutionProviderInfo {
 }
 
 export interface WorkflowExecutionProgress {
+  hdrItemId?: string;
   monitorState: string;
   detail: string;
   remoteProgress: number;
@@ -39,6 +40,18 @@ export interface WorkflowExecutionArtifact {
   resultStorageKey?: string | null;
 }
 
+export interface WorkflowBatchExecutionItem {
+  hdrItem: HdrItem;
+  mergedPath: string;
+  mergedFileName: string;
+}
+
+export interface WorkflowBatchExecutionResult {
+  hdrItemId: string;
+  artifact?: WorkflowExecutionArtifact;
+  errorMessage?: string;
+}
+
 export interface WorkflowExecutionOptions {
   mode?: 'default' | 'regenerate';
   colorCardNo?: string | null;
@@ -48,6 +61,7 @@ export interface WorkflowExecutionOptions {
 export interface TaskExecutionRunContext {
   getMergeConcurrency(totalPendingItems: number): number;
   getMaxConcurrency(totalPendingItems: number): number;
+  getWorkflowBatchSize?(totalPendingItems: number): number;
   ensureMergedHdrItem(project: ProjectRecord, hdrItem: HdrItem, hdrDir: string): Promise<MergedHdrArtifact>;
   executeWorkflowTask(
     project: ProjectRecord,
@@ -57,6 +71,12 @@ export interface TaskExecutionRunContext {
     onProgress?: (update: WorkflowExecutionProgress) => void,
     options?: WorkflowExecutionOptions
   ): Promise<WorkflowExecutionArtifact>;
+  executeWorkflowBatch?(
+    project: ProjectRecord,
+    items: WorkflowBatchExecutionItem[],
+    onProgress?: (update: WorkflowExecutionProgress) => void,
+    options?: WorkflowExecutionOptions
+  ): Promise<WorkflowBatchExecutionResult[]>;
 }
 
 export interface TaskExecutionProvider {
@@ -102,6 +122,7 @@ interface RunpodNativeTaskExecutorConfig {
   pollMs: number;
   timeoutSeconds: number;
   maxInFlight: number;
+  batchSize: number;
   objectUrlExpiresSeconds: number;
 }
 
@@ -122,10 +143,12 @@ interface RunpodNativeJobStatusResponse {
 }
 
 interface RunpodResultArtifactPayload {
+  hdrItemId?: string;
   storageKey?: string;
   downloadUrl?: string;
   base64Data?: string;
   fileName?: string;
+  errorMessage?: string;
 }
 
 function parsePositiveIntEnv(rawValue: string | undefined, fallback: number) {
@@ -233,6 +256,7 @@ function resolveRunpodNativeTaskExecutorConfig(): RunpodNativeTaskExecutorConfig
       process.env.METROVAN_RUNPOD_MAX_IN_FLIGHT ?? process.env.METROVAN_REMOTE_EXECUTOR_MAX_IN_FLIGHT,
       5
     ),
+    batchSize: Math.max(1, Math.min(10, parsePositiveIntEnv(process.env.METROVAN_RUNPOD_BATCH_SIZE, 10))),
     objectUrlExpiresSeconds: parsePositiveIntEnv(process.env.METROVAN_RUNPOD_OBJECT_URL_EXPIRES_SECONDS, 6 * 60 * 60)
   };
 }
@@ -320,6 +344,10 @@ function extractRunpodResultArtifact(output: unknown): RunpodResultArtifactPaylo
       : {};
 
   return {
+    hdrItemId:
+      getNestedString(outputRecord, ['hdrItemId']) ||
+      getNestedString(result, ['hdrItemId']) ||
+      getNestedString(results, ['hdrItemId']),
     storageKey:
       getNestedString(outputRecord, ['storageKey']) ||
       getNestedString(outputRecord, ['resultStorageKey']) ||
@@ -340,8 +368,30 @@ function extractRunpodResultArtifact(output: unknown): RunpodResultArtifactPaylo
     fileName:
       getNestedString(outputRecord, ['fileName']) ||
       getNestedString(result, ['fileName']) ||
-      getNestedString(results, ['fileName'])
+      getNestedString(results, ['fileName']),
+    errorMessage:
+      getNestedString(outputRecord, ['errorMessage']) ||
+      getNestedString(outputRecord, ['error']) ||
+      getNestedString(result, ['errorMessage']) ||
+      getNestedString(result, ['error']) ||
+      getNestedString(results, ['errorMessage']) ||
+      getNestedString(results, ['error'])
   };
+}
+
+function extractRunpodResultArtifacts(output: unknown): RunpodResultArtifactPayload[] {
+  if (!output || typeof output !== 'object') {
+    return [];
+  }
+
+  const outputRecord = output as Record<string, unknown>;
+  const possibleResults = outputRecord.results;
+  if (Array.isArray(possibleResults)) {
+    return possibleResults.map((item) => extractRunpodResultArtifact(item));
+  }
+
+  const single = extractRunpodResultArtifact(output);
+  return single.storageKey || single.downloadUrl || single.base64Data || single.errorMessage ? [single] : [];
 }
 
 function createLocalHdrMergeContext(store: LocalStore) {
@@ -843,7 +893,14 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
   }
 
   createRunContext(): TaskExecutionRunContext {
-    const config = resolveRunpodNativeTaskExecutorConfig();
+    const resolvedConfig = resolveRunpodNativeTaskExecutorConfig();
+    const config = {
+      ...resolvedConfig,
+      batchSize: Math.max(
+        1,
+        Math.min(10, this.store.getSystemSettings?.().runpodHdrBatchSize ?? resolvedConfig.batchSize)
+      )
+    };
     const manifestContext = createRunpodManifestContext();
     const endpointBaseUrl = `${config.apiBaseUrl}/${encodeURIComponent(config.endpointId)}`;
     const postWorkflowEnabled = shouldRunpodPostWorkflow();
@@ -1171,15 +1228,238 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       throw new Error(`Cloud job timed out after ${config.timeoutSeconds} seconds.`);
     };
 
+    const executeWorkflowBatch = async (
+      project: ProjectRecord,
+      items: WorkflowBatchExecutionItem[],
+      onProgress?: (update: WorkflowExecutionProgress) => void,
+      options?: WorkflowExecutionOptions
+    ): Promise<WorkflowBatchExecutionResult[]> => {
+      const mode = options?.mode ?? 'default';
+      if (mode !== 'default' || items.length <= 1) {
+        return await Promise.all(
+          items.map(async (item) => {
+            try {
+              const artifact = await executeWorkflowTask(
+                project,
+                item.hdrItem,
+                item.mergedPath,
+                item.mergedFileName,
+                onProgress,
+                options
+              );
+              return { hdrItemId: item.hdrItem.id, artifact };
+            } catch (error) {
+              return {
+                hdrItemId: item.hdrItem.id,
+                errorMessage: error instanceof Error ? error.message : String(error)
+              };
+            }
+          })
+        );
+      }
+
+      const batch = items.slice(0, config.batchSize);
+      const stagedByHdrItemId = new Map<
+        string,
+        {
+          item: WorkflowBatchExecutionItem;
+          runpodStagePath: string;
+          runpodStageFileName: string;
+          outputStorageKey: string;
+        }
+      >();
+      const runpodItems = await Promise.all(
+        batch.map(async (item) => {
+          const group = project.groups.find((entry) => entry.id === item.hdrItem.groupId);
+          if (!group) {
+            throw new Error(`Missing project group for HDR item ${item.hdrItem.id}.`);
+          }
+
+          const resultPath = buildWorkflowResultTargetPath(this.store, project, item.mergedFileName, options);
+          const resultFileName = path.basename(resultPath);
+          const runpodStageFileName = postWorkflowEnabled
+            ? `${path.basename(resultFileName, path.extname(resultFileName))}_runpod-stage.jpg`
+            : resultFileName;
+          const runpodStagePath = postWorkflowEnabled
+            ? path.join(this.store.getProjectDirectories(project).hdr, runpodStageFileName)
+            : resultPath;
+          fs.mkdirSync(path.dirname(runpodStagePath), { recursive: true });
+          const outputStorageKey = createPersistentObjectKey({
+            userKey: project.userKey,
+            projectId: project.id,
+            category: postWorkflowEnabled ? 'work' : 'results',
+            fileName: runpodStageFileName
+          });
+
+          stagedByHdrItemId.set(item.hdrItem.id, {
+            item,
+            runpodStagePath,
+            runpodStageFileName,
+            outputStorageKey
+          });
+
+          return {
+            projectId: project.id,
+            userKey: project.userKey,
+            hdrItemId: item.hdrItem.id,
+            title: item.hdrItem.title,
+            sceneType: group.sceneType,
+            colorMode: group.colorMode,
+            replacementColor: normalizeHex(group.replacementColor),
+            workflowMode: 'default',
+            output: {
+              storageKey: outputStorageKey,
+              fileName: runpodStageFileName,
+              contentType: 'image/jpeg'
+            },
+            exposures: await buildExposurePayload(project, item.hdrItem)
+          };
+        })
+      );
+
+      const createResponse = await fetch(`${endpointBaseUrl}/run`, {
+        method: 'POST',
+        headers: createRunpodHeaders(config),
+        body: JSON.stringify({
+          input: {
+            contractVersion: 'metrovan.runpod.v1',
+            batchVersion: 1,
+            projectId: project.id,
+            userKey: project.userKey,
+            workflowMode: 'default',
+            items: runpodItems
+          }
+        })
+      });
+      const created = await readRemoteJson<RunpodNativeJobCreateResponse>(
+        createResponse,
+        'Runpod batch job submission failed.'
+      );
+      const jobId = created.id ?? created.jobId;
+      if (!jobId) {
+        throw new Error(created.error || 'Runpod did not return a batch job id.');
+      }
+
+      onProgress?.({
+        monitorState: created.status ?? 'submitted',
+        detail: `cloud batch ${jobId} submitted (${batch.length} groups)`,
+        remoteProgress: 0,
+        queuePosition: 0,
+        workflowName: 'runpod-native',
+        taskId: jobId
+      });
+
+      const deadline = Date.now() + config.timeoutSeconds * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, config.pollMs));
+
+        const statusResponse = await fetch(`${endpointBaseUrl}/status/${encodeURIComponent(jobId)}`, {
+          headers: createRunpodHeaders(config)
+        });
+        const statusPayload = await readRemoteJson<RunpodNativeJobStatusResponse>(
+          statusResponse,
+          'Runpod batch status check failed.'
+        );
+        const remoteProgress = extractRunpodProgress(statusPayload);
+        const status = statusPayload.status ?? 'processing';
+
+        onProgress?.({
+          monitorState: status,
+          detail: `cloud batch ${jobId} ${status}`,
+          remoteProgress,
+          queuePosition: Math.max(0, Math.round((statusPayload.delayTime ?? 0) / 1000)),
+          workflowName: 'runpod-native',
+          taskId: jobId
+        });
+
+        if (isRunpodFailedStatus(status)) {
+          throw new Error(statusPayload.error || `Cloud batch ${jobId} failed.`);
+        }
+
+        if (!isRunpodCompletedStatus(status)) {
+          continue;
+        }
+
+        const artifacts = extractRunpodResultArtifacts(statusPayload.output);
+        const artifactByHdrItemId = new Map(artifacts.map((artifact) => [artifact.hdrItemId ?? '', artifact]));
+
+        return await Promise.all(
+          batch.map(async (batchItem) => {
+            const staged = stagedByHdrItemId.get(batchItem.hdrItem.id);
+            const artifact = artifactByHdrItemId.get(batchItem.hdrItem.id);
+            if (!staged) {
+              return { hdrItemId: batchItem.hdrItem.id, errorMessage: 'Batch staging metadata is missing.' };
+            }
+            if (!artifact) {
+              return { hdrItemId: batchItem.hdrItem.id, errorMessage: 'Batch result is missing.' };
+            }
+            if (artifact.errorMessage) {
+              return { hdrItemId: batchItem.hdrItem.id, errorMessage: artifact.errorMessage };
+            }
+
+            try {
+              await writeResultArtifact({
+                project,
+                jobId: `${jobId}-${batchItem.hdrItem.id}`,
+                result: artifact,
+                resultPath: staged.runpodStagePath,
+                outputStorageKey: staged.outputStorageKey
+              });
+
+              if (postWorkflowEnabled) {
+                if (!workflowConfig || !runningHub) {
+                  throw new Error('Post workflow is enabled but RunningHub workflow config is not available.');
+                }
+
+                const finalArtifact = await executeRunningHubWorkflowFromFile({
+                  store: this.store,
+                  workflowConfig,
+                  runningHub,
+                  project,
+                  hdrItem: batchItem.hdrItem,
+                  inputPath: staged.runpodStagePath,
+                  inputFileName: batchItem.mergedFileName,
+                  onProgress: (update) => onProgress?.({ ...update, hdrItemId: batchItem.hdrItem.id }),
+                  options
+                });
+                return { hdrItemId: batchItem.hdrItem.id, artifact: finalArtifact };
+              }
+
+              return {
+                hdrItemId: batchItem.hdrItem.id,
+                artifact: {
+                  resultPath: staged.runpodStagePath,
+                  resultFileName: path.basename(staged.runpodStagePath),
+                  resultStorageKey: artifact.storageKey ?? staged.outputStorageKey
+                }
+              };
+            } catch (error) {
+              return {
+                hdrItemId: batchItem.hdrItem.id,
+                errorMessage: error instanceof Error ? error.message : String(error)
+              };
+            }
+          })
+        );
+      }
+
+      throw new Error(`Cloud batch timed out after ${config.timeoutSeconds} seconds.`);
+    };
+
     return {
       getMergeConcurrency(totalPendingItems: number) {
         return Math.max(1, Math.min(config.maxInFlight, totalPendingItems));
       },
       getMaxConcurrency(totalPendingItems: number) {
-        return Math.max(1, Math.min(config.maxInFlight, totalPendingItems));
+        const batchCount = Math.ceil(totalPendingItems / Math.max(1, config.batchSize));
+        return Math.max(1, Math.min(config.maxInFlight, batchCount));
+      },
+      getWorkflowBatchSize(totalPendingItems: number) {
+        return Math.max(1, Math.min(config.batchSize, totalPendingItems));
       },
       ensureMergedHdrItem: manifestContext.ensureMergedHdrItem,
-      executeWorkflowTask
+      executeWorkflowTask,
+      executeWorkflowBatch
     };
   }
 }

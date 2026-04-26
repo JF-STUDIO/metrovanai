@@ -34,6 +34,7 @@ import {
   adjustAdminUserBilling,
   fetchAdminActivationCodes,
   fetchAdminAuditLogs,
+  fetchAdminSettings,
   fetchAdminUserDetail,
   fetchAdminUsers,
   fetchAuthProviders,
@@ -55,12 +56,13 @@ import {
   startProcessing,
   updateAccountSettings,
   updateAdminActivationCode,
+  updateAdminSettings,
   updateAdminUser,
   updateGroup,
   uploadFiles,
   logoutAdminUserSessions
 } from './api';
-import type { AdminActivationCode, AdminAuditLogEntry, AdminUserListQuery, AdminUserSummary } from './api';
+import type { AdminActivationCode, AdminAuditLogEntry, AdminSystemSettings, AdminUserListQuery, AdminUserSummary } from './api';
 import type {
   BillingEntry,
   BillingPackage,
@@ -2140,6 +2142,10 @@ function App() {
   const [adminActivationPackages, setAdminActivationPackages] = useState<BillingPackage[]>([]);
   const [adminActivationLoaded, setAdminActivationLoaded] = useState(false);
   const [adminActivationBusy, setAdminActivationBusy] = useState(false);
+  const [adminSystemSettings, setAdminSystemSettings] = useState<AdminSystemSettings | null>(null);
+  const [adminSystemLoaded, setAdminSystemLoaded] = useState(false);
+  const [adminSystemBusy, setAdminSystemBusy] = useState(false);
+  const [adminSystemDraft, setAdminSystemDraft] = useState({ runpodHdrBatchSize: '10' });
   const [adminActivationDraft, setAdminActivationDraft] = useState({
     code: '',
     label: '',
@@ -2551,6 +2557,39 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [activeRoute, adminActivationLoaded, hasAdminSession, locale]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || !hasAdminSession || adminSystemLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setAdminSystemBusy(true);
+      fetchAdminSettings()
+        .then((response) => {
+          if (cancelled) return;
+          setAdminSystemSettings(response.settings);
+          setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+          setAdminSystemLoaded(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setAdminSystemLoaded(true);
+          setAdminMessage(getUserFacingErrorMessage(error, '系统设置读取失败。', locale));
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setAdminSystemBusy(false);
+          }
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeRoute, adminSystemLoaded, hasAdminSession, locale]);
 
   useEffect(() => {
     if (!userMenuOpen) {
@@ -3153,6 +3192,51 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '优惠码读取失败。', locale));
     } finally {
       setAdminActivationBusy(false);
+    }
+  }
+
+  async function handleAdminLoadSystemSettings() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminSystemBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminSettings();
+      setAdminSystemSettings(response.settings);
+      setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+      setAdminSystemLoaded(true);
+      setAdminMessage('系统设置已刷新。');
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '系统设置读取失败。', locale));
+    } finally {
+      setAdminSystemBusy(false);
+    }
+  }
+
+  async function handleAdminSaveSystemSettings() {
+    const runpodHdrBatchSize = Number(adminSystemDraft.runpodHdrBatchSize);
+    if (!Number.isFinite(runpodHdrBatchSize) || runpodHdrBatchSize < 1 || runpodHdrBatchSize > 10) {
+      setAdminMessage('Runpod HDR 批量数量必须是 1 到 10。');
+      return;
+    }
+
+    setAdminSystemBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await updateAdminSettings({
+        runpodHdrBatchSize: Math.round(runpodHdrBatchSize)
+      });
+      setAdminSystemSettings(response.settings);
+      setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+      setAdminSystemLoaded(true);
+      setAdminMessage(`已更新：每个 Runpod 任务 ${response.settings.runpodHdrBatchSize} 组 HDR。`);
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '系统设置保存失败。', locale));
+    } finally {
+      setAdminSystemBusy(false);
     }
   }
 
@@ -4589,6 +4673,51 @@ function App() {
               <span>充值</span>
               <strong>${adminTotals.revenue.toFixed(2)}</strong>
             </article>
+          </section>
+
+          <section className="admin-panel">
+            <div className="admin-panel-head">
+              <div>
+                <span className="admin-kicker">Processing Settings</span>
+                <h2>Runpod HDR 批量</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void handleAdminLoadSystemSettings()}
+                disabled={adminSystemBusy}
+              >
+                刷新设置
+              </button>
+            </div>
+            <div className="admin-activation-editor">
+              <label className="admin-toggle-field">
+                <span>每个 Runpod 任务包含 HDR 组数</span>
+                <input
+                  value={adminSystemDraft.runpodHdrBatchSize}
+                  onChange={(event) => setAdminSystemDraft({ runpodHdrBatchSize: event.target.value })}
+                  inputMode="numeric"
+                  min={1}
+                  max={10}
+                  disabled={adminSystemBusy}
+                />
+              </label>
+              <div className="admin-session-card">
+                <span>当前生效</span>
+                <strong>{adminSystemSettings?.runpodHdrBatchSize ?? '—'} 组 / 任务</strong>
+                <small>支持 1-10。新启动的处理任务会使用最新设置。</small>
+              </div>
+              <div className="admin-activation-actions">
+                <button
+                  className="solid-button"
+                  type="button"
+                  onClick={() => void handleAdminSaveSystemSettings()}
+                  disabled={adminSystemBusy}
+                >
+                  保存设置
+                </button>
+              </div>
+            </div>
           </section>
 
           <section className="admin-panel">

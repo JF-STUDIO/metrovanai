@@ -6,6 +6,10 @@ import { delay, normalizeHex, sanitizeSegment } from './utils.js';
 import {
   createTaskExecutionProvider,
   type TaskExecutionProvider,
+  type WorkflowBatchExecutionItem,
+  type WorkflowBatchExecutionResult,
+  type WorkflowExecutionArtifact,
+  type WorkflowExecutionProgress,
   type TaskExecutionRunContext
 } from './task-executor.js';
 
@@ -40,6 +44,39 @@ class AsyncQueue<T> {
       return null;
     }
     return await new Promise<T | null>((resolve) => this.waiters.push(resolve));
+  }
+
+  tryShift(): T | null {
+    if (this.items.length) {
+      return this.items.shift() ?? null;
+    }
+    return null;
+  }
+
+  async shiftWithTimeout(timeoutMs: number): Promise<T | null> {
+    if (this.items.length || this.closed) {
+      return await this.shift();
+    }
+
+    return await new Promise<T | null>((resolve) => {
+      let settled = false;
+      const waiter = (value: T | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const index = this.waiters.indexOf(waiter);
+        if (index >= 0) {
+          this.waiters.splice(index, 1);
+        }
+        resolve(null);
+      }, Math.max(0, timeoutMs));
+      this.waiters.push(waiter);
+    });
   }
 }
 
@@ -419,7 +456,6 @@ export class ProjectProcessor {
     }
 
     const taskExecution = this.taskExecution.createRunContext();
-    const queue = new AsyncQueue<WorkflowQueueItem>();
     const projectDirs = this.store.getProjectDirectories(initialProject);
     let mergeCompleted = 0;
 
@@ -436,10 +472,10 @@ export class ProjectProcessor {
       percent: Math.max(1, job.percent)
     }));
 
-    const workerCount = taskExecution.getMaxConcurrency(pendingHdrItems.length);
-    const workers = Array.from({ length: workerCount }, () => this.workflowWorker(projectId, queue, taskExecution));
-    await this.runParallelMergeAndWorkflow(projectId, pendingHdrItems, queue, workers, taskExecution, projectDirs.hdr);
+    await this.runParallelMergeAndWorkflow(projectId, pendingHdrItems, taskExecution, projectDirs.hdr);
     pendingHdrItems.splice(0, pendingHdrItems.length);
+    const queue = { push: (_item: WorkflowQueueItem) => undefined, close: () => undefined };
+    const workers: Array<Promise<void>> = [];
 
     try {
       for (const queuedHdrItem of pendingHdrItems) {
@@ -597,12 +633,11 @@ export class ProjectProcessor {
   private async runParallelMergeAndWorkflow(
     projectId: string,
     pendingHdrItems: HdrItem[],
-    workflowQueue: AsyncQueue<WorkflowQueueItem>,
-    workflowWorkers: Array<Promise<void>>,
     taskExecution: TaskExecutionRunContext,
     hdrDir: string
   ) {
     const mergeQueue = new AsyncQueue<MergeQueueItem>();
+    const workflowQueue = new AsyncQueue<WorkflowQueueItem>();
     const mergeProgress = {
       completed: 0,
       total: pendingHdrItems.length
@@ -617,9 +652,13 @@ export class ProjectProcessor {
     }
     mergeQueue.close();
 
-    await Promise.all(mergeWorkers).finally(() => {
-      workflowQueue.close();
-    });
+    await Promise.all(mergeWorkers);
+    workflowQueue.close();
+
+    const workerCount = taskExecution.getMaxConcurrency(pendingHdrItems.length);
+    const workflowWorkers = Array.from({ length: workerCount }, () =>
+      this.workflowWorker(projectId, workflowQueue, taskExecution)
+    );
     await Promise.all(workflowWorkers);
   }
 
@@ -703,6 +742,232 @@ export class ProjectProcessor {
     }
   }
 
+  private collectWorkflowBatch(
+    firstItem: WorkflowQueueItem,
+    queue: AsyncQueue<WorkflowQueueItem>,
+    taskExecution: TaskExecutionRunContext
+  ) {
+    const maxBatchSize = taskExecution.executeWorkflowBatch
+      ? Math.max(1, taskExecution.getWorkflowBatchSize?.(Number.MAX_SAFE_INTEGER) ?? 1)
+      : 1;
+    const queuedItems = [firstItem];
+
+    while (queuedItems.length < maxBatchSize) {
+      const nextItem = queue.tryShift();
+      if (!nextItem) {
+        break;
+      }
+      queuedItems.push(nextItem);
+    }
+
+    return queuedItems;
+  }
+
+  private resolveWorkflowBatchItems(projectId: string, queuedItems: WorkflowQueueItem[]) {
+    const currentProject = this.store.getProject(projectId);
+    if (!currentProject) {
+      return { currentProject: null, executionItems: [] as WorkflowBatchExecutionItem[] };
+    }
+
+    const executionItems: WorkflowBatchExecutionItem[] = [];
+    for (const queuedItem of queuedItems) {
+      const hdrItem = currentProject.hdrItems.find((entry) => entry.id === queuedItem.hdrItemId);
+      const group = currentProject.groups.find((entry) => entry.id === hdrItem?.groupId);
+      if (!hdrItem || !group || this.isHdrItemCompleted(hdrItem)) {
+        continue;
+      }
+
+      executionItems.push({
+        hdrItem,
+        mergedPath: queuedItem.mergedPath,
+        mergedFileName: queuedItem.mergedFileName
+      });
+    }
+
+    return { currentProject, executionItems };
+  }
+
+  private markWorkflowBatchUploading(projectId: string, executionItems: WorkflowBatchExecutionItem[]) {
+    for (const executionItem of executionItems) {
+      this.store.setHdrItemState(projectId, executionItem.hdrItem.id, (entry) => ({
+        ...entry,
+        status: 'workflow-upload',
+        statusText: createProcessingText('workflow-upload')
+      }));
+    }
+
+    this.store.setJobState(projectId, (job) => ({
+      ...job,
+      workflowRealtime: {
+        ...job.workflowRealtime,
+        entered: job.workflowRealtime.entered + executionItems.length,
+        active: job.workflowRealtime.active + executionItems.length,
+        monitorState: 'uploading',
+        detail: `Submitting ${executionItems.length} HDR group${executionItems.length === 1 ? '' : 's'}`
+      }
+    }));
+  }
+
+  private markWorkflowBatchProgress(
+    projectId: string,
+    executionItems: WorkflowBatchExecutionItem[],
+    update: WorkflowExecutionProgress
+  ) {
+    const targetItems = update.hdrItemId
+      ? executionItems.filter((executionItem) => executionItem.hdrItem.id === update.hdrItemId)
+      : executionItems;
+    const currentHdrItemId = targetItems[0]?.hdrItem.id ?? executionItems[0]?.hdrItem.id ?? null;
+
+    for (const executionItem of targetItems) {
+      this.store.setHdrItemState(projectId, executionItem.hdrItem.id, (entry) => ({
+        ...entry,
+        status: 'workflow-running',
+        statusText: createProcessingText('workflow-running')
+      }));
+    }
+
+    this.store.setJobState(projectId, (job) => ({
+      ...job,
+      percent: Math.max(job.percent, 46),
+      label: 'Processing',
+      detail: update.detail || 'Cloud processing is running.',
+      currentHdrItemId,
+      workflowRealtime: {
+        ...job.workflowRealtime,
+        monitorState: update.monitorState,
+        detail: update.detail,
+        remoteProgress: update.remoteProgress,
+        queuePosition: update.queuePosition,
+        transport: 'poll',
+        currentNodeName: update.workflowName,
+        currentNodeId: update.taskId,
+        currentNodePercent: update.remoteProgress
+      }
+    }));
+  }
+
+  private async executeWorkflowBatchItems(
+    project: ProjectRecord,
+    executionItems: WorkflowBatchExecutionItem[],
+    taskExecution: TaskExecutionRunContext,
+    onProgress: (update: WorkflowExecutionProgress) => void
+  ): Promise<WorkflowBatchExecutionResult[]> {
+    if (taskExecution.executeWorkflowBatch) {
+      return await taskExecution.executeWorkflowBatch(project, executionItems, onProgress);
+    }
+
+    return await Promise.all(
+      executionItems.map(async (executionItem) => {
+        try {
+          const artifact = await taskExecution.executeWorkflowTask(
+            project,
+            executionItem.hdrItem,
+            executionItem.mergedPath,
+            executionItem.mergedFileName,
+            onProgress
+          );
+          return { hdrItemId: executionItem.hdrItem.id, artifact };
+        } catch (error) {
+          return {
+            hdrItemId: executionItem.hdrItem.id,
+            errorMessage: error instanceof Error ? error.message : String(error)
+          };
+        }
+      })
+    );
+  }
+
+  private completeWorkflowItem(projectId: string, hdrItem: HdrItem, result: WorkflowExecutionArtifact) {
+    this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
+      ...entry,
+      resultKey: result.resultStorageKey ?? this.store.toStorageKey(result.resultPath),
+      resultPath: result.resultPath,
+      resultUrl: this.store.toStorageUrl(result.resultPath),
+      resultFileName: result.resultFileName,
+      status: 'completed',
+      statusText: createProcessingText('completed'),
+      errorMessage: null
+    }));
+    this.store.setJobState(projectId, (job) => ({
+      ...job,
+      percent: Math.max(
+        job.percent,
+        46 + Math.round(((job.workflowRealtime.returned + 1) / Math.max(1, job.workflowRealtime.total)) * 54)
+      ),
+      workflowRealtime: {
+        ...job.workflowRealtime,
+        returned: job.workflowRealtime.returned + 1,
+        succeeded: job.workflowRealtime.succeeded + 1,
+        active: Math.max(0, job.workflowRealtime.active - 1),
+        monitorState: 'returned',
+        detail: `${hdrItem.title} completed`,
+        remoteProgress: 100,
+        queuePosition: 0,
+        currentNodePercent: 100
+      }
+    }));
+  }
+
+  private failWorkflowItem(projectId: string, hdrItem: HdrItem, message: string) {
+    this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
+      ...entry,
+      status: 'error',
+      statusText: createProcessingText('error'),
+      errorMessage: message
+    }));
+    this.store.setJobState(projectId, (job) => ({
+      ...job,
+      workflowRealtime: {
+        ...job.workflowRealtime,
+        failed: job.workflowRealtime.failed + 1,
+        active: Math.max(0, job.workflowRealtime.active - 1),
+        monitorState: 'error',
+        detail: message
+      }
+    }));
+  }
+
+  private async processWorkflowBatchFromFirstItem(
+    projectId: string,
+    firstItem: WorkflowQueueItem,
+    queue: AsyncQueue<WorkflowQueueItem>,
+    taskExecution: TaskExecutionRunContext
+  ) {
+    const queuedItems = this.collectWorkflowBatch(firstItem, queue, taskExecution);
+    const { currentProject, executionItems } = this.resolveWorkflowBatchItems(projectId, queuedItems);
+    if (!currentProject || !executionItems.length) {
+      return;
+    }
+
+    try {
+      this.markWorkflowBatchUploading(projectId, executionItems);
+      const results = await this.executeWorkflowBatchItems(
+        currentProject,
+        executionItems,
+        taskExecution,
+        (update) => this.markWorkflowBatchProgress(projectId, executionItems, update)
+      );
+
+      const hdrItemsById = new Map(executionItems.map((executionItem) => [executionItem.hdrItem.id, executionItem.hdrItem]));
+      for (const result of results) {
+        const hdrItem = hdrItemsById.get(result.hdrItemId);
+        if (!hdrItem) {
+          continue;
+        }
+        if (result.artifact) {
+          this.completeWorkflowItem(projectId, hdrItem, result.artifact);
+        } else {
+          this.failWorkflowItem(projectId, hdrItem, result.errorMessage || 'Cloud processing did not return a result.');
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      for (const executionItem of executionItems) {
+        this.failWorkflowItem(projectId, executionItem.hdrItem, message);
+      }
+    }
+  }
+
   private async workflowWorker(
     projectId: string,
     queue: AsyncQueue<WorkflowQueueItem>,
@@ -714,6 +979,11 @@ export class ProjectProcessor {
         return;
       }
 
+      await this.processWorkflowBatchFromFirstItem(projectId, item, queue, taskExecution);
+      await delay(150);
+      continue;
+
+      /*
       const currentProject = this.store.getProject(projectId);
       const hdrItem = currentProject?.hdrItems.find((entry) => entry.id === item.hdrItemId);
       const group = currentProject?.groups.find((entry) => entry.id === hdrItem?.groupId);
@@ -817,6 +1087,7 @@ export class ProjectProcessor {
           }
         }));
       }
+      */
 
       await delay(150);
     }

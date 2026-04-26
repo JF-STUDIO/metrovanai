@@ -9,6 +9,7 @@ import type {
   PasswordResetTokenRecord,
   ProjectRecord,
   SessionRecord,
+  SystemSettings,
   UserRecord
 } from './types.js';
 import { ensureDir, loadJson, saveJson } from './utils.js';
@@ -25,6 +26,7 @@ export interface DatabaseShape {
   passwordResetTokens: PasswordResetTokenRecord[];
   emailVerificationTokens: EmailVerificationTokenRecord[];
   auditLogs: AuditLogEntry[];
+  systemSettings: SystemSettings;
 }
 
 export interface MetadataProviderInfo {
@@ -53,7 +55,15 @@ function createEmptyDatabase(): DatabaseShape {
     sessions: [],
     passwordResetTokens: [],
     emailVerificationTokens: [],
-    auditLogs: []
+    auditLogs: [],
+    systemSettings: { runpodHdrBatchSize: 10 }
+  };
+}
+
+function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): SystemSettings {
+  const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? 10);
+  return {
+    runpodHdrBatchSize: Math.max(1, Math.min(10, Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : 10))
   };
 }
 
@@ -67,7 +77,8 @@ function normalizeDatabaseShape(raw: Partial<DatabaseShape>): DatabaseShape {
     sessions: Array.isArray(raw.sessions) ? raw.sessions.map((session) => ({ ...session, csrfTokenHash: session.csrfTokenHash ?? null })) : [],
     passwordResetTokens: Array.isArray(raw.passwordResetTokens) ? raw.passwordResetTokens : [],
     emailVerificationTokens: Array.isArray(raw.emailVerificationTokens) ? raw.emailVerificationTokens : [],
-    auditLogs: Array.isArray(raw.auditLogs) ? raw.auditLogs : []
+    auditLogs: Array.isArray(raw.auditLogs) ? raw.auditLogs : [],
+    systemSettings: normalizeSystemSettings(raw.systemSettings)
   };
 }
 

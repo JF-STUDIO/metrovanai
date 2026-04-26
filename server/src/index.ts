@@ -1402,6 +1402,11 @@ const adminBillingAdjustmentSchema = z.object({
   confirm: z.literal(true)
 });
 
+const adminSystemSettingsSchema = z.object({
+  runpodHdrBatchSize: z.number().int().min(1).max(10),
+  confirm: z.literal(true)
+});
+
 const adminConfirmSchema = z.object({
   confirm: z.literal(true)
 });
@@ -1973,6 +1978,43 @@ app.get('/api/admin/readiness', (req, res) => {
       executor: processor.getExecutionInfo()
     })
   );
+});
+
+app.get('/api/admin/settings', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  res.json({
+    settings: store.getSystemSettings()
+  });
+});
+
+app.patch('/api/admin/settings', (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  const parsed = adminSystemSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const before = store.getSystemSettings();
+  const settings = store.updateSystemSettings({
+    runpodHdrBatchSize: parsed.data.runpodHdrBatchSize
+  });
+  writeAdminAuditLog(req, actor, {
+    action: 'admin.settings.update',
+    details: {
+      before,
+      after: settings
+    }
+  });
+
+  res.json({ settings });
 });
 
 app.get('/api/admin/users/:id', (req, res) => {

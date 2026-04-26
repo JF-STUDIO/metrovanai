@@ -16,6 +16,7 @@ import type {
   ResultAsset,
   SceneType,
   SessionRecord,
+  SystemSettings,
   UserLocale,
   UserRole,
   UserAccountStatus,
@@ -65,6 +66,13 @@ const PROJECT_DELETE_RETENTION_DAYS: Record<TrashRetentionCategory, number> = {
   staging: DELETED_SOURCE_RETENTION_DAYS,
   results: DELETED_RESULT_RETENTION_DAYS
 };
+
+function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): SystemSettings {
+  const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? 10);
+  return {
+    runpodHdrBatchSize: Math.max(1, Math.min(10, Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : 10))
+  };
+}
 
 function createEmptyJobState(): ProjectJobState {
   return {
@@ -222,7 +230,8 @@ export class LocalStore {
       sessions: sessions.filter((session) => !this.isSessionExpired(session)),
       passwordResetTokens: passwordResetTokens.filter((token) => !this.isPasswordResetTokenExpired(token)),
       emailVerificationTokens: emailVerificationTokens.filter((token) => !this.isEmailVerificationTokenExpired(token)),
-      auditLogs: Array.isArray(raw.auditLogs) ? raw.auditLogs : []
+      auditLogs: Array.isArray(raw.auditLogs) ? raw.auditLogs : [],
+      systemSettings: normalizeSystemSettings(raw.systemSettings)
     };
   }
 
@@ -346,6 +355,20 @@ export class LocalStore {
 
   getProject(projectId: string) {
     return this.loadDb().projects.find((project) => project.id === projectId) ?? null;
+  }
+
+  getSystemSettings() {
+    return normalizeSystemSettings(this.loadDb().systemSettings);
+  }
+
+  updateSystemSettings(input: Partial<SystemSettings>) {
+    const db = this.loadDb();
+    db.systemSettings = normalizeSystemSettings({
+      ...db.systemSettings,
+      ...input
+    });
+    this.saveDb(db);
+    return db.systemSettings;
   }
 
   getProjectForUser(projectId: string, userKey: string) {

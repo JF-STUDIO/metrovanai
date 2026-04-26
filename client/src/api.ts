@@ -224,6 +224,10 @@ export interface AdminActivationCodesPayload {
   packages: BillingPackage[];
 }
 
+export interface AdminSystemSettings {
+  runpodHdrBatchSize: number;
+}
+
 export interface AdminActivationCodeInput {
   code: string;
   label: string;
@@ -507,6 +511,17 @@ export async function logoutAdminUserSessions(userId: string) {
 
 export async function fetchAdminAuditLogs() {
   return await jsonRequest<{ items: AdminAuditLogEntry[] }>('/api/admin/audit-logs');
+}
+
+export async function fetchAdminSettings() {
+  return await jsonRequest<{ settings: AdminSystemSettings }>('/api/admin/settings');
+}
+
+export async function updateAdminSettings(input: AdminSystemSettings) {
+  return await jsonRequest<{ settings: AdminSystemSettings }>('/api/admin/settings', {
+    method: 'PATCH',
+    body: JSON.stringify({ ...input, confirm: true })
+  });
 }
 
 export async function fetchAdminActivationCodes() {
