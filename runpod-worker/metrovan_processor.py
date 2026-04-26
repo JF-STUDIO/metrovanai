@@ -159,24 +159,53 @@ def build_rawtherapee_profile(mode: str, resize_long_edge: int = HDR_LONG_EDGE) 
 
 def render_raw_to_jpeg(source: Path, destination: Path, quality: int, mode: str, resize_long_edge: int = HDR_LONG_EDGE) -> None:
     rawtherapee = TOOLS["rawtherapee"]
-    if not rawtherapee:
-        raise RuntimeError("rawtherapee-cli is not available in the worker image.")
+    rawtherapee_error = "rawtherapee-cli is not available in the worker image."
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="metrovan-rt-") as temp_root:
+    if rawtherapee:
+        with tempfile.TemporaryDirectory(prefix="metrovan-rt-") as temp_root:
+            temp_dir = Path(temp_root)
+            profile = temp_dir / "render.pp3"
+            rendered = temp_dir / "rendered.jpg"
+            profile.write_text(build_rawtherapee_profile(mode, resize_long_edge), encoding="utf-8")
+            result = run_process(
+                rawtherapee,
+                ["-q", "-Y", "-d", "-p", str(profile), "-o", str(rendered), f"-j{quality}", "-c", str(source)],
+                temp_dir,
+                timeout=420,
+            )
+            if result.returncode == 0 and rendered.exists():
+                shutil.copyfile(rendered, destination)
+                return
+            rawtherapee_error = f"rawtherapee conversion failed: {trim_error(result.stderr or result.stdout)}"
+
+    if extract_raw_preview_to_jpeg(source, destination, quality, resize_long_edge):
+        return
+
+    raise RuntimeError(rawtherapee_error)
+
+
+def extract_raw_preview_to_jpeg(source: Path, destination: Path, quality: int, resize_long_edge: int | None = None) -> bool:
+    exiftool = TOOLS["exiftool"]
+    if not exiftool:
+        return False
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="metrovan-raw-preview-") as temp_root:
         temp_dir = Path(temp_root)
-        profile = temp_dir / "render.pp3"
-        rendered = temp_dir / "rendered.jpg"
-        profile.write_text(build_rawtherapee_profile(mode, resize_long_edge), encoding="utf-8")
-        result = run_process(
-            rawtherapee,
-            ["-q", "-Y", "-d", "-p", str(profile), "-o", str(rendered), f"-j{quality}", "-c", str(source)],
-            temp_dir,
-            timeout=420,
-        )
-        if result.returncode != 0 or not rendered.exists():
-            raise RuntimeError(f"rawtherapee conversion failed: {trim_error(result.stderr or result.stdout)}")
-        shutil.copyfile(rendered, destination)
+        embedded = temp_dir / "embedded.jpg"
+        for tag in ("JpgFromRaw", "PreviewImage"):
+            with embedded.open("wb") as output:
+                result = subprocess.run(
+                    [exiftool, "-b", f"-{tag}", str(source)],
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+            if result.returncode == 0 and embedded.exists() and embedded.stat().st_size > 0:
+                resize_with_pillow(embedded, destination, quality, resize_long_edge)
+                return True
+    return False
 
 
 def resize_with_pillow(source: Path, destination: Path, quality: int, long_edge: int | None = None) -> None:
@@ -513,7 +542,12 @@ def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
             tone_target = work_dir / "reference-auto-tone.jpg"
             render_raw_to_jpeg(reference_source, tone_target, 95, "autold", HDR_LONG_EDGE)
 
-        align_and_fuse(prepared_for_align, output_path, work_dir, tone_target, None)
+        try:
+            align_and_fuse(prepared_for_align, output_path, work_dir, tone_target, None)
+        except Exception:
+            fallback_source = reference_prepared or prepared_for_align[len(prepared_for_align) // 2]
+            tone = estimate_tone_adjustments(fallback_source, tone_target, gains) if tone_target and tone_target.exists() else None
+            apply_image_adjustments(fallback_source, output_path, 95, gains, tone)
 
 
 def process_regenerate(input_payload: dict[str, Any], output_path: Path) -> None:

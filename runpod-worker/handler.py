@@ -117,7 +117,22 @@ def run_command(command: str, input_dir: Path, output_path: Path, input_json_pat
     env_vars["METROVAN_INPUT_DIR"] = str(input_dir)
     env_vars["METROVAN_INPUT_JSON"] = str(input_json_path)
     env_vars["METROVAN_OUTPUT_PATH"] = str(output_path)
-    subprocess.run(command, shell=True, check=True, cwd=str(input_dir), env=env_vars)
+    result = subprocess.run(
+        command,
+        shell=True,
+        check=False,
+        cwd=str(input_dir),
+        env=env_vars,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=int(env("METROVAN_PROCESSOR_TIMEOUT_SECONDS", "1800") or "1800"),
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").replace("\r", " ").replace("\n", " ").strip()
+        raise RuntimeError(
+            f"Processor command failed with exit code {result.returncode}: {detail[:1600] or command}"
+        )
 
 
 def produce_result(input_payload: dict[str, Any], work_dir: Path, output_path: Path) -> None:
