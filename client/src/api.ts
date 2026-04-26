@@ -509,6 +509,27 @@ export async function logoutAdminUserSessions(userId: string) {
   );
 }
 
+export async function deleteAdminUser(userId: string) {
+  return await jsonRequest<{
+    ok: true;
+    deletedUserId: string;
+    deletedUserEmail: string;
+    removed: {
+      projects: number;
+      sessions: number;
+      passwordResetTokens: number;
+      emailVerificationTokens: number;
+      billingEntries: number;
+      paymentOrders: number;
+      auditLogs: number;
+    };
+    archiveErrors: Array<{ projectId: string; error: string }>;
+  }>(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirm: true })
+  });
+}
+
 export async function fetchAdminAuditLogs() {
   return await jsonRequest<{ items: AdminAuditLogEntry[] }>('/api/admin/audit-logs');
 }

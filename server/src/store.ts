@@ -578,6 +578,49 @@ export class LocalStore {
     return removed;
   }
 
+  deleteUser(userId: string) {
+    const db = this.loadDb();
+    const user = db.users.find((item) => item.id === userId);
+    if (!user) {
+      return null;
+    }
+
+    const projects = db.projects.filter((project) => project.userKey === user.userKey);
+    const archives: Array<ReturnType<StorageProvider['trashProjectRoot']>> = [];
+    const archiveErrors: Array<{ projectId: string; error: string }> = [];
+    for (const project of projects) {
+      try {
+        archives.push(this.storage.trashProjectRoot(project, PROJECT_DELETE_RETENTION_DAYS));
+      } catch (error) {
+        archiveErrors.push({
+          projectId: project.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const removed = {
+      projects: projects.length,
+      sessions: db.sessions.filter((session) => session.userId === user.id).length,
+      passwordResetTokens: db.passwordResetTokens.filter((token) => token.userId === user.id).length,
+      emailVerificationTokens: db.emailVerificationTokens.filter((token) => token.userId === user.id).length,
+      billingEntries: db.billing.filter((entry) => entry.userKey === user.userKey).length,
+      paymentOrders: db.paymentOrders.filter((order) => order.userKey === user.userKey).length,
+      auditLogs: db.auditLogs.filter((entry) => entry.actorUserId === user.id || entry.targetUserId === user.id).length
+    };
+
+    db.users = db.users.filter((item) => item.id !== user.id);
+    db.projects = db.projects.filter((project) => project.userKey !== user.userKey);
+    db.sessions = db.sessions.filter((session) => session.userId !== user.id);
+    db.passwordResetTokens = db.passwordResetTokens.filter((token) => token.userId !== user.id);
+    db.emailVerificationTokens = db.emailVerificationTokens.filter((token) => token.userId !== user.id);
+    db.billing = db.billing.filter((entry) => entry.userKey !== user.userKey);
+    db.paymentOrders = db.paymentOrders.filter((order) => order.userKey !== user.userKey);
+    db.auditLogs = db.auditLogs.filter((entry) => entry.actorUserId !== user.id && entry.targetUserId !== user.id);
+    this.saveDb(db);
+    return { user, removed, archives, archiveErrors };
+  }
+
   createPasswordResetToken(userId: string, tokenHash: string, ttlMs: number) {
     const db = this.loadDb();
     const now = new Date().toISOString();

@@ -8530,6 +8530,12 @@ img {
   opacity: 0.45;
 }
 
+.admin-row-actions button.danger {
+  border-color: rgba(255, 106, 106, 0.35);
+  background: rgba(255, 106, 106, 0.12);
+  color: #ffb0b0;
+}
+
 .admin-detail-grid {
   position: relative;
   z-index: 1;

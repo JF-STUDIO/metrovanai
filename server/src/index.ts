@@ -2120,6 +2120,56 @@ app.patch('/api/admin/users/:id', (req, res) => {
   res.json({ user: buildAdminUserRecord(updated) });
 });
 
+app.delete('/api/admin/users/:id', (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  const parsed = adminConfirmSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const user = store.getUserById(String(req.params.id ?? ''));
+  if (!user) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  if (actor.actorUser?.id === user.id) {
+    res.status(400).json({ error: 'You cannot delete your own admin account.' });
+    return;
+  }
+
+  const deletion = store.deleteUser(user.id);
+  if (!deletion) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  writeAdminAuditLog(req, actor, {
+    action: 'admin.user.delete',
+    targetUserId: user.id,
+    details: {
+      email: user.email,
+      userKey: user.userKey,
+      removed: deletion.removed,
+      archiveCount: deletion.archives.length,
+      archiveErrors: deletion.archiveErrors
+    }
+  });
+
+  res.json({
+    ok: true,
+    deletedUserId: user.id,
+    deletedUserEmail: user.email,
+    removed: deletion.removed,
+    archiveErrors: deletion.archiveErrors
+  });
+});
+
 app.post('/api/admin/users/:id/billing-adjustments', (req, res) => {
   const actor = requireAdminApiAccess(req, res);
   if (!actor) {

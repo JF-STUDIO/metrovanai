@@ -28,6 +28,7 @@ import {
   createAdminActivationCode,
   createGroup,
   createProject,
+  deleteAdminUser,
   deleteHdrItem,
   deleteProject,
   downloadProjectArchive,
@@ -3160,6 +3161,41 @@ function App() {
     }
   }
 
+  async function handleAdminDeleteUser(userId: string) {
+    const targetUser = adminUsers.find((user) => user.id === userId) ?? adminSelectedUser;
+    const confirmationText = targetUser?.email ?? 'DELETE';
+    const typed = window.prompt(
+      `确认删除用户 ${confirmationText}？\n\n此操作会删除该用户账号、项目、照片记录、会话、积分流水和订单记录，并写入审计日志。\n如需继续，请输入该用户邮箱。`
+    );
+    if (typed !== confirmationText) {
+      setAdminMessage('已取消删除用户。');
+      return;
+    }
+
+    setAdminActionBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await deleteAdminUser(userId);
+      setAdminUsers((current) => current.filter((user) => user.id !== response.deletedUserId));
+      setAdminTotalUsers((current) => Math.max(0, current - 1));
+      if (adminSelectedUser?.id === response.deletedUserId) {
+        setAdminSelectedUser(null);
+        setAdminSelectedUserId('');
+        setAdminDetailProjects([]);
+        setAdminDetailBillingEntries([]);
+      }
+      setAdminMessage(
+        response.archiveErrors.length
+          ? `用户已删除，但有 ${response.archiveErrors.length} 个项目文件未能归档，请检查服务器日志。`
+          : '用户已删除。'
+      );
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '删除用户失败。', locale));
+    } finally {
+      setAdminActionBusy(false);
+    }
+  }
+
   async function handleAdminLoadAuditLogs() {
     setAdminActionBusy(true);
     setAdminMessage('');
@@ -5020,6 +5056,14 @@ function App() {
                             >
                               {user.accountStatus === 'active' ? '禁用' : '启用'}
                             </button>
+                            <button
+                              className="danger"
+                              type="button"
+                              onClick={() => void handleAdminDeleteUser(user.id)}
+                              disabled={adminActionBusy}
+                            >
+                              删除
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -5071,14 +5115,24 @@ function App() {
                   <h2>{adminSelectedUser ? adminSelectedUser.displayName : '选择一个用户'}</h2>
                 </div>
                 {adminSelectedUser && (
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void handleAdminLogoutUser(adminSelectedUser.id)}
-                    disabled={adminActionBusy}
-                  >
-                    踢下线
-                  </button>
+                  <div className="admin-row-actions">
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => void handleAdminLogoutUser(adminSelectedUser.id)}
+                      disabled={adminActionBusy}
+                    >
+                      踢下线
+                    </button>
+                    <button
+                      className="danger"
+                      type="button"
+                      onClick={() => void handleAdminDeleteUser(adminSelectedUser.id)}
+                      disabled={adminActionBusy}
+                    >
+                      删除用户
+                    </button>
+                  </div>
                 )}
               </div>
               {adminSelectedUser ? (
