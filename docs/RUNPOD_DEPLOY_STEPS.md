@@ -90,6 +90,30 @@ METROVAN_RUNPOD_MAX_IN_FLIGHT=5
 METROVAN_RUNPOD_TIMEOUT_SECONDS=3600
 ```
 
+Current staging service:
+
+```text
+Render service: metrovan-ai-api-staging-runpod
+Render service ID: srv-d7muks8g4nts73as4aog
+URL: https://metrovan-ai-api-staging-runpod.onrender.com
+Plan: free
+Executor: runpod-native
+Runpod endpoint ID: o6c6hpr520oxmi
+Image: ghcr.io/jf-studio/metrovanai-runpod-worker:latest
+```
+
+Validation already completed on 2026-04-26:
+
+```text
+Runpod worker smoke job: passed
+Staging deploy: live
+Staging /api/health: passed
+Staging direct R2 upload capability: enabled
+Commercial readiness check against staging: 0 failed public checks
+```
+
+The staging API uses the same production database and R2 bucket. Keep full upload/process tests limited to a deliberate test account or a known disposable project so production user data is not accidentally changed.
+
 ## 7. Rollback
 
 Remove `METROVAN_TASK_EXECUTOR` or set:
