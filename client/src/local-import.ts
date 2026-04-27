@@ -216,13 +216,36 @@ function mergeMetadataCandidates(candidates: Array<Record<string, unknown>>) {
 
 function findEmbeddedTiffOffsets(bytes: Uint8Array) {
   const offsets: number[] = [];
+  const seen = new Set<number>();
+  const addOffset = (offset: number) => {
+    if (offset >= 0 && !seen.has(offset)) {
+      seen.add(offset);
+      offsets.push(offset);
+    }
+  };
+
+  // Fuji RAF and some other RAW containers often expose useful metadata only
+  // through the EXIF block inside an embedded JPEG preview.
+  for (let index = 0; index < bytes.length - 10; index += 1) {
+    if (
+      bytes[index] === 0x45 &&
+      bytes[index + 1] === 0x78 &&
+      bytes[index + 2] === 0x69 &&
+      bytes[index + 3] === 0x66 &&
+      bytes[index + 4] === 0x00 &&
+      bytes[index + 5] === 0x00
+    ) {
+      addOffset(index + 6);
+    }
+  }
+
   for (let index = 0; index < bytes.length - 4; index += 1) {
     const littleEndianTiff =
       bytes[index] === 0x49 && bytes[index + 1] === 0x49 && bytes[index + 2] === 0x2a && bytes[index + 3] === 0x00;
     const bigEndianTiff =
       bytes[index] === 0x4d && bytes[index + 1] === 0x4d && bytes[index + 2] === 0x00 && bytes[index + 3] === 0x2a;
     if (littleEndianTiff || bigEndianTiff) {
-      offsets.push(index);
+      addOffset(index);
     }
   }
   return offsets.slice(0, 32);
