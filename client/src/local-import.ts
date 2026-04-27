@@ -103,6 +103,16 @@ interface GroupingFrame {
   canAutoGroup: boolean;
 }
 
+interface LocalImportWorkerFramePayload extends Omit<GroupingFrame, 'file' | 'previewUrl'> {
+  index: number;
+  previewBlob: Blob | null;
+}
+
+type LocalImportWorkerResponse =
+  | { type: 'progress'; id: string; completed: number; total: number }
+  | { type: 'result'; id: string; frames: LocalImportWorkerFramePayload[] }
+  | { type: 'error'; id: string; message: string };
+
 export interface LocalExposureDraft extends ExposureFile {
   file: File;
   objectUrl: string | null;
@@ -653,6 +663,108 @@ async function parseGroupingFrame(file: File) {
   } satisfies GroupingFrame;
 }
 
+function buildGroupingFrameFromWorkerPayload(files: File[], payload: LocalImportWorkerFramePayload): GroupingFrame {
+  const file = files[payload.index];
+  if (!file) {
+    throw new Error('Local import worker returned an invalid file index.');
+  }
+
+  const previewUrl = payload.previewBlob
+    ? URL.createObjectURL(payload.previewBlob)
+    : isJpegFile(file.name)
+      ? URL.createObjectURL(file)
+      : null;
+
+  return {
+    file,
+    name: payload.name,
+    extension: payload.extension,
+    sequenceNumber: payload.sequenceNumber,
+    captureTime: payload.captureTime,
+    exposureSeconds: payload.exposureSeconds,
+    exposureCompensation: payload.exposureCompensation,
+    iso: payload.iso,
+    fNumber: payload.fNumber,
+    focalLength: payload.focalLength,
+    cameraModel: payload.cameraModel,
+    serialNumber: payload.serialNumber,
+    width: payload.width,
+    height: payload.height,
+    orientation: payload.orientation,
+    bracketSequence: payload.bracketSequence,
+    burstId: payload.burstId,
+    previewUrl,
+    metadataState: payload.metadataState,
+    previewState: previewUrl ? 'ready' : payload.previewState,
+    canAutoGroup: payload.canAutoGroup
+  };
+}
+
+async function parseGroupingFramesSequential(files: File[], onProgress?: (progressPercent: number) => void) {
+  const frames: GroupingFrame[] = [];
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index]!;
+    frames.push(await parseGroupingFrame(file));
+    onProgress?.(Math.round(((index + 1) / files.length) * 100));
+  }
+  return frames;
+}
+
+function parseGroupingFramesInWorker(files: File[], onProgress?: (progressPercent: number) => void) {
+  if (typeof Worker === 'undefined') {
+    return Promise.reject(new Error('Web Worker is not available.'));
+  }
+
+  return new Promise<GroupingFrame[]>((resolve, reject) => {
+    const id = createId();
+    const worker = new Worker(new URL('./local-import-worker.ts', import.meta.url), { type: 'module' });
+    let settled = false;
+    const settle = (runner: () => void) => {
+      if (settled) return;
+      settled = true;
+      worker.terminate();
+      runner();
+    };
+
+    worker.addEventListener('message', (event: MessageEvent<LocalImportWorkerResponse>) => {
+      const message = event.data;
+      if (!message || message.id !== id) return;
+
+      if (message.type === 'progress') {
+        onProgress?.(Math.round((message.completed / Math.max(1, message.total)) * 100));
+        return;
+      }
+
+      if (message.type === 'error') {
+        settle(() => reject(new Error(message.message)));
+        return;
+      }
+
+      settle(() => {
+        try {
+          resolve(message.frames.map((payload) => buildGroupingFrameFromWorkerPayload(files, payload)));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    worker.addEventListener('error', (event) => {
+      settle(() => reject(event.error instanceof Error ? event.error : new Error(event.message)));
+    });
+
+    worker.postMessage({ type: 'parse', id, files });
+  });
+}
+
+async function parseGroupingFrames(files: File[], onProgress?: (progressPercent: number) => void) {
+  try {
+    return await parseGroupingFramesInWorker(files, onProgress);
+  } catch {
+    return parseGroupingFramesSequential(files, onProgress);
+  }
+}
+
 function analyzeHdrGroups(frames: GroupingFrame[]) {
   const sorted = [...frames].sort(compareFrames);
   const groups: Array<{ index: number; frames: GroupingFrame[] }> = [];
@@ -762,13 +874,7 @@ export async function buildLocalImportDraft(
   files: File[],
   onProgress?: (progressPercent: number) => void
 ) {
-  const frames: GroupingFrame[] = [];
-
-  for (let index = 0; index < files.length; index += 1) {
-    const file = files[index]!;
-    frames.push(await parseGroupingFrame(file));
-    onProgress?.(Math.round(((index + 1) / files.length) * 100));
-  }
+  const frames = await parseGroupingFrames(files, onProgress);
 
   const objectUrls = frames
     .map((frame) => frame.previewUrl)
