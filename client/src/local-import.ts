@@ -155,8 +155,21 @@ function isJpegFile(fileName: string) {
   return JPEG_EXTENSIONS.has(getFileExtension(fileName));
 }
 
+function createFileByteReader(file: File) {
+  let bytesPromise: Promise<Uint8Array> | null = null;
+  return () => {
+    bytesPromise ??= file.arrayBuffer().then((buffer) => new Uint8Array(buffer));
+    return bytesPromise;
+  };
+}
+
 function isPrintableText(value: string) {
-  return value.length > 1 && !/[\u0000-\u0008\u000B-\u001F]/.test(value);
+  if (value.length <= 1) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if ((code >= 0 && code <= 8) || (code >= 11 && code <= 31)) return false;
+  }
+  return true;
 }
 
 function isUsableMetadataValue(fieldName: string, value: unknown) {
@@ -353,17 +366,17 @@ function parseEmbeddedTiffAt(bytes: Uint8Array, tiffOffset: number) {
   return Object.keys(metadata).length ? metadata : null;
 }
 
-async function parseEmbeddedRawMetadata(file: File) {
+async function parseEmbeddedRawMetadata(file: File, readBytes = createFileByteReader(file)) {
   if (!isRawFile(file.name)) return null;
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  const bytes = await readBytes();
   const candidates = findEmbeddedTiffOffsets(bytes)
     .map((offset) => parseEmbeddedTiffAt(bytes, offset))
     .filter((metadata): metadata is Record<string, unknown> => Boolean(metadata));
   return mergeMetadataCandidates(candidates);
 }
 
-async function extractEmbeddedJpegPreviewUrl(file: File) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+async function extractEmbeddedJpegPreviewUrl(file: File, readBytes = createFileByteReader(file)) {
+  const bytes = await readBytes();
   let bestStart = -1;
   let bestEnd = -1;
   let bestLength = 0;
@@ -408,11 +421,11 @@ async function extractEmbeddedJpegPreviewUrl(file: File) {
   return URL.createObjectURL(file.slice(bestStart, bestEnd, 'image/jpeg'));
 }
 
-async function createLocalPreviewUrl(file: File) {
+async function createLocalPreviewUrl(file: File, readBytes = createFileByteReader(file)) {
   const exifr = (await loadExifr()).default;
   let previewUrl = await exifr.thumbnailUrl(file).catch(() => undefined);
   if (!previewUrl && isRawFile(file.name)) {
-    previewUrl = (await extractEmbeddedJpegPreviewUrl(file).catch(() => null)) ?? undefined;
+    previewUrl = (await extractEmbeddedJpegPreviewUrl(file, readBytes).catch(() => null)) ?? undefined;
   }
   if (!previewUrl && isJpegFile(file.name)) {
     previewUrl = URL.createObjectURL(file);
@@ -582,6 +595,7 @@ function matchScore(left: GroupingFrame, right: GroupingFrame) {
 async function parseGroupingFrame(file: File) {
   const extension = getFileExtension(file.name);
   const exifr = (await loadExifr()).default;
+  const readBytes = createFileByteReader(file);
   const exifrMetadata = (await exifr.parse(file, {
     tiff: true,
     ifd0: {},
@@ -599,10 +613,10 @@ async function parseGroupingFrame(file: File) {
   }).catch(() => null)) as Record<string, unknown> | null;
   const metadata = hasUsableExifMetadata(exifrMetadata)
     ? exifrMetadata
-    : ((await parseEmbeddedRawMetadata(file).catch(() => null)) as Record<string, unknown> | null);
+    : ((await parseEmbeddedRawMetadata(file, readBytes).catch(() => null)) as Record<string, unknown> | null);
   const metadataState: LocalImportMetadataState = hasUsableExifMetadata(metadata) ? 'exif' : 'fallback';
 
-  const previewUrl = await createLocalPreviewUrl(file);
+  const previewUrl = await createLocalPreviewUrl(file, readBytes);
   const previewState: LocalImportPreviewState = previewUrl ? 'ready' : 'missing';
 
   return {
