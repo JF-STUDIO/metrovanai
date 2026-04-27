@@ -125,22 +125,78 @@ def read_raw_lens_metadata(source: Path) -> dict[str, Any]:
 
 def ensure_acr_lcp_zip() -> Path | None:
     url = env("METROVAN_ACR_LCP_ZIP_URL")
-    if not url:
+    s3_config = get_acr_lcp_s3_config()
+    if not url and not s3_config:
         return None
     if ACR_LCP_ZIP_MARKER.exists():
         return ACR_LCP_CACHE_DIR
 
     ACR_LCP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     zip_path = ACR_LCP_CACHE_DIR / "profiles.zip"
-    download_url(url, zip_path)
-    with zipfile.ZipFile(zip_path) as archive:
-        archive.extractall(ACR_LCP_CACHE_DIR)
+    if url:
+        download_url(url, zip_path)
+    elif s3_config:
+        download_s3_object(s3_config, zip_path)
+    extract_zip_safe(zip_path, ACR_LCP_CACHE_DIR)
     try:
         zip_path.unlink()
     except OSError:
         pass
     ACR_LCP_ZIP_MARKER.write_text("ready", encoding="utf-8")
     return ACR_LCP_CACHE_DIR
+
+
+def get_acr_lcp_s3_config() -> dict[str, str] | None:
+    key = env("METROVAN_ACR_LCP_S3_KEY") or env("METROVAN_ACR_LCP_OBJECT_KEY")
+    if not key:
+        return None
+
+    endpoint = env("METROVAN_ACR_LCP_S3_ENDPOINT") or env("METROVAN_OBJECT_STORAGE_ENDPOINT")
+    bucket = env("METROVAN_ACR_LCP_S3_BUCKET") or env("METROVAN_OBJECT_STORAGE_BUCKET")
+    access_key_id = env("METROVAN_ACR_LCP_S3_ACCESS_KEY_ID") or env("METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID")
+    secret_access_key = env("METROVAN_ACR_LCP_S3_SECRET_ACCESS_KEY") or env("METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY")
+    region = env("METROVAN_ACR_LCP_S3_REGION") or env("METROVAN_OBJECT_STORAGE_REGION", "auto")
+    if not endpoint or not bucket or not access_key_id or not secret_access_key:
+        return None
+
+    return {
+        "endpoint": endpoint.rstrip("/"),
+        "bucket": bucket,
+        "key": key.lstrip("/"),
+        "access_key_id": access_key_id,
+        "secret_access_key": secret_access_key,
+        "region": region,
+    }
+
+
+def download_s3_object(config: dict[str, str], target: Path) -> None:
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as error:
+        raise RuntimeError("boto3 is required to download ACR lens profiles from private object storage.") from error
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    client = boto3.client(
+        "s3",
+        endpoint_url=config["endpoint"],
+        aws_access_key_id=config["access_key_id"],
+        aws_secret_access_key=config["secret_access_key"],
+        region_name=config["region"],
+        config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
+    )
+    print(f"Downloading ACR lens profiles from object storage: {config['bucket']}/{config['key']}", flush=True)
+    client.download_file(config["bucket"], config["key"], str(target))
+
+
+def extract_zip_safe(zip_path: Path, destination: Path) -> None:
+    destination_root = destination.resolve()
+    with zipfile.ZipFile(zip_path) as archive:
+        for member in archive.infolist():
+            target = (destination / member.filename).resolve()
+            if destination_root != target and destination_root not in target.parents:
+                raise RuntimeError(f"Unsafe path in ACR lens profile archive: {member.filename}")
+        archive.extractall(destination)
 
 
 def get_acr_lcp_roots() -> list[Path]:
