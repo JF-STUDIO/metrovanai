@@ -147,7 +147,7 @@ def ensure_acr_lcp_zip() -> Path | None:
 
 
 def get_acr_lcp_s3_config() -> dict[str, str] | None:
-    key = env("METROVAN_ACR_LCP_S3_KEY") or env("METROVAN_ACR_LCP_OBJECT_KEY")
+    key = env("METROVAN_ACR_LCP_S3_KEY") or env("METROVAN_ACR_LCP_OBJECT_KEY") or "system/acr-lens-profiles.zip"
     if not key:
         return None
 
