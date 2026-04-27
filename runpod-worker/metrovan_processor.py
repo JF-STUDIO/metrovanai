@@ -542,12 +542,7 @@ def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
             tone_target = work_dir / "reference-auto-tone.jpg"
             render_raw_to_jpeg(reference_source, tone_target, 95, "autold", HDR_LONG_EDGE)
 
-        try:
-            align_and_fuse(prepared_for_align, output_path, work_dir, tone_target, None)
-        except Exception:
-            fallback_source = reference_prepared or prepared_for_align[len(prepared_for_align) // 2]
-            tone = estimate_tone_adjustments(fallback_source, tone_target, gains) if tone_target and tone_target.exists() else None
-            apply_image_adjustments(fallback_source, output_path, 95, gains, tone)
+        align_and_fuse(prepared_for_align, output_path, work_dir, tone_target, None)
 
 
 def process_regenerate(input_payload: dict[str, Any], output_path: Path) -> None:

@@ -179,6 +179,7 @@ export interface ProjectRecord {
   downloadReady: boolean;
   createdAt: string;
   updatedAt: string;
+  uploadCompletedAt: string | null;
   hdrItems: HdrItem[];
   groups: ProjectGroup[];
   resultAssets: ResultAsset[];

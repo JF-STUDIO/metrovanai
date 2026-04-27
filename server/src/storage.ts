@@ -500,6 +500,7 @@ export class LocalDiskStorageProvider implements StorageProvider {
       photoCount: 0,
       groupCount: 0,
       downloadReady: false,
+      uploadCompletedAt: null,
       createdAt: typeof value.createdAt === 'string' ? value.createdAt : now,
       updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : now,
       hdrItems: [],

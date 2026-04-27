@@ -9,11 +9,20 @@ RUN apt-get update \
     ca-certificates \
     curl \
     enblend \
+    hugin \
     hugin-tools \
     imagemagick \
     libimage-exiftool-perl \
+    liblensfun-bin \
+    liblensfun-data-v1 \
     rawtherapee \
   && rm -rf /var/lib/apt/lists/*
+
+RUN lensfun-update-data || true \
+  && command -v align_image_stack \
+  && command -v enfuse \
+  && command -v rawtherapee-cli \
+  && command -v exiftool
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt

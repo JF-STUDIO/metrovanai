@@ -675,10 +675,15 @@ export interface HdrLayoutItemPayload {
   }>;
 }
 
-export async function applyHdrLayout(projectId: string, hdrItems: HdrLayoutItemPayload[]) {
+export interface HdrLayoutOptions {
+  mode?: 'replace' | 'merge';
+  inputComplete?: boolean;
+}
+
+export async function applyHdrLayout(projectId: string, hdrItems: HdrLayoutItemPayload[], options: HdrLayoutOptions = {}) {
   return await jsonRequest<{ project: ProjectRecord }>(`/api/projects/${projectId}/hdr-layout`, {
     method: 'POST',
-    body: JSON.stringify({ hdrItems })
+    body: JSON.stringify({ hdrItems, ...options })
   });
 }
 

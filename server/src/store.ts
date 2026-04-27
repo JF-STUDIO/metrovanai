@@ -744,6 +744,7 @@ export class LocalStore {
       downloadReady: false,
       createdAt: now,
       updatedAt: now,
+      uploadCompletedAt: null,
       hdrItems: [],
       groups: [this.createGroupShape(1, defaultGroupName(1), 'pending')],
       resultAssets: [],
@@ -1221,7 +1222,7 @@ export class LocalStore {
     return { project, archive };
   }
 
-  replaceHdrItems(projectId: string, hdrItems: HdrItem[]) {
+  replaceHdrItems(projectId: string, hdrItems: HdrItem[], options: { inputComplete?: boolean } = {}) {
     return this.updateProject(projectId, (project) => {
       const nextHdrItems = hdrItems.map((item, index) => ({ ...item, index: index + 1 }));
       const importedGroup = this.createGroupShape(1, defaultGroupName(1), 'pending');
@@ -1233,10 +1234,76 @@ export class LocalStore {
 
       project.hdrItems = nextHdrItems;
       project.groups = nextHdrItems.length ? [importedGroup] : [this.createGroupShape(1, defaultGroupName(1), 'pending')];
-      project.status = nextHdrItems.length ? 'review' : 'draft';
-      project.currentStep = nextHdrItems.length ? 2 : 1;
+      const keepActiveUploadState = project.status === 'uploading' || project.status === 'processing';
+      if (keepActiveUploadState) {
+        project.currentStep = 3;
+      } else {
+        project.status = nextHdrItems.length ? 'review' : 'draft';
+        project.currentStep = nextHdrItems.length ? 2 : 1;
+      }
       project.downloadReady = false;
-      project.job = createEmptyJobState();
+      project.uploadCompletedAt = options.inputComplete ? new Date().toISOString() : null;
+      if (!keepActiveUploadState) {
+        project.job = createEmptyJobState();
+      }
+      return project;
+    });
+  }
+
+  mergeHdrItems(projectId: string, hdrItems: HdrItem[], options: { inputComplete?: boolean } = {}) {
+    return this.updateProject(projectId, (project) => {
+      const existingByExposureKey = new Map(project.hdrItems.map((item) => [exposureKey(item), item]));
+      const mergedItems = [...project.hdrItems];
+
+      for (const incoming of hdrItems) {
+        const key = exposureKey(incoming);
+        const existing = existingByExposureKey.get(key);
+        if (!existing) {
+          mergedItems.push(incoming);
+          existingByExposureKey.set(key, incoming);
+          continue;
+        }
+
+        Object.assign(existing, {
+          ...incoming,
+          id: existing.id,
+          index: existing.index,
+          title: existing.title || incoming.title,
+          groupId: existing.groupId,
+          sceneType: existing.sceneType,
+          status: existing.status,
+          statusText: existing.statusText,
+          errorMessage: existing.errorMessage,
+          mergedKey: existing.mergedKey,
+          mergedPath: existing.mergedPath,
+          mergedUrl: existing.mergedUrl,
+          resultKey: existing.resultKey,
+          resultPath: existing.resultPath,
+          resultUrl: existing.resultUrl,
+          resultFileName: existing.resultFileName,
+          regeneration: existing.regeneration
+        });
+      }
+
+      const baseGroup = project.groups[0] ?? this.createGroupShape(1, defaultGroupName(1), 'pending');
+      baseGroup.hdrItemIds = [];
+      project.hdrItems = mergedItems.map((item, index) => {
+        item.index = index + 1;
+        item.title = `HDR ${index + 1}`;
+        item.groupId = baseGroup.id;
+        item.sceneType = baseGroup.sceneType;
+        baseGroup.hdrItemIds.push(item.id);
+        return item;
+      });
+      project.groups = project.hdrItems.length ? [baseGroup] : [this.createGroupShape(1, defaultGroupName(1), 'pending')];
+      if (options.inputComplete) {
+        project.uploadCompletedAt = new Date().toISOString();
+      }
+      project.downloadReady = false;
+      if (project.status !== 'processing' && project.status !== 'uploading') {
+        project.status = project.hdrItems.length ? 'review' : 'draft';
+        project.currentStep = project.hdrItems.length ? 2 : 1;
+      }
       return project;
     });
   }
@@ -1392,6 +1459,7 @@ export class LocalStore {
 
   recomputeProject(project: ProjectRecord) {
     project = this.normalizeProjectStorageDescriptors(project);
+    project.uploadCompletedAt ??= null;
     project.groups = this.normalizeGroups(project.groups, project.hdrItems);
     project.hdrItems = project.hdrItems.map((item, index) => ({
       ...item,

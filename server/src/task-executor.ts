@@ -85,6 +85,67 @@ export interface TaskExecutionProvider {
   createRunContext(): TaskExecutionRunContext;
 }
 
+class AsyncSemaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private capacity: number) {}
+
+  setCapacity(capacity: number) {
+    this.capacity = Math.max(1, Math.floor(capacity));
+    this.drain();
+  }
+
+  async runExclusive<T>(callback: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await callback();
+    } finally {
+      this.release();
+    }
+  }
+
+  private async acquire() {
+    if (this.active < this.capacity) {
+      this.active += 1;
+      return;
+    }
+
+    await new Promise<void>((resolve) =>
+      this.waiters.push(() => {
+        this.active += 1;
+        resolve();
+      })
+    );
+  }
+
+  private release() {
+    this.active = Math.max(0, this.active - 1);
+    this.drain();
+  }
+
+  private drain() {
+    while (this.active < this.capacity && this.waiters.length) {
+      const waiter = this.waiters.shift();
+      waiter?.();
+    }
+  }
+}
+
+const runpodJobSemaphores = new Map<string, AsyncSemaphore>();
+
+function getRunpodJobSemaphore(key: string, capacity: number) {
+  const normalizedCapacity = Math.max(1, Math.floor(capacity));
+  let semaphore = runpodJobSemaphores.get(key);
+  if (!semaphore) {
+    semaphore = new AsyncSemaphore(normalizedCapacity);
+    runpodJobSemaphores.set(key, semaphore);
+  } else {
+    semaphore.setCapacity(normalizedCapacity);
+  }
+  return semaphore;
+}
+
 interface RemoteHttpTaskExecutorConfig {
   baseUrl: string;
   token: string;
@@ -913,6 +974,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
     };
     const manifestContext = createRunpodManifestContext();
     const endpointBaseUrl = `${config.apiBaseUrl}/${encodeURIComponent(config.endpointId)}`;
+    const runpodJobSemaphore = getRunpodJobSemaphore(endpointBaseUrl, config.maxInFlight);
     const postWorkflowEnabled = shouldRunpodPostWorkflow();
     const workflowConfig = postWorkflowEnabled ? loadWorkflowConfig(this.repoRoot) : null;
     const runningHub = postWorkflowEnabled ? new RunningHubClient() : null;
@@ -1238,6 +1300,18 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       throw new Error(`Cloud job timed out after ${config.timeoutSeconds} seconds.`);
     };
 
+    const executeWorkflowTaskWithRunpodLimit = async (
+      project: ProjectRecord,
+      hdrItem: HdrItem,
+      mergedPath: string,
+      mergedFileName: string,
+      onProgress?: (update: WorkflowExecutionProgress) => void,
+      options?: WorkflowExecutionOptions
+    ) =>
+      await runpodJobSemaphore.runExclusive(() =>
+        executeWorkflowTask(project, hdrItem, mergedPath, mergedFileName, onProgress, options)
+      );
+
     const executeWorkflowBatch = async (
       project: ProjectRecord,
       items: WorkflowBatchExecutionItem[],
@@ -1249,7 +1323,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         await Promise.all(
           items.map(async (item) => {
             try {
-              const artifact = await executeWorkflowTask(
+              const artifact = await executeWorkflowTaskWithRunpodLimit(
                 project,
                 item.hdrItem,
                 item.mergedPath,
@@ -1300,7 +1374,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         return await Promise.all(
           items.map(async (item) => {
             try {
-              const artifact = await executeWorkflowTask(
+              const artifact = await executeWorkflowTaskWithRunpodLimit(
                 project,
                 item.hdrItem,
                 item.mergedPath,
@@ -1378,73 +1452,80 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         })
       );
 
-      const createResponse = await fetch(`${endpointBaseUrl}/run`, {
-        method: 'POST',
-        headers: createRunpodHeaders(config),
-        body: JSON.stringify({
-          input: {
-            contractVersion: 'metrovan.runpod.v1',
-            batchVersion: 1,
-            projectId: project.id,
-            userKey: project.userKey,
-            workflowMode: 'default',
-            items: runpodItems
-          }
-        })
-      });
-      const created = await readRemoteJson<RunpodNativeJobCreateResponse>(
-        createResponse,
-        'Runpod batch job submission failed.'
-      );
-      const jobId = created.id ?? created.jobId;
-      if (!jobId) {
-        throw new Error(created.error || 'Runpod did not return a batch job id.');
-      }
-
-      onProgress?.({
-        monitorState: created.status ?? 'submitted',
-        detail: `cloud batch ${jobId} submitted (${batch.length} groups)`,
-        remoteProgress: 0,
-        queuePosition: 0,
-        workflowName: 'runpod-native',
-        taskId: jobId
-      });
-
-      const deadline = Date.now() + config.timeoutSeconds * 1000;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, config.pollMs));
-
-        const statusResponse = await fetch(`${endpointBaseUrl}/status/${encodeURIComponent(jobId)}`, {
-          headers: createRunpodHeaders(config)
+      const completedBatch = await runpodJobSemaphore.runExclusive(async () => {
+        const createResponse = await fetch(`${endpointBaseUrl}/run`, {
+          method: 'POST',
+          headers: createRunpodHeaders(config),
+          body: JSON.stringify({
+            input: {
+              contractVersion: 'metrovan.runpod.v1',
+              batchVersion: 1,
+              projectId: project.id,
+              userKey: project.userKey,
+              workflowMode: 'default',
+              items: runpodItems
+            }
+          })
         });
-        const statusPayload = await readRemoteJson<RunpodNativeJobStatusResponse>(
-          statusResponse,
-          'Runpod batch status check failed.'
+        const created = await readRemoteJson<RunpodNativeJobCreateResponse>(
+          createResponse,
+          'Runpod batch job submission failed.'
         );
-        const remoteProgress = extractRunpodProgress(statusPayload);
-        const status = statusPayload.status ?? 'processing';
+        const jobId = created.id ?? created.jobId;
+        if (!jobId) {
+          throw new Error(created.error || 'Runpod did not return a batch job id.');
+        }
 
         onProgress?.({
-          monitorState: status,
-          detail: `cloud batch ${jobId} ${status}`,
-          remoteProgress,
-          queuePosition: Math.max(0, Math.round((statusPayload.delayTime ?? 0) / 1000)),
+          monitorState: created.status ?? 'submitted',
+          detail: `cloud batch ${jobId} submitted (${batch.length} groups)`,
+          remoteProgress: 0,
+          queuePosition: 0,
           workflowName: 'runpod-native',
           taskId: jobId
         });
 
-        if (isRunpodFailedStatus(status)) {
-          throw new Error(statusPayload.error || `Cloud batch ${jobId} failed.`);
+        const deadline = Date.now() + config.timeoutSeconds * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, config.pollMs));
+
+          const statusResponse = await fetch(`${endpointBaseUrl}/status/${encodeURIComponent(jobId)}`, {
+            headers: createRunpodHeaders(config)
+          });
+          const statusPayload = await readRemoteJson<RunpodNativeJobStatusResponse>(
+            statusResponse,
+            'Runpod batch status check failed.'
+          );
+          const remoteProgress = extractRunpodProgress(statusPayload);
+          const status = statusPayload.status ?? 'processing';
+
+          onProgress?.({
+            monitorState: status,
+            detail: `cloud batch ${jobId} ${status}`,
+            remoteProgress,
+            queuePosition: Math.max(0, Math.round((statusPayload.delayTime ?? 0) / 1000)),
+            workflowName: 'runpod-native',
+            taskId: jobId
+          });
+
+          if (isRunpodFailedStatus(status)) {
+            throw new Error(statusPayload.error || `Cloud batch ${jobId} failed.`);
+          }
+
+          if (!isRunpodCompletedStatus(status)) {
+            continue;
+          }
+
+          return { jobId, statusPayload };
         }
 
-        if (!isRunpodCompletedStatus(status)) {
-          continue;
-        }
+        throw new Error(`Cloud batch timed out after ${config.timeoutSeconds} seconds.`);
+      });
+      const { jobId, statusPayload } = completedBatch;
+      const artifacts = extractRunpodResultArtifacts(statusPayload.output);
+      const artifactByHdrItemId = new Map(artifacts.map((artifact) => [artifact.hdrItemId ?? '', artifact]));
 
-        const artifacts = extractRunpodResultArtifacts(statusPayload.output);
-        const artifactByHdrItemId = new Map(artifacts.map((artifact) => [artifact.hdrItemId ?? '', artifact]));
-
-        return await Promise.all(
+      return await Promise.all(
           batch.map(async (batchItem) => {
             const staged = stagedByHdrItemId.get(batchItem.hdrItem.id);
             const artifact = artifactByHdrItemId.get(batchItem.hdrItem.id);
@@ -1502,9 +1583,6 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
             }
           })
         );
-      }
-
-      throw new Error(`Cloud batch timed out after ${config.timeoutSeconds} seconds.`);
     };
 
     return {
@@ -1519,7 +1597,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         return Math.max(1, Math.min(config.batchSize, totalPendingItems));
       },
       ensureMergedHdrItem: manifestContext.ensureMergedHdrItem,
-      executeWorkflowTask,
+      executeWorkflowTask: executeWorkflowTaskWithRunpodLimit,
       executeWorkflowBatch
     };
   }

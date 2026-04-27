@@ -1110,6 +1110,7 @@ function buildPublicProject(project: ProjectRecord) {
     downloadReady: project.downloadReady,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
+    uploadCompletedAt: project.uploadCompletedAt ?? null,
     hdrItems: project.hdrItems.map((hdrItem) => buildPublicHdrItem(project, hdrItem)),
     groups: project.groups,
     resultAssets: project.resultAssets.map((asset) => buildPublicResultAsset(project.id, asset)),
@@ -1378,6 +1379,7 @@ async function commitStagedOriginals(projectId: string) {
   const committedStorageKeys = new Map<string, string>();
   const manifestEntriesByName = collectDirectUploadManifestEntriesByName(dirs.staging);
   const stagedExposureByPath = new Map<string, (typeof project.hdrItems)[number]['exposures'][number]>();
+  const uploadStillOpen = !project.uploadCompletedAt;
 
   for (const hdrItem of project.hdrItems) {
     for (const exposure of hdrItem.exposures) {
@@ -1407,6 +1409,10 @@ async function commitStagedOriginals(projectId: string) {
       continue;
     }
 
+    if ((!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) && uploadStillOpen) {
+      continue;
+    }
+
     if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
       await restoreObjectToFileIfAvailable(storageKey, sourcePath);
     }
@@ -1431,6 +1437,9 @@ async function commitStagedOriginals(projectId: string) {
 
         const committedPath = committedPaths.get(resolvedSourcePath.toLowerCase());
         if (!committedPath) {
+          if (uploadStillOpen) {
+            return exposure;
+          }
           throw new Error(`找不到已提交的原图：${exposure.originalName || exposure.fileName}`);
         }
         const cloudStorageKey = committedStorageKeys.get(resolvedSourcePath.toLowerCase()) ?? exposure.storageKey;
@@ -1519,6 +1528,8 @@ const moveHdrSchema = z.object({
 });
 
 const hdrLayoutSchema = z.object({
+  mode: z.enum(['replace', 'merge']).optional().default('replace'),
+  inputComplete: z.boolean().optional().default(false),
   hdrItems: z
     .array(
       z.object({
@@ -1546,7 +1557,7 @@ const hdrLayoutSchema = z.object({
           .optional()
       })
     )
-    .min(1)
+    .default([])
 });
 
 const directUploadFileSchema = z.object({
@@ -3492,13 +3503,22 @@ app.post('/api/projects/:id/hdr-layout', async (req, res) => {
       .listProjectStagedFiles(project)
       .filter((filePath) => path.basename(filePath) !== DIRECT_UPLOAD_MANIFEST_FILE);
     const hasFrontendExposureMetadata = parsed.data.hdrItems.some((item) => item.exposures?.length);
-    if (!stagedFiles.length && !hasFrontendExposureMetadata) {
+    if (!parsed.data.hdrItems.length && !(parsed.data.mode === 'merge' && parsed.data.inputComplete)) {
+      res.status(400).json({ error: 'No HDR groups were provided.' });
+      return;
+    }
+    if (parsed.data.hdrItems.length > 0 && !stagedFiles.length && !hasFrontendExposureMetadata) {
       res.status(400).json({ error: 'No uploaded photos are available to group.' });
       return;
     }
 
-    const hdrItems = await buildHdrItemsFromFrontendLayout(project, store, stagedFiles, parsed.data.hdrItems);
-    const updated = store.replaceHdrItems(projectId, hdrItems);
+    const hdrItems = parsed.data.hdrItems.length
+      ? await buildHdrItemsFromFrontendLayout(project, store, stagedFiles, parsed.data.hdrItems)
+      : [];
+    const updated =
+      parsed.data.mode === 'merge'
+        ? store.mergeHdrItems(projectId, hdrItems, { inputComplete: parsed.data.inputComplete })
+        : store.replaceHdrItems(projectId, hdrItems, { inputComplete: parsed.data.inputComplete });
     if (!updated) {
       res.status(404).json({ error: 'Project not found.' });
       return;

@@ -14,6 +14,8 @@ import {
 } from './task-executor.js';
 
 const POINT_PRICE_USD = 0.25;
+const STREAMING_UPLOAD_POLL_MS = 750;
+const STREAMING_UPLOAD_IDLE_TIMEOUT_MS = Number(process.env.METROVAN_STREAMING_UPLOAD_IDLE_TIMEOUT_MS ?? 15 * 60 * 1000);
 
 class AsyncQueue<T> {
   private readonly items: T[] = [];
@@ -449,8 +451,8 @@ export class ProjectProcessor {
       return;
     }
 
-    const pendingHdrItems = this.getPendingHdrItems(initialProject);
-    if (!pendingHdrItems.length) {
+    const pendingHdrItems = this.getPendingHdrItems(initialProject, { readyOnly: true });
+    if (!pendingHdrItems.length && this.isProjectInputComplete(initialProject)) {
       this.finishRecoveredProject(projectId, initialProject);
       return;
     }
@@ -470,7 +472,7 @@ export class ProjectProcessor {
       percent: Math.max(1, job.percent)
     }));
 
-    await this.runParallelMergeAndWorkflow(projectId, pendingHdrItems, taskExecution, projectDirs.hdr);
+    await this.runParallelMergeAndWorkflow(projectId, taskExecution, projectDirs.hdr);
     const finalProject = this.store.getProject(projectId);
     const hasSuccess = Boolean(finalProject?.resultAssets.length);
     const finalFailed = finalProject?.job?.workflowRealtime.failed ?? 0;
@@ -499,12 +501,30 @@ export class ProjectProcessor {
     return project.hdrItems.filter((item) => this.isHdrItemCompleted(item)).length;
   }
 
-  private getPendingHdrItems(project: ProjectRecord) {
-    return project.hdrItems.filter((item) => !this.isHdrItemCompleted(item));
+  private getPendingHdrItems(project: ProjectRecord, options: { readyOnly?: boolean } = {}) {
+    return project.hdrItems.filter(
+      (item) =>
+        !this.isHdrItemCompleted(item) &&
+        item.status !== 'error' &&
+        (!options.readyOnly || this.isHdrItemReadyForProcessing(item))
+    );
   }
 
   private isHdrItemCompleted(item: HdrItem) {
-    return Boolean(item.resultPath && item.resultUrl && fs.existsSync(item.resultPath));
+    return Boolean(item.resultUrl && item.resultFileName && (item.resultKey || item.resultPath));
+  }
+
+  private isProjectInputComplete(project: ProjectRecord) {
+    return Boolean(project.uploadCompletedAt);
+  }
+
+  private isHdrItemReadyForProcessing(item: HdrItem) {
+    return (
+      item.exposures.length > 0 &&
+      item.exposures.every(
+        (exposure) => Boolean(exposure.storageKey) || Boolean(exposure.storagePath && fs.existsSync(exposure.storagePath))
+      )
+    );
   }
 
   private calculateBaselinePercent(project: ProjectRecord, completedCount: number) {
@@ -551,35 +571,100 @@ export class ProjectProcessor {
     }));
   }
 
-  private async runParallelMergeAndWorkflow(
-    projectId: string,
-    pendingHdrItems: HdrItem[],
-    taskExecution: TaskExecutionRunContext,
-    hdrDir: string
-  ) {
+  private async runParallelMergeAndWorkflow(projectId: string, taskExecution: TaskExecutionRunContext, hdrDir: string) {
     const mergeQueue = new AsyncQueue<MergeQueueItem>();
     const workflowQueue = new AsyncQueue<WorkflowQueueItem>();
+    const queuedHdrItemIds = new Set<string>();
+    const initialProject = this.store.getProject(projectId);
     const mergeProgress = {
       completed: 0,
-      total: pendingHdrItems.length
+      total: initialProject?.hdrItems.length ?? 0
     };
-    const mergeWorkerCount = taskExecution.getMergeConcurrency(pendingHdrItems.length);
+    let lastReadyAt = Date.now();
+
+    const markUnreadyItemsFailed = (project: ProjectRecord, message: string) => {
+      let failed = 0;
+      for (const item of this.getPendingHdrItems(project)) {
+        if (queuedHdrItemIds.has(item.id) || this.isHdrItemReadyForProcessing(item)) {
+          continue;
+        }
+        failed += 1;
+        this.store.setHdrItemState(projectId, item.id, (entry) => ({
+          ...entry,
+          status: 'error',
+          statusText: createProcessingText('error'),
+          errorMessage: message
+        }));
+      }
+
+      if (failed > 0) {
+        this.store.setJobState(projectId, (job) => ({
+          ...job,
+          workflowRealtime: {
+            ...job.workflowRealtime,
+            failed: job.workflowRealtime.failed + failed
+          },
+          detail: message
+        }));
+      }
+    };
+
+    const mergeWorkerCount = taskExecution.getMergeConcurrency(Math.max(1, mergeProgress.total));
     const mergeWorkers = Array.from({ length: mergeWorkerCount }, () =>
       this.mergeWorker(projectId, mergeQueue, workflowQueue, taskExecution, hdrDir, mergeProgress)
     );
+    const workflowWorkerCount = taskExecution.getMaxConcurrency(Math.max(1, mergeProgress.total));
+    const workflowWorkers = Array.from({ length: workflowWorkerCount }, () =>
+      this.workflowWorker(projectId, workflowQueue, taskExecution)
+    );
 
-    for (const item of pendingHdrItems) {
-      mergeQueue.push({ hdrItemId: item.id });
+    while (true) {
+      const currentProject = this.store.getProject(projectId);
+      if (!currentProject) {
+        break;
+      }
+
+      mergeProgress.total = Math.max(mergeProgress.total, currentProject.hdrItems.length);
+      this.store.setJobState(projectId, (job) => ({
+        ...job,
+        workflowRealtime: {
+          ...job.workflowRealtime,
+          total: Math.max(job.workflowRealtime.total, currentProject.hdrItems.length)
+        }
+      }));
+
+      const readyItems = this.getPendingHdrItems(currentProject, { readyOnly: true }).filter(
+        (item) => !queuedHdrItemIds.has(item.id)
+      );
+      if (readyItems.length > 0) {
+        lastReadyAt = Date.now();
+        for (const item of readyItems) {
+          queuedHdrItemIds.add(item.id);
+          mergeQueue.push({ hdrItemId: item.id });
+        }
+      }
+
+      if (this.isProjectInputComplete(currentProject)) {
+        markUnreadyItemsFailed(currentProject, 'Some original photos were not uploaded. Please check and retry.');
+        const refreshedProject = this.store.getProject(projectId);
+        const hasUnqueuedPending = refreshedProject
+          ? this.getPendingHdrItems(refreshedProject).some((item) => !queuedHdrItemIds.has(item.id))
+          : false;
+        if (!hasUnqueuedPending) {
+          break;
+        }
+      } else if (Date.now() - lastReadyAt > STREAMING_UPLOAD_IDLE_TIMEOUT_MS) {
+        markUnreadyItemsFailed(currentProject, 'Upload did not finish in time. Please retry the unfinished photos.');
+        break;
+      }
+
+      await delay(STREAMING_UPLOAD_POLL_MS);
     }
+
     mergeQueue.close();
 
     await Promise.all(mergeWorkers);
     workflowQueue.close();
-
-    const workerCount = taskExecution.getMaxConcurrency(pendingHdrItems.length);
-    const workflowWorkers = Array.from({ length: workerCount }, () =>
-      this.workflowWorker(projectId, workflowQueue, taskExecution)
-    );
     await Promise.all(workflowWorkers);
   }
 
@@ -618,7 +703,7 @@ export class ProjectProcessor {
 
       try {
         const { mergedFileName, mergedPath, mergedStorageKey } = await taskExecution.ensureMergedHdrItem(currentProject, hdrItem, hdrDir);
-        const mergedUrl = this.store.toStorageUrl(mergedPath);
+        const mergedUrl = mergedStorageKey ? this.store.toStorageUrlFromKey(mergedStorageKey) : this.store.toStorageUrl(mergedPath);
         mergeProgress.completed += 1;
 
         this.store.setHdrItemState(projectId, hdrItem.id, (item) => ({
@@ -799,11 +884,12 @@ export class ProjectProcessor {
   }
 
   private completeWorkflowItem(projectId: string, hdrItem: HdrItem, result: WorkflowExecutionArtifact) {
+    const resultStorageKey = result.resultStorageKey ?? this.store.toStorageKey(result.resultPath);
     this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
       ...entry,
-      resultKey: result.resultStorageKey ?? this.store.toStorageKey(result.resultPath),
+      resultKey: resultStorageKey,
       resultPath: result.resultPath,
-      resultUrl: this.store.toStorageUrl(result.resultPath),
+      resultUrl: result.resultStorageKey ? this.store.toStorageUrlFromKey(result.resultStorageKey) : this.store.toStorageUrl(result.resultPath),
       resultFileName: result.resultFileName,
       status: 'completed',
       statusText: createProcessingText('completed'),

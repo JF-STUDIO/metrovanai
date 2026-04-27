@@ -1466,6 +1466,10 @@ img {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.asset-frame.is-clickable {
+  cursor: zoom-in;
+}
+
 .demo-shell .asset-card,
 .demo-shell .result-card {
   border-radius: 0.86rem;

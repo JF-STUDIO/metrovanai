@@ -15,7 +15,7 @@ import type {
 import { ensureDir, loadJson, saveJson } from './utils.js';
 
 const { Pool } = pg;
-export const MAX_RUNPOD_HDR_BATCH_SIZE = 50;
+export const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
 
 export interface DatabaseShape {
   projects: ProjectRecord[];

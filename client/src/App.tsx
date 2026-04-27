@@ -89,7 +89,8 @@ type AuthMode = 'signin' | 'signup' | 'reset-request' | 'reset-confirm' | 'verif
 type UiLocale = 'zh' | 'en';
 type AppRoute = 'home' | 'studio' | 'admin';
 
-const MAX_RUNPOD_HDR_BATCH_SIZE = 50;
+const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
+const LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY = 4;
 
 interface SessionState {
   id: string;
@@ -1197,6 +1198,7 @@ function createDemoProjects(): ProjectRecord[] {
       photoCount: 8,
       groupCount: 4,
       downloadReady: true,
+      uploadCompletedAt: null,
       createdAt: '2026-04-20T00:00:00Z',
       updatedAt: '2026-04-20T00:00:00Z',
       hdrItems,
@@ -1230,6 +1232,7 @@ function createDemoProjects(): ProjectRecord[] {
       photoCount: 18,
       groupCount: 2,
       downloadReady: false,
+      uploadCompletedAt: null,
       createdAt: '2026-04-19T00:00:00Z',
       updatedAt: '2026-04-19T00:00:00Z',
       hdrItems: [],
@@ -1250,6 +1253,7 @@ function createDemoProjects(): ProjectRecord[] {
       photoCount: 24,
       groupCount: 3,
       downloadReady: true,
+      uploadCompletedAt: null,
       createdAt: '2026-04-18T00:00:00Z',
       updatedAt: '2026-04-18T00:00:00Z',
       hdrItems: [],
@@ -2763,6 +2767,25 @@ function App() {
       }
     }
     return Array.from(filesByIdentity.values());
+  }
+
+  function collectLocalHdrItemFiles(hdrItem: LocalHdrItemDraft) {
+    const filesByIdentity = new Map<string, File>();
+    for (const exposure of hdrItem.exposures) {
+      const key = normalizeFileIdentity(exposure.originalName || exposure.fileName);
+      if (!filesByIdentity.has(key)) {
+        filesByIdentity.set(key, exposure.file);
+      }
+    }
+    return Array.from(filesByIdentity.values());
+  }
+
+  function buildSingleHdrLayoutPayload(
+    draft: LocalImportDraft,
+    hdrItem: LocalHdrItemDraft,
+    uploadedObjects: UploadedObjectReference[] = []
+  ) {
+    return buildHdrLayoutPayload({ ...draft, hdrItems: [hdrItem] }, uploadedObjects);
   }
 
   function buildHdrLayoutPayload(draft: LocalImportDraft, uploadedObjects: UploadedObjectReference[] = []) {
@@ -4370,7 +4393,26 @@ function App() {
     setBusy(true);
     try {
       if (activeLocalDraft) {
+        const projectId = currentProject.id;
         const draftFiles = collectLocalDraftFiles(activeLocalDraft);
+        const uploadTotalFiles = Math.max(1, draftFiles.length);
+        const completedFileIdentities = new Set<string>();
+        const inFlightGroupProgress = new Map<string, number>();
+        const updateAggregateUploadProgress = (stage: UploadProgressSnapshot['stage'] = 'uploading') => {
+          const inFlightFiles = Array.from(inFlightGroupProgress.values()).reduce((sum, value) => sum + value, 0);
+          const uploadedFiles = Math.min(uploadTotalFiles, completedFileIdentities.size + inFlightFiles);
+          const percent =
+            stage === 'completed'
+              ? 100
+              : Math.max(1, Math.min(96, Math.round((uploadedFiles / uploadTotalFiles) * 96)));
+          setUploadPercent(percent);
+          setUploadSnapshot({
+            stage,
+            percent,
+            uploadedFiles,
+            totalFiles: uploadTotalFiles
+          });
+        };
         setUploadActive(true);
         setUploadMode('originals');
         setUploadPercent(1);
@@ -4382,34 +4424,88 @@ function App() {
         });
         setMessage(copy.uploadOriginalsDoNotClose);
 
-        const uploadStep = await patchProject(currentProject.id, { currentStep: 3, status: 'uploading' }).catch(() => null);
+        const uploadStep = await patchProject(projectId, { currentStep: 3, status: 'uploading' }).catch(() => null);
         if (uploadStep?.project) {
           upsertProject(uploadStep.project);
         }
 
-        const uploadResponse = await uploadFiles(currentProject.id, draftFiles, (percent, snapshot) => {
-          setUploadPercent(percent);
-          if (snapshot) {
-            setUploadSnapshot(snapshot);
-          }
-          if (percent >= 100) {
-            setMessage(copy.uploadOriginalsReceived);
-          }
+        const initialLayoutResponse = await applyHdrLayout(projectId, buildHdrLayoutPayload(activeLocalDraft, []), {
+          mode: 'replace',
+          inputComplete: false
         });
-        const layoutResponse = await applyHdrLayout(
-          currentProject.id,
-          buildHdrLayoutPayload(
-            activeLocalDraft,
-            'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : []
-          )
+        upsertProject(initialLayoutResponse.project);
+
+        let processingStartPromise: Promise<void> | null = null;
+        const startProcessingOnce = async () => {
+          if (!processingStartPromise) {
+            processingStartPromise = startProcessing(projectId).then((response) => {
+              upsertProject(response.project);
+            });
+          }
+          await processingStartPromise;
+        };
+
+        let nextHdrItemIndex = 0;
+        const uploadGroupWorker = async () => {
+          while (nextHdrItemIndex < activeLocalDraft.hdrItems.length) {
+            const hdrItemIndex = nextHdrItemIndex;
+            nextHdrItemIndex += 1;
+            const hdrItem = activeLocalDraft.hdrItems[hdrItemIndex];
+            if (!hdrItem) {
+              continue;
+            }
+
+            const groupFiles = collectLocalHdrItemFiles(hdrItem);
+            if (!groupFiles.length) {
+              continue;
+            }
+
+            const uploadResponse = await uploadFiles(projectId, groupFiles, (_percent, snapshot) => {
+              const uploadedInGroup = Math.min(
+                groupFiles.length,
+                snapshot?.uploadedFiles ?? Math.round(((_percent || 0) / 100) * groupFiles.length)
+              );
+              inFlightGroupProgress.set(hdrItem.id, uploadedInGroup);
+              updateAggregateUploadProgress('uploading');
+            });
+            inFlightGroupProgress.delete(hdrItem.id);
+            for (const file of groupFiles) {
+              completedFileIdentities.add(normalizeFileIdentity(file.name));
+            }
+            updateAggregateUploadProgress('uploading');
+
+            const layoutResponse = await applyHdrLayout(
+              projectId,
+              buildSingleHdrLayoutPayload(
+                activeLocalDraft,
+                hdrItem,
+                'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : []
+              ),
+              { mode: 'merge', inputComplete: false }
+            );
+            upsertProject(layoutResponse.project);
+            await startProcessingOnce();
+          }
+        };
+
+        const groupUploadWorkerCount = Math.max(
+          1,
+          Math.min(LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY, activeLocalDraft.hdrItems.length)
         );
-        let syncedProject = layoutResponse.project;
+        await Promise.all(Array.from({ length: groupUploadWorkerCount }, () => uploadGroupWorker()));
+
+        const completedLayoutResponse = await applyHdrLayout(projectId, [], { mode: 'merge', inputComplete: true });
+        const syncedProject = completedLayoutResponse.project;
         setUploadPercent(100);
+        setUploadSnapshot({
+          stage: 'completed',
+          percent: 100,
+          uploadedFiles: draftFiles.length,
+          totalFiles: draftFiles.length
+        });
         setMessage(copy.uploadOriginalsReceived);
         upsertProject(syncedProject);
-        const processingResponse = await startProcessing(currentProject.id);
-        syncedProject = processingResponse.project;
-        upsertProject(syncedProject);
+        await startProcessingOnce();
         setUploadActive(false);
         setUploadMode(null);
         setUploadPercent(100);
@@ -6401,7 +6497,14 @@ function App() {
                                         hdrItemProcessing ? ' is-processing' : ''
                                       }${hdrItemCompleted ? ' is-completed' : ''}${hdrItemFailed ? ' is-error' : ''}`}
                                     >
-                                      <div className="asset-frame">
+                                      <div
+                                        className={`asset-frame${showProcessingGroupGrid && previewUrl ? ' is-clickable' : ''}`}
+                                        onClick={
+                                          showProcessingGroupGrid && previewUrl
+                                            ? () => window.open(previewUrl, '_blank', 'noopener,noreferrer')
+                                            : undefined
+                                        }
+                                      >
                                         {previewUrl ? (
                                           <img src={previewUrl} alt={hdrItem.title} loading="lazy" decoding="async" />
                                         ) : (
@@ -6413,18 +6516,20 @@ function App() {
                                             <strong>{copy.hdrItemProcessing}</strong>
                                           </div>
                                         )}
-                                        <div className="asset-overlay">
-                                          <span className="asset-index">{hdrItem.index}</span>
-                                          <span className="asset-count">{selectedIndex + 1}/{hdrItem.exposures.length}</span>
-                                          <button
-                                            className="asset-delete"
-                                            type="button"
-                                            onClick={() => void handleDeleteHdr(hdrItem)}
-                                            disabled={showProcessingGroupGrid}
-                                          >
-                                            {copy.delete}
-                                          </button>
-                                        </div>
+                                        {!showProcessingGroupGrid && (
+                                          <div className="asset-overlay">
+                                            <span className="asset-index">{hdrItem.index}</span>
+                                            <span className="asset-count">{selectedIndex + 1}/{hdrItem.exposures.length}</span>
+                                            <button
+                                              className="asset-delete"
+                                              type="button"
+                                              onClick={() => void handleDeleteHdr(hdrItem)}
+                                              disabled={showProcessingGroupGrid}
+                                            >
+                                              {copy.delete}
+                                            </button>
+                                          </div>
+                                        )}
                                         {hdrItem.exposures.length > 1 && !showProcessingGroupGrid && (
                                           <>
                                             <button className="viewer-arrow left" type="button" onClick={() => void handleShiftExposure(hdrItem, -1)}>
@@ -6438,14 +6543,15 @@ function App() {
                                       </div>
                                       <div className="asset-body">
                                         <strong>{selectedExposure?.originalName ?? hdrItem.title}</strong>
-                                        <span>{showProcessingGroupGrid ? getHdrItemStatusLabel(hdrItem, locale) : hdrItem.statusText}</span>
-                                        {localReviewCopy && (
+                                        {!showProcessingGroupGrid && <span>{hdrItem.statusText}</span>}
+                                        {showProcessingGroupGrid && hdrItemFailed && <span>{getHdrItemStatusLabel(hdrItem, locale)}</span>}
+                                        {!showProcessingGroupGrid && localReviewCopy && (
                                           <div className={`asset-local-review ${localReviewState}`}>
                                             <strong>{localReviewCopy.title}</strong>
                                             <span>{localReviewCopy.hint}</span>
                                           </div>
                                         )}
-                                        {activeLocalDraft && workspaceHdrItems.length > 1 && (
+                                        {activeLocalDraft && !showProcessingGroupGrid && workspaceHdrItems.length > 1 && (
                                           <div className="hdr-manual-tools">
                                             <span>{copy.mergeHdrGroup}</span>
                                             <select
@@ -6468,7 +6574,7 @@ function App() {
                                             </select>
                                           </div>
                                         )}
-                                        {activeLocalDraft && hdrItem.exposures.length > 1 && (
+                                        {activeLocalDraft && !showProcessingGroupGrid && hdrItem.exposures.length > 1 && (
                                           <button
                                             className="ghost-button compact hdr-split-button"
                                             type="button"
