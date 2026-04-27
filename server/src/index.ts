@@ -40,6 +40,7 @@ import {
   assertDirectObjectUploadConfigured,
   createDirectObjectUploadTarget,
   deleteObjectsFromStorage,
+  deleteProjectIncomingObjects,
   downloadDirectObjectToFile,
   getDirectObjectUploadCapabilities,
   isDirectUploadKeyForProject,
@@ -1154,11 +1155,23 @@ function collectProjectObjectStorageKeys(project: ProjectRecord) {
 }
 
 async function deleteProjectObjectStorage(project: ProjectRecord) {
-  const cleanup = await deleteObjectsFromStorage(collectProjectObjectStorageKeys(project));
-  if (cleanup.failed.length) {
-    console.warn(`R2 cleanup skipped ${cleanup.failed.length} objects for project ${project.id}`, cleanup.failed);
+  const [cleanup, incomingCleanup] = await Promise.all([
+    deleteObjectsFromStorage(collectProjectObjectStorageKeys(project)),
+    deleteProjectIncomingObjects({
+      userKey: project.userKey,
+      projectId: project.id,
+      userDisplayName: project.userDisplayName,
+      projectName: project.name
+    })
+  ]);
+  const combined = {
+    deleted: cleanup.deleted + incomingCleanup.deleted,
+    failed: [...cleanup.failed, ...incomingCleanup.failed]
+  };
+  if (combined.failed.length) {
+    console.warn(`R2 cleanup skipped ${combined.failed.length} objects for project ${project.id}`, combined.failed);
   }
-  return cleanup;
+  return combined;
 }
 
 function sendProtectedStorageFile(res: express.Response, filePath: string | null, storageKey?: string | null) {

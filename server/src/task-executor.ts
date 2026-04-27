@@ -8,7 +8,6 @@ import { MAX_RUNPOD_HDR_BATCH_SIZE, MIN_RUNPOD_HDR_BATCH_SIZE } from './metadata
 import {
   createObjectDownloadUrl,
   createPersistentObjectKey,
-  deleteObjectFromStorage,
   isObjectStorageConfigured,
   mirrorLocalFileToObjectStorage
 } from './object-storage.js';
@@ -40,6 +39,9 @@ export interface WorkflowExecutionArtifact {
   resultPath: string;
   resultFileName: string;
   resultStorageKey?: string | null;
+  mergedPath?: string | null;
+  mergedFileName?: string | null;
+  mergedStorageKey?: string | null;
 }
 
 export interface WorkflowBatchExecutionItem {
@@ -1224,7 +1226,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         projectId: project.id,
         userDisplayName: project.userDisplayName,
         projectName: project.name,
-        category: shouldRunPostWorkflow ? 'work' : 'results',
+        category: shouldRunPostWorkflow ? 'hdr' : 'results',
         fileName: runpodStageFileName
       });
 
@@ -1339,12 +1341,12 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
             onProgress,
             options
           });
-          if (resultStorageKey) {
-            await deleteObjectFromStorage(resultStorageKey).catch((error) =>
-              console.warn('Could not delete temporary Runpod stage object', error)
-            );
-          }
-          return finalArtifact;
+          return {
+            ...finalArtifact,
+            mergedPath: runpodStagePath,
+            mergedFileName: runpodStageFileName,
+            mergedStorageKey: resultStorageKey
+          };
         }
 
         return {
@@ -1478,7 +1480,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
             projectId: project.id,
             userDisplayName: project.userDisplayName,
             projectName: project.name,
-            category: postWorkflowEnabled ? 'work' : 'results',
+            category: postWorkflowEnabled ? 'hdr' : 'results',
             fileName: runpodStageFileName
           });
 
@@ -1618,12 +1620,15 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
                   onProgress: (update) => onProgress?.({ ...update, hdrItemId: batchItem.hdrItem.id }),
                   options
                 });
-                if (stageStorageKey) {
-                  await deleteObjectFromStorage(stageStorageKey).catch((error) =>
-                    console.warn('Could not delete temporary Runpod batch stage object', error)
-                  );
-                }
-                return { hdrItemId: batchItem.hdrItem.id, artifact: finalArtifact };
+                return {
+                  hdrItemId: batchItem.hdrItem.id,
+                  artifact: {
+                    ...finalArtifact,
+                    mergedPath: staged.runpodStagePath,
+                    mergedFileName: staged.runpodStageFileName,
+                    mergedStorageKey: stageStorageKey
+                  }
+                };
               }
 
               return {

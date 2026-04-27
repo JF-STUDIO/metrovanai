@@ -137,6 +137,15 @@ function normalizeStorageKey(value: string | null | undefined) {
     .replace(/^\/+/, '');
 }
 
+function decodeXmlValue(value: string) {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
 function buildUserFolder(input: { userKey: string; userDisplayName?: string | null }) {
   const userKey = sanitizeSegment(input.userKey) || 'user';
   const displayName = sanitizeSegment(input.userDisplayName ?? '');
@@ -166,6 +175,19 @@ function getObjectUrl(config: ObjectStorageConfig, key: string) {
 
   endpointUrl.hostname = `${config.bucket}.${endpointUrl.hostname}`;
   endpointUrl.pathname = `${endpointUrl.pathname.replace(/\/+$/, '')}/${encodedKey}`;
+  return endpointUrl;
+}
+
+function getBucketUrl(config: ObjectStorageConfig) {
+  const endpointUrl = new URL(config.endpoint);
+
+  if (config.forcePathStyle) {
+    endpointUrl.pathname = `${endpointUrl.pathname.replace(/\/+$/, '')}/${encodePathSegment(config.bucket)}`;
+    return endpointUrl;
+  }
+
+  endpointUrl.hostname = `${config.bucket}.${endpointUrl.hostname}`;
+  endpointUrl.pathname = endpointUrl.pathname || '/';
   return endpointUrl;
 }
 
@@ -200,6 +222,94 @@ function createPresignedUrl(config: ObjectStorageConfig, method: 'GET' | 'PUT' |
   url.searchParams.set('X-Amz-Signature', signature);
 
   return url.toString();
+}
+
+function createSignedHeaderRequest(
+  config: ObjectStorageConfig,
+  method: 'GET',
+  url: URL,
+  canonicalQuery: string
+): { headers: Record<string, string> } {
+  const now = new Date();
+  const amzDate = toAmzDate(now);
+  const dateStamp = amzDate.slice(0, 8);
+  const scope = `${dateStamp}/${config.region}/s3/aws4_request`;
+  const payloadHash = 'UNSIGNED-PAYLOAD';
+  const canonicalHeaders = `host:${url.host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalRequest = [
+    method,
+    url.pathname || '/',
+    canonicalQuery,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash
+  ].join('\n');
+  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
+  const signature = crypto
+    .createHmac('sha256', getSigningKey(config, dateStamp))
+    .update(stringToSign, 'utf8')
+    .digest('hex');
+
+  return {
+    headers: {
+      Authorization: `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate
+    }
+  };
+}
+
+function buildCanonicalQuery(pairs: Array<[string, string]>) {
+  return pairs
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([keyName, value]) => `${encodeURIComponent(keyName)}=${encodeURIComponent(value)}`)
+    .join('&');
+}
+
+function readXmlTagValues(xml: string, tagName: string) {
+  const values: string[] = [];
+  const matcher = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'g');
+  let match: RegExpExecArray | null;
+  while ((match = matcher.exec(xml))) {
+    values.push(decodeXmlValue(match[1] ?? ''));
+  }
+  return values;
+}
+
+export async function listObjectStorageKeysByPrefix(prefix: string) {
+  const config = getObjectStorageConfig();
+  if (!config) {
+    return [];
+  }
+
+  const keys: string[] = [];
+  let continuationToken: string | null = null;
+  do {
+    const url = getBucketUrl(config);
+    const queryPairs: Array<[string, string]> = [
+      ['list-type', '2'],
+      ['max-keys', '1000'],
+      ['prefix', normalizeStorageKey(prefix)]
+    ];
+    if (continuationToken) {
+      queryPairs.push(['continuation-token', continuationToken]);
+    }
+    const canonicalQuery = buildCanonicalQuery(queryPairs);
+    url.search = canonicalQuery;
+    const signed = createSignedHeaderRequest(config, 'GET', url, canonicalQuery);
+    const response = await fetch(url, { method: 'GET', headers: signed.headers });
+    const body = await response.text();
+    if (!response.ok) {
+      throw new Error(`Object list failed: ${response.status} ${body}`.trim());
+    }
+
+    keys.push(...readXmlTagValues(body, 'Key'));
+    const truncated = readXmlTagValues(body, 'IsTruncated')[0] === 'true';
+    continuationToken = truncated ? (readXmlTagValues(body, 'NextContinuationToken')[0] ?? null) : null;
+  } while (continuationToken);
+
+  return keys;
 }
 
 function buildIncomingProjectPrefix(
@@ -468,6 +578,46 @@ export async function deleteObjectsFromStorage(storageKeys: Iterable<string | nu
   }
 
   return { deleted, failed };
+}
+
+export async function deleteProjectIncomingObjects(input: {
+  userKey: string;
+  projectId: string;
+  userDisplayName?: string | null;
+  projectName?: string | null;
+}) {
+  const config = getObjectStorageConfig();
+  if (!config) {
+    return { deleted: 0, failed: [] as Array<{ storageKey: string; error: string }> };
+  }
+
+  const prefixes = Array.from(
+    new Set([
+      buildIncomingProjectPrefix(config, input),
+      buildLegacyIncomingProjectPrefix(config, { userKey: input.userKey, projectId: input.projectId })
+    ])
+  );
+  const storageKeys = new Set<string>();
+  const failed: Array<{ storageKey: string; error: string }> = [];
+
+  for (const prefix of prefixes) {
+    try {
+      for (const key of await listObjectStorageKeysByPrefix(prefix)) {
+        storageKeys.add(key);
+      }
+    } catch (error) {
+      failed.push({
+        storageKey: prefix,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  const cleanup = await deleteObjectsFromStorage(storageKeys);
+  return {
+    deleted: cleanup.deleted,
+    failed: [...failed, ...cleanup.failed]
+  };
 }
 
 export async function downloadObjectToFile(storageKey: string, targetPath: string, options?: { overwrite?: boolean }) {

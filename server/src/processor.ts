@@ -12,7 +12,7 @@ import {
   type WorkflowExecutionProgress,
   type TaskExecutionRunContext
 } from './task-executor.js';
-import { deleteObjectsFromStorage, isConfiguredObjectStorageKey } from './object-storage.js';
+import { deleteObjectsFromStorage, deleteProjectIncomingObjects, isConfiguredObjectStorageKey } from './object-storage.js';
 
 const POINT_PRICE_USD = 0.25;
 const STREAMING_UPLOAD_POLL_MS = 750;
@@ -507,6 +507,10 @@ export class ProjectProcessor {
       currentHdrItemId: null,
       percent: hasSuccess ? 100 : Math.max(job.percent, 1)
     }));
+    const completedProject = this.store.getProject(projectId);
+    if (hasSuccess && completedProject) {
+      await this.cleanupProjectIncomingObjects(completedProject);
+    }
   }
 
   private countCompletedHdrItems(project: ProjectRecord) {
@@ -944,10 +948,29 @@ export class ProjectProcessor {
     }
   }
 
+  private async cleanupProjectIncomingObjects(project: ProjectRecord) {
+    const cleanup = await deleteProjectIncomingObjects({
+      userKey: project.userKey,
+      projectId: project.id,
+      userDisplayName: project.userDisplayName,
+      projectName: project.name
+    });
+    if (cleanup.failed.length) {
+      console.warn('R2 project incoming cleanup skipped some objects', cleanup.failed);
+    }
+  }
+
   private async completeWorkflowItem(projectId: string, hdrItem: HdrItem, result: WorkflowExecutionArtifact) {
     const resultStorageKey = result.resultStorageKey ?? this.store.toStorageKey(result.resultPath);
     this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
       ...entry,
+      mergedKey: result.mergedStorageKey ?? entry.mergedKey,
+      mergedPath: result.mergedPath ?? entry.mergedPath,
+      mergedUrl: result.mergedStorageKey
+        ? this.store.toStorageUrlFromKey(result.mergedStorageKey)
+        : result.mergedPath
+          ? this.store.toStorageUrl(result.mergedPath)
+          : entry.mergedUrl,
       resultKey: resultStorageKey,
       resultPath: result.resultPath,
       resultUrl: result.resultStorageKey ? this.store.toStorageUrlFromKey(result.resultStorageKey) : this.store.toStorageUrl(result.resultPath),
