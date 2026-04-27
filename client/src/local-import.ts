@@ -31,6 +31,23 @@ const RAW_EXTENSIONS = new Set([
 const JPEG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 export const IMPORT_FILE_ACCEPT = [...RAW_EXTENSIONS, ...JPEG_EXTENSIONS].join(',');
 const MIN_EMBEDDED_JPEG_PREVIEW_BYTES = 8 * 1024;
+const TIFF_TAG_NAMES = new Map<number, string>([
+  [0x0100, 'ImageWidth'],
+  [0x0101, 'ImageHeight'],
+  [0x010f, 'Make'],
+  [0x0110, 'Model'],
+  [0x0112, 'Orientation'],
+  [0x829a, 'ExposureTime'],
+  [0x829d, 'FNumber'],
+  [0x8827, 'ISO'],
+  [0x9003, 'DateTimeOriginal'],
+  [0x9004, 'CreateDate'],
+  [0x9201, 'ShutterSpeedValue'],
+  [0x9204, 'ExposureBiasValue'],
+  [0x920a, 'FocalLength'],
+  [0xa002, 'ExifImageWidth'],
+  [0xa003, 'ExifImageHeight']
+]);
 
 let exifrModulePromise: Promise<typeof import('exifr')> | null = null;
 
@@ -136,6 +153,190 @@ function isRawFile(fileName: string) {
 
 function isJpegFile(fileName: string) {
   return JPEG_EXTENSIONS.has(getFileExtension(fileName));
+}
+
+function isPrintableText(value: string) {
+  return value.length > 1 && !/[\u0000-\u0008\u000B-\u001F]/.test(value);
+}
+
+function isUsableMetadataValue(fieldName: string, value: unknown) {
+  if (typeof value === 'string') {
+    if (!value.trim() || !isPrintableText(value)) return false;
+    if ((fieldName === 'DateTimeOriginal' || fieldName === 'CreateDate') && !/\d{4}[:/-]\d{2}[:/-]\d{2}/.test(value)) {
+      return false;
+    }
+    return true;
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return false;
+  }
+
+  if (fieldName === 'FNumber') return value > 0 && value <= 64;
+  if (fieldName === 'ExposureTime') return value > 0 && value <= 3600;
+  if (fieldName === 'ISO') return value > 0 && value <= 409600;
+  if (fieldName === 'FocalLength') return value > 0 && value <= 2000;
+  if (fieldName === 'ExposureBiasValue') return value >= -20 && value <= 20;
+  if (fieldName === 'ShutterSpeedValue') return value >= -20 && value <= 30;
+  if (fieldName.includes('Width') || fieldName.includes('Height')) return value > 0 && value <= 250000;
+  if (fieldName === 'Orientation') return value >= 1 && value <= 8;
+  return true;
+}
+
+function mergeMetadataCandidates(candidates: Array<Record<string, unknown>>) {
+  const scored = candidates
+    .map((metadata) => ({
+      metadata,
+      score: [
+        'DateTimeOriginal',
+        'CreateDate',
+        'ExposureTime',
+        'ISO',
+        'FNumber',
+        'FocalLength',
+        'ExposureBiasValue',
+        'Make',
+        'Model',
+        'ExifImageWidth',
+        'ImageWidth'
+      ].filter((fieldName) => isUsableMetadataValue(fieldName, metadata[fieldName])).length
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => left.score - right.score);
+  const merged: Record<string, unknown> = {};
+  for (const { metadata } of scored) {
+    for (const [fieldName, value] of Object.entries(metadata)) {
+      if (isUsableMetadataValue(fieldName, value)) {
+        merged[fieldName] = value;
+      }
+    }
+  }
+  return Object.keys(merged).length ? merged : null;
+}
+
+function findEmbeddedTiffOffsets(bytes: Uint8Array) {
+  const offsets: number[] = [];
+  for (let index = 0; index < bytes.length - 4; index += 1) {
+    const littleEndianTiff =
+      bytes[index] === 0x49 && bytes[index + 1] === 0x49 && bytes[index + 2] === 0x2a && bytes[index + 3] === 0x00;
+    const bigEndianTiff =
+      bytes[index] === 0x4d && bytes[index + 1] === 0x4d && bytes[index + 2] === 0x00 && bytes[index + 3] === 0x2a;
+    if (littleEndianTiff || bigEndianTiff) {
+      offsets.push(index);
+    }
+  }
+  return offsets.slice(0, 32);
+}
+
+function readTiffAscii(bytes: Uint8Array, offset: number, byteLength: number) {
+  const slice = bytes.slice(offset, offset + byteLength);
+  const zeroIndex = slice.indexOf(0);
+  const usable = zeroIndex >= 0 ? slice.slice(0, zeroIndex) : slice;
+  return new TextDecoder('utf-8', { fatal: false }).decode(usable).trim();
+}
+
+function readTiffNumericValue(view: DataView, offset: number, type: number, littleEndian: boolean) {
+  if (type === 1 || type === 7) return view.getUint8(offset);
+  if (type === 3) return view.getUint16(offset, littleEndian);
+  if (type === 4) return view.getUint32(offset, littleEndian);
+  if (type === 9) return view.getInt32(offset, littleEndian);
+  if (type === 5 || type === 10) {
+    const numerator = type === 5 ? view.getUint32(offset, littleEndian) : view.getInt32(offset, littleEndian);
+    const denominator = type === 5 ? view.getUint32(offset + 4, littleEndian) : view.getInt32(offset + 4, littleEndian);
+    return denominator === 0 ? null : numerator / denominator;
+  }
+  return null;
+}
+
+function getTiffTypeByteSize(type: number) {
+  if (type === 1 || type === 2 || type === 7) return 1;
+  if (type === 3) return 2;
+  if (type === 4 || type === 9) return 4;
+  if (type === 5 || type === 10) return 8;
+  return 0;
+}
+
+function parseTiffValue(
+  bytes: Uint8Array,
+  view: DataView,
+  tiffOffset: number,
+  entryOffset: number,
+  type: number,
+  count: number,
+  littleEndian: boolean
+) {
+  const unitSize = getTiffTypeByteSize(type);
+  if (!unitSize || count <= 0 || count > 100000) return null;
+  const byteLength = unitSize * count;
+  const valueOffset =
+    byteLength <= 4 ? entryOffset + 8 : tiffOffset + view.getUint32(entryOffset + 8, littleEndian);
+  if (valueOffset < 0 || valueOffset + byteLength > bytes.length) return null;
+
+  if (type === 2) {
+    return readTiffAscii(bytes, valueOffset, byteLength);
+  }
+
+  const values: unknown[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const value = readTiffNumericValue(view, valueOffset + index * unitSize, type, littleEndian);
+    if (value !== null) values.push(value);
+  }
+  return count === 1 ? values[0] ?? null : values;
+}
+
+function parseEmbeddedTiffAt(bytes: Uint8Array, tiffOffset: number) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const littleEndian = bytes[tiffOffset] === 0x49 && bytes[tiffOffset + 1] === 0x49;
+  const magic = view.getUint16(tiffOffset + 2, littleEndian);
+  if (magic !== 42) return null;
+
+  const metadata: Record<string, unknown> = {};
+  const visited = new Set<number>();
+  const parseIfd = (ifdRelativeOffset: number, depth = 0) => {
+    if (depth > 4 || visited.has(ifdRelativeOffset)) return;
+    visited.add(ifdRelativeOffset);
+    const ifdOffset = tiffOffset + ifdRelativeOffset;
+    if (ifdOffset < 0 || ifdOffset + 2 > bytes.length) return;
+    const entryCount = view.getUint16(ifdOffset, littleEndian);
+    if (entryCount > 512 || ifdOffset + 2 + entryCount * 12 > bytes.length) return;
+
+    for (let index = 0; index < entryCount; index += 1) {
+      const entryOffset = ifdOffset + 2 + index * 12;
+      const tag = view.getUint16(entryOffset, littleEndian);
+      const type = view.getUint16(entryOffset + 2, littleEndian);
+      const count = view.getUint32(entryOffset + 4, littleEndian);
+
+      if (tag === 0x8769) {
+        parseIfd(view.getUint32(entryOffset + 8, littleEndian), depth + 1);
+        continue;
+      }
+
+      const fieldName = TIFF_TAG_NAMES.get(tag);
+      if (!fieldName) continue;
+      const value = parseTiffValue(bytes, view, tiffOffset, entryOffset, type, count, littleEndian);
+      if (isUsableMetadataValue(fieldName, value)) {
+        metadata[fieldName] = value;
+      }
+    }
+
+    const nextOffsetPosition = ifdOffset + 2 + entryCount * 12;
+    if (nextOffsetPosition + 4 <= bytes.length) {
+      const nextIfdOffset = view.getUint32(nextOffsetPosition, littleEndian);
+      if (nextIfdOffset > 0) parseIfd(nextIfdOffset, depth + 1);
+    }
+  };
+
+  parseIfd(view.getUint32(tiffOffset + 4, littleEndian));
+  return Object.keys(metadata).length ? metadata : null;
+}
+
+async function parseEmbeddedRawMetadata(file: File) {
+  if (!isRawFile(file.name)) return null;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const candidates = findEmbeddedTiffOffsets(bytes)
+    .map((offset) => parseEmbeddedTiffAt(bytes, offset))
+    .filter((metadata): metadata is Record<string, unknown> => Boolean(metadata));
+  return mergeMetadataCandidates(candidates);
 }
 
 async function extractEmbeddedJpegPreviewUrl(file: File) {
@@ -358,7 +559,7 @@ function matchScore(left: GroupingFrame, right: GroupingFrame) {
 async function parseGroupingFrame(file: File) {
   const extension = getFileExtension(file.name);
   const exifr = (await loadExifr()).default;
-  const metadata = (await exifr.parse(file, {
+  const exifrMetadata = (await exifr.parse(file, {
     tiff: true,
     ifd0: {},
     ifd1: true,
@@ -373,6 +574,9 @@ async function parseGroupingFrame(file: File) {
     jfif: false,
     ihdr: false
   }).catch(() => null)) as Record<string, unknown> | null;
+  const metadata = hasUsableExifMetadata(exifrMetadata)
+    ? exifrMetadata
+    : ((await parseEmbeddedRawMetadata(file).catch(() => null)) as Record<string, unknown> | null);
   const metadataState: LocalImportMetadataState = hasUsableExifMetadata(metadata) ? 'exif' : 'fallback';
 
   const previewUrl = await createLocalPreviewUrl(file);
