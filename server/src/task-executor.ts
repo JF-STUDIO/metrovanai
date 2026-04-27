@@ -766,7 +766,7 @@ class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
         return Math.max(1, Math.min(resolveLocalMergeMaxInFlight(), totalPendingItems));
       },
       getMaxConcurrency(totalPendingItems: number) {
-        return Math.max(1, Math.min(workflowConfig.settings.workflowMaxInFlight || 40, totalPendingItems));
+        return Math.max(1, Math.min(workflowConfig.settings.workflowMaxInFlight || 90, totalPendingItems));
       },
       ensureMergedHdrItem: localMerge.ensureMergedHdrItem,
       executeWorkflowTask

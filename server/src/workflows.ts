@@ -23,7 +23,7 @@ export function loadWorkflowConfig(repoRoot: string) {
       saveHDR: true,
       saveGroups: true,
       outputRoot: '',
-      workflowMaxInFlight: 40,
+      workflowMaxInFlight: 90,
       extraFolders: []
     },
     items: []

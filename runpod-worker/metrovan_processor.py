@@ -127,6 +127,7 @@ def ensure_acr_lcp_zip() -> Path | None:
     url = env("METROVAN_ACR_LCP_ZIP_URL")
     s3_config = get_acr_lcp_s3_config()
     if not url and not s3_config:
+        print("ACR lens profiles not configured; falling back to RawTherapee/Lensfun auto correction.", flush=True)
         return None
     if ACR_LCP_ZIP_MARKER.exists():
         return ACR_LCP_CACHE_DIR
@@ -134,6 +135,7 @@ def ensure_acr_lcp_zip() -> Path | None:
     ACR_LCP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     zip_path = ACR_LCP_CACHE_DIR / "profiles.zip"
     if url:
+        print("Downloading ACR lens profiles from configured URL.", flush=True)
         download_url(url, zip_path)
     elif s3_config:
         download_s3_object(s3_config, zip_path)
@@ -143,6 +145,7 @@ def ensure_acr_lcp_zip() -> Path | None:
     except OSError:
         pass
     ACR_LCP_ZIP_MARKER.write_text("ready", encoding="utf-8")
+    print(f"ACR lens profiles ready: {ACR_LCP_CACHE_DIR}", flush=True)
     return ACR_LCP_CACHE_DIR
 
 
@@ -282,13 +285,16 @@ def load_lcp_profiles() -> list[dict[str, Any]]:
         return _LCP_PROFILE_CACHE
 
     profiles: list[dict[str, Any]] = []
-    for root in get_acr_lcp_roots():
+    roots = get_acr_lcp_roots()
+    for root in roots:
         for profile_path in root.rglob("*.lcp"):
             parsed = parse_lcp_profile(profile_path)
             if parsed:
                 profiles.append(parsed)
 
     _LCP_PROFILE_CACHE = profiles
+    root_list = ", ".join(str(root) for root in roots) or "none"
+    print(f"Loaded {len(profiles)} ACR LCP profiles from: {root_list}", flush=True)
     return profiles
 
 
@@ -297,6 +303,7 @@ def find_acr_lcp_profile(source: Path) -> Path | None:
     lens_text = " ".join(str(metadata.get(key) or "") for key in ("LensModel", "LensID", "LensInfo"))
     lens_tokens = text_tokens(lens_text)
     if not lens_tokens:
+        print(f"No lens metadata found for ACR profile matching: {source.name}", flush=True)
         return None
 
     make = normalize_lens_text(metadata.get("Make"))
@@ -321,7 +328,21 @@ def find_acr_lcp_profile(source: Path) -> Path | None:
             best_score = score
             best_profile = profile
 
-    return best_profile["path"] if best_profile and best_score >= 35 else None
+    if best_profile and best_score >= 35:
+        print(
+            f"Matched ACR lens profile for {source.name}: {best_profile['path'].name} "
+            f"(score={best_score:.1f}, lens='{lens_text.strip()}', focal={focal})",
+            flush=True,
+        )
+        return best_profile["path"]
+
+    best_name = best_profile["path"].name if best_profile else "none"
+    print(
+        f"No ACR lens profile match for {source.name}: best={best_name} "
+        f"score={best_score:.1f}, lens='{lens_text.strip()}', focal={focal}, profiles={len(load_lcp_profiles())}",
+        flush=True,
+    )
+    return None
 
 
 def download_url(url: str, target: Path) -> None:

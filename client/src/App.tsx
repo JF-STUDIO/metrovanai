@@ -6291,10 +6291,6 @@ function App() {
                     </div>
                     <div className="processing-stats">
                       <div className="metric-box">
-                         <span>{copy.processingProgress}</span>
-                        <strong>{getProjectProgress(currentProject, uploadPercent)}%</strong>
-                      </div>
-                      <div className="metric-box">
                          <span>{copy.estimatedPoints}</span>
                         <strong>{workspacePointsEstimate}</strong>
                       </div>
@@ -6523,6 +6519,8 @@ function App() {
                                       ? getLocalReviewCopy(localReviewState, locale)
                                       : null;
                                   const emptyPreviewLabel = activeLocalDraft ? copy.localPreviewUnavailable : copy.noPreview;
+                                  const showAssetReviewControls = canEditHdrGrouping && !showProcessingGroupGrid;
+                                  const showManualHdrTools = Boolean(activeLocalDraft && showAssetReviewControls);
                                   return (
                                     <article
                                       key={hdrItem.id}
@@ -6549,7 +6547,7 @@ function App() {
                                             <strong>{copy.hdrItemProcessing}</strong>
                                           </div>
                                         )}
-                                        {canEditHdrGrouping && (
+                                        {showAssetReviewControls && (
                                           <div className="asset-overlay">
                                             <span className="asset-index">{hdrItem.index}</span>
                                             <span className="asset-count">{selectedIndex + 1}/{hdrItem.exposures.length}</span>
@@ -6562,7 +6560,7 @@ function App() {
                                             </button>
                                           </div>
                                         )}
-                                        {hdrItem.exposures.length > 1 && canEditHdrGrouping && (
+                                        {hdrItem.exposures.length > 1 && showAssetReviewControls && (
                                           <>
                                             <button className="viewer-arrow left" type="button" onClick={() => void handleShiftExposure(hdrItem, -1)}>
                                               {'<'}
@@ -6577,13 +6575,13 @@ function App() {
                                         <strong>{selectedExposure?.originalName ?? hdrItem.title}</strong>
                                         {!showProcessingGroupGrid && <span>{hdrItem.statusText}</span>}
                                         {showProcessingGroupGrid && hdrItemFailed && <span>{getHdrItemStatusLabel(hdrItem, locale)}</span>}
-                                        {canEditHdrGrouping && localReviewCopy && (
+                                        {showAssetReviewControls && localReviewCopy && (
                                           <div className={`asset-local-review ${localReviewState}`}>
                                             <strong>{localReviewCopy.title}</strong>
                                             <span>{localReviewCopy.hint}</span>
                                           </div>
                                         )}
-                                        {activeLocalDraft && canEditHdrGrouping && workspaceHdrItems.length > 1 && (
+                                        {showManualHdrTools && workspaceHdrItems.length > 1 && (
                                           <div className="hdr-manual-tools">
                                             <span>{copy.mergeHdrGroup}</span>
                                             <select
@@ -6606,7 +6604,7 @@ function App() {
                                             </select>
                                           </div>
                                         )}
-                                        {activeLocalDraft && canEditHdrGrouping && hdrItem.exposures.length > 1 && (
+                                        {showManualHdrTools && hdrItem.exposures.length > 1 && (
                                           <button
                                             className="ghost-button compact hdr-split-button"
                                             type="button"
