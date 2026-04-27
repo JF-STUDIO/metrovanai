@@ -90,6 +90,7 @@ type UiLocale = 'zh' | 'en';
 type AppRoute = 'home' | 'studio' | 'admin';
 
 const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
+const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
 const LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY = 4;
 
 interface SessionState {
@@ -3474,8 +3475,12 @@ function App() {
 
   async function handleAdminSaveSystemSettings() {
     const runpodHdrBatchSize = Number(adminSystemDraft.runpodHdrBatchSize);
-    if (!Number.isFinite(runpodHdrBatchSize) || runpodHdrBatchSize < 1 || runpodHdrBatchSize > MAX_RUNPOD_HDR_BATCH_SIZE) {
-      setAdminMessage(`Runpod HDR 批量数量必须是 1 到 ${MAX_RUNPOD_HDR_BATCH_SIZE}。`);
+    if (
+      !Number.isFinite(runpodHdrBatchSize) ||
+      runpodHdrBatchSize < MIN_RUNPOD_HDR_BATCH_SIZE ||
+      runpodHdrBatchSize > MAX_RUNPOD_HDR_BATCH_SIZE
+    ) {
+      setAdminMessage(`Runpod HDR 批量数量必须是 ${MIN_RUNPOD_HDR_BATCH_SIZE} 到 ${MAX_RUNPOD_HDR_BATCH_SIZE}。`);
       return;
     }
 
@@ -5046,7 +5051,7 @@ function App() {
                   value={adminSystemDraft.runpodHdrBatchSize}
                   onChange={(event) => setAdminSystemDraft({ runpodHdrBatchSize: event.target.value })}
                   inputMode="numeric"
-                  min={1}
+                  min={MIN_RUNPOD_HDR_BATCH_SIZE}
                   max={MAX_RUNPOD_HDR_BATCH_SIZE}
                   disabled={adminSystemBusy}
                 />
@@ -5054,7 +5059,7 @@ function App() {
               <div className="admin-session-card">
                 <span>当前生效</span>
                 <strong>{adminSystemSettings?.runpodHdrBatchSize ?? '—'} 组 / 任务</strong>
-                <small>支持 1-{MAX_RUNPOD_HDR_BATCH_SIZE}。新启动的处理任务会使用最新设置。</small>
+                <small>支持 {MIN_RUNPOD_HDR_BATCH_SIZE}-{MAX_RUNPOD_HDR_BATCH_SIZE}。新启动的处理任务会使用最新设置。</small>
               </div>
               <div className="admin-activation-actions">
                 <button

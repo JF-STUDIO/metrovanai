@@ -16,6 +16,8 @@ import { ensureDir, loadJson, saveJson } from './utils.js';
 
 const { Pool } = pg;
 export const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
+export const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
+export const DEFAULT_RUNPOD_HDR_BATCH_SIZE = 10;
 
 export interface DatabaseShape {
   projects: ProjectRecord[];
@@ -57,16 +59,19 @@ function createEmptyDatabase(): DatabaseShape {
     passwordResetTokens: [],
     emailVerificationTokens: [],
     auditLogs: [],
-    systemSettings: { runpodHdrBatchSize: 10 }
+    systemSettings: { runpodHdrBatchSize: DEFAULT_RUNPOD_HDR_BATCH_SIZE }
   };
 }
 
 function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): SystemSettings {
-  const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? 10);
+  const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? DEFAULT_RUNPOD_HDR_BATCH_SIZE);
   return {
     runpodHdrBatchSize: Math.max(
-      1,
-      Math.min(MAX_RUNPOD_HDR_BATCH_SIZE, Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : 10)
+      MIN_RUNPOD_HDR_BATCH_SIZE,
+      Math.min(
+        MAX_RUNPOD_HDR_BATCH_SIZE,
+        Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : DEFAULT_RUNPOD_HDR_BATCH_SIZE
+      )
     )
   };
 }

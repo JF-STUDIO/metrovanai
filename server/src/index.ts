@@ -35,7 +35,7 @@ import { buildProjectDownloadArchive, getDefaultDownloadOptions } from './downlo
 import { buildHdrItemsFromFrontendLayout } from './importer.js';
 import { extractPreviewOrConvertToJpeg } from './images.js';
 import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js';
-import { MAX_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
+import { MAX_RUNPOD_HDR_BATCH_SIZE, MIN_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
 import {
   assertDirectObjectUploadConfigured,
   createDirectObjectUploadTarget,
@@ -1704,7 +1704,7 @@ const adminBillingAdjustmentSchema = z.object({
 });
 
 const adminSystemSettingsSchema = z.object({
-  runpodHdrBatchSize: z.number().int().min(1).max(MAX_RUNPOD_HDR_BATCH_SIZE),
+  runpodHdrBatchSize: z.number().int().min(MIN_RUNPOD_HDR_BATCH_SIZE).max(MAX_RUNPOD_HDR_BATCH_SIZE),
   confirm: z.literal(true)
 });
 
