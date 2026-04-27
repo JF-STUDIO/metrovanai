@@ -34,7 +34,14 @@ import {
   type TrashFileInput,
   type TrashRetentionCategory
 } from './storage.js';
-import { createMetadataProvider, MAX_RUNPOD_HDR_BATCH_SIZE, type DatabaseShape, type MetadataProvider } from './metadata.js';
+import {
+  createMetadataProvider,
+  DEFAULT_RUNPOD_HDR_BATCH_SIZE,
+  MAX_RUNPOD_HDR_BATCH_SIZE,
+  MIN_RUNPOD_HDR_BATCH_SIZE,
+  type DatabaseShape,
+  type MetadataProvider
+} from './metadata.js';
 
 const DEFAULT_PROJECT_REGENERATION_FREE_LIMIT = 10;
 
@@ -71,11 +78,14 @@ const PROJECT_DELETE_RETENTION_DAYS: Record<TrashRetentionCategory, number> = {
 };
 
 function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): SystemSettings {
-  const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? 10);
+  const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? DEFAULT_RUNPOD_HDR_BATCH_SIZE);
   return {
     runpodHdrBatchSize: Math.max(
-      1,
-      Math.min(MAX_RUNPOD_HDR_BATCH_SIZE, Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : 10)
+      MIN_RUNPOD_HDR_BATCH_SIZE,
+      Math.min(
+        MAX_RUNPOD_HDR_BATCH_SIZE,
+        Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : DEFAULT_RUNPOD_HDR_BATCH_SIZE
+      )
     )
   };
 }

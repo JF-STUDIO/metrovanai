@@ -4,7 +4,7 @@ import type { HdrItem, ProjectRecord } from './types.js';
 import type { LocalStore } from './store.js';
 import { normalizeHex, sanitizeSegment } from './utils.js';
 import { estimateReferenceWhiteBalanceGains, extractPreviewOrConvertToJpeg, fuseToJpeg } from './images.js';
-import { MAX_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
+import { MAX_RUNPOD_HDR_BATCH_SIZE, MIN_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
 import {
   createObjectDownloadUrl,
   createPersistentObjectKey,
@@ -990,7 +990,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
     const config = {
       ...resolvedConfig,
       batchSize: Math.max(
-        1,
+        MIN_RUNPOD_HDR_BATCH_SIZE,
         Math.min(MAX_RUNPOD_HDR_BATCH_SIZE, this.store.getSystemSettings?.().runpodHdrBatchSize ?? resolvedConfig.batchSize)
       )
     };
