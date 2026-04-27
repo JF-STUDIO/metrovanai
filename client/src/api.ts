@@ -130,13 +130,16 @@ export interface UploadCapabilitiesPayload {
   };
 }
 
-export type UploadProgressStage = 'preparing' | 'uploading' | 'finalizing' | 'completed';
+export type UploadProgressStage = 'preparing' | 'uploading' | 'retrying' | 'finalizing' | 'completed';
 
 export interface UploadProgressSnapshot {
   stage: UploadProgressStage;
   percent: number;
   uploadedFiles: number;
   totalFiles: number;
+  currentFileName?: string;
+  attempt?: number;
+  maxAttempts?: number;
 }
 
 export type UploadProgressHandler = (percent: number, snapshot?: UploadProgressSnapshot) => void;
@@ -283,6 +286,8 @@ const MAX_UPLOAD_BATCH_FILES = 16;
 const MAX_UPLOAD_CONCURRENT_BATCHES = 24;
 const MAX_UPLOAD_BATCH_RETRIES = 3;
 const UPLOAD_RETRY_BASE_DELAY_MS = 850;
+const UPLOAD_RETRY_JITTER_MS = 650;
+const DIRECT_OBJECT_UPLOAD_TIMEOUT_MS = 8 * 60 * 1000;
 
 function extractErrorMessage(input: unknown): string | null {
   if (typeof input === 'string') {
@@ -777,6 +782,28 @@ function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function uploadRetryDelay(attempt: number) {
+  return UPLOAD_RETRY_BASE_DELAY_MS * attempt + Math.round(Math.random() * UPLOAD_RETRY_JITTER_MS);
+}
+
+class DirectUploadError extends Error {
+  status: number;
+
+  constructor(message: string, status = 0) {
+    super(message);
+    this.name = 'DirectUploadError';
+    this.status = status;
+  }
+}
+
+function shouldRefreshDirectUploadTarget(error: unknown) {
+  if (!(error instanceof DirectUploadError)) {
+    return true;
+  }
+
+  return error.status === 0 || error.status === 400 || error.status === 401 || error.status === 403 || error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
 async function uploadFileBatchWithRetry(
   projectId: string,
   batch: File[],
@@ -794,7 +821,7 @@ async function uploadFileBatchWithRetry(
       if (attempt >= MAX_UPLOAD_BATCH_RETRIES) {
         break;
       }
-      await delay(UPLOAD_RETRY_BASE_DELAY_MS * attempt);
+      await delay(uploadRetryDelay(attempt));
     }
   }
 
@@ -835,6 +862,7 @@ function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgre
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(target.method, target.uploadUrl);
+    xhr.timeout = DIRECT_OBJECT_UPLOAD_TIMEOUT_MS;
     for (const [header, value] of Object.entries(target.headers ?? {})) {
       xhr.setRequestHeader(header, value);
     }
@@ -848,10 +876,12 @@ function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgre
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {
-        reject(new Error(`Direct upload failed: ${xhr.status}`));
+        reject(new DirectUploadError(`Direct upload failed: ${xhr.status}`, xhr.status));
       }
     });
-    xhr.addEventListener('error', () => reject(new Error('Direct upload failed.')));
+    xhr.addEventListener('error', () => reject(new DirectUploadError('Direct upload failed.')));
+    xhr.addEventListener('timeout', () => reject(new DirectUploadError('Direct upload timed out.')));
+    xhr.addEventListener('abort', () => reject(new DirectUploadError('Direct upload was interrupted.')));
     xhr.send(file);
   });
 }
@@ -859,22 +889,37 @@ function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgre
 async function uploadDirectObjectFileWithRetry(
   target: DirectUploadTarget,
   file: File,
-  onProgress: (loadedBytes: number) => void
+  onProgress: (loadedBytes: number) => void,
+  options: {
+    onRetry?: (retry: { attempt: number; maxAttempts: number; error: unknown }) => void;
+    refreshTarget?: () => Promise<DirectUploadTarget>;
+  } = {}
 ) {
   let lastError: unknown = null;
+  let activeTarget = target;
 
   for (let attempt = 1; attempt <= MAX_UPLOAD_BATCH_RETRIES; attempt += 1) {
     try {
       onProgress(0);
-      await uploadDirectObjectFile(target, file, onProgress);
-      return;
+      await uploadDirectObjectFile(activeTarget, file, onProgress);
+      return activeTarget;
     } catch (error) {
       lastError = error;
       onProgress(0);
       if (attempt >= MAX_UPLOAD_BATCH_RETRIES) {
         break;
       }
-      await delay(UPLOAD_RETRY_BASE_DELAY_MS * attempt);
+      options.onRetry?.({ attempt: attempt + 1, maxAttempts: MAX_UPLOAD_BATCH_RETRIES, error });
+
+      if (options.refreshTarget && shouldRefreshDirectUploadTarget(error)) {
+        try {
+          activeTarget = await options.refreshTarget();
+        } catch {
+          // If refreshing the signed URL fails briefly, retry the current URL once more.
+        }
+      }
+
+      await delay(uploadRetryDelay(attempt));
     }
   }
 
@@ -982,7 +1027,7 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
   let uploadedFiles = 0;
   let nextFileIndex = 0;
 
-  const reportProgress = () => {
+  const reportProgress = (overrides: Partial<UploadProgressSnapshot> = {}) => {
     const activeBytes = loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0);
     const percent = Math.round((Math.min(totalBytes, completedBytes + activeBytes) / totalBytes) * 95);
     const safePercent = Math.max(1, Math.min(95, percent));
@@ -990,7 +1035,8 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
       stage: 'uploading',
       percent: safePercent,
       uploadedFiles,
-      totalFiles: files.length
+      totalFiles: files.length,
+      ...overrides
     });
   };
 
@@ -1004,10 +1050,30 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
         continue;
       }
 
-      await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
+      const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
         loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
         reportProgress();
+      }, {
+        onRetry: ({ attempt, maxAttempts }) => {
+          loadedByFile[fileIndex] = 0;
+          reportProgress({
+            stage: 'retrying',
+            currentFileName: file.name,
+            attempt,
+            maxAttempts
+          });
+        },
+        refreshTarget: async () => {
+          const refreshed = await createDirectUploadTargets(projectId, [file]);
+          const nextTarget = refreshed.targets[0];
+          if (!nextTarget) {
+            throw new Error('Direct upload target refresh failed.');
+          }
+          targets[fileIndex] = nextTarget;
+          return nextTarget;
+        }
       });
+      targets[fileIndex] = latestTarget;
 
       completedBytes += Math.max(1, file.size);
       uploadedFiles += 1;

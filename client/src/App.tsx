@@ -557,6 +557,8 @@ const UI_TEXT = {
     uploadStarting: '正在读取照片...',
     uploadProgress: (value: number) => `导入 ${value}%`,
     uploadFileProgress: (uploaded: number, total: number) => `已上传 ${uploaded}/${total} 张`,
+    uploadRetryProgress: (name: string, attempt: number, maxAttempts: number, uploaded: number, total: number) =>
+      `正在重试 ${name}（${attempt}/${maxAttempts}）· 已上传 ${uploaded}/${total} 张`,
     uploadFinalizeProgress: (total: number) => `${total} 张已上传，正在生成分组`,
     uploadOriginalsProgress: (value: number) => `上传 ${value}%`,
     uploadOriginalsTitle: '正在上传照片',
@@ -924,6 +926,8 @@ const UI_TEXT = {
     uploadStarting: 'Reading photos...',
     uploadProgress: (value: number) => `Importing ${value}%`,
     uploadFileProgress: (uploaded: number, total: number) => `Uploaded ${uploaded}/${total}`,
+    uploadRetryProgress: (name: string, attempt: number, maxAttempts: number, uploaded: number, total: number) =>
+      `Retrying ${name} (${attempt}/${maxAttempts}) · Uploaded ${uploaded}/${total}`,
     uploadFinalizeProgress: (total: number) => `${total} uploaded. Building groups`,
     uploadOriginalsProgress: (value: number) => `Uploading ${value}%`,
     uploadOriginalsTitle: 'Uploading photos',
@@ -1791,6 +1795,16 @@ function formatUploadProgressLabel(
 
   if (snapshot.stage === 'completed') {
     return copy.uploadFileProgress(snapshot.totalFiles, snapshot.totalFiles);
+  }
+
+  if (snapshot.stage === 'retrying') {
+    return copy.uploadRetryProgress(
+      snapshot.currentFileName || '',
+      snapshot.attempt || 2,
+      snapshot.maxAttempts || 3,
+      snapshot.uploadedFiles,
+      snapshot.totalFiles
+    );
   }
 
   return copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles);
@@ -6414,9 +6428,7 @@ function App() {
                           <div>
                             <strong>{showReviewLocalImportProgress ? copy.uploadStarting : copy.uploadOriginalsDoNotClose}</strong>
                             <span>
-                              {showReviewLocalImportProgress
-                                ? uploadProgressLabel
-                                : copy.uploadOriginalsProgress(Math.max(1, uploadPercent))}
+                              {uploadProgressLabel}
                             </span>
                           </div>
                           <div className="upload-progress-bar">
