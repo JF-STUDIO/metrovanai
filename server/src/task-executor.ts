@@ -133,6 +133,7 @@ class AsyncSemaphore {
 }
 
 const runpodJobSemaphores = new Map<string, AsyncSemaphore>();
+const runningHubWorkflowSemaphores = new Map<string, AsyncSemaphore>();
 
 function getRunpodJobSemaphore(key: string, capacity: number) {
   const normalizedCapacity = Math.max(1, Math.floor(capacity));
@@ -140,6 +141,18 @@ function getRunpodJobSemaphore(key: string, capacity: number) {
   if (!semaphore) {
     semaphore = new AsyncSemaphore(normalizedCapacity);
     runpodJobSemaphores.set(key, semaphore);
+  } else {
+    semaphore.setCapacity(normalizedCapacity);
+  }
+  return semaphore;
+}
+
+function getRunningHubWorkflowSemaphore(key: string, capacity: number) {
+  const normalizedCapacity = Math.max(1, Math.floor(capacity));
+  let semaphore = runningHubWorkflowSemaphores.get(key);
+  if (!semaphore) {
+    semaphore = new AsyncSemaphore(normalizedCapacity);
+    runningHubWorkflowSemaphores.set(key, semaphore);
   } else {
     semaphore.setCapacity(normalizedCapacity);
   }
@@ -978,6 +991,40 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
     const postWorkflowEnabled = shouldRunpodPostWorkflow();
     const workflowConfig = postWorkflowEnabled ? loadWorkflowConfig(this.repoRoot) : null;
     const runningHub = postWorkflowEnabled ? new RunningHubClient() : null;
+    const runningHubMaxInFlight = postWorkflowEnabled ? Math.max(1, workflowConfig?.settings.workflowMaxInFlight ?? 90) : 1;
+    const runningHubWorkflowSemaphore = postWorkflowEnabled
+      ? getRunningHubWorkflowSemaphore(
+          `runninghub:${workflowConfig?.active ?? 'default'}:${workflowConfig?.settings.workflowMaxInFlight ?? 90}`,
+          runningHubMaxInFlight
+        )
+      : null;
+
+    const executePostWorkflow = async (input: {
+      project: ProjectRecord;
+      hdrItem: HdrItem;
+      inputPath: string;
+      inputFileName: string;
+      onProgress?: (update: WorkflowExecutionProgress) => void;
+      options?: WorkflowExecutionOptions;
+    }) => {
+      if (!workflowConfig || !runningHub || !runningHubWorkflowSemaphore) {
+        throw new Error('Post workflow is enabled but RunningHub workflow config is not available.');
+      }
+
+      return await runningHubWorkflowSemaphore.runExclusive(() =>
+        executeRunningHubWorkflowFromFile({
+          store: this.store,
+          workflowConfig,
+          runningHub,
+          project: input.project,
+          hdrItem: input.hdrItem,
+          inputPath: input.inputPath,
+          inputFileName: input.inputFileName,
+          onProgress: input.onProgress,
+          options: input.options
+        })
+      );
+    };
 
     const ensureObjectBackedFile = async (input: {
       project: ProjectRecord;
@@ -1139,14 +1186,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
 
       const mode = options?.mode ?? 'default';
       if (mode === 'regenerate' && postWorkflowEnabled) {
-        if (!workflowConfig || !runningHub) {
-          throw new Error('Post workflow is enabled but RunningHub workflow config is not available.');
-        }
-
-        return await executeRunningHubWorkflowFromFile({
-          store: this.store,
-          workflowConfig,
-          runningHub,
+        return await executePostWorkflow({
           project,
           hdrItem,
           inputPath: mergedPath,
@@ -1273,14 +1313,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         });
 
         if (shouldRunPostWorkflow) {
-          if (!workflowConfig || !runningHub) {
-            throw new Error('Post workflow is enabled but RunningHub workflow config is not available.');
-          }
-
-          return await executeRunningHubWorkflowFromFile({
-            store: this.store,
-            workflowConfig,
-            runningHub,
+          return await executePostWorkflow({
             project,
             hdrItem,
             inputPath: runpodStagePath,
@@ -1549,14 +1582,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
               });
 
               if (postWorkflowEnabled) {
-                if (!workflowConfig || !runningHub) {
-                  throw new Error('Post workflow is enabled but RunningHub workflow config is not available.');
-                }
-
-                const finalArtifact = await executeRunningHubWorkflowFromFile({
-                  store: this.store,
-                  workflowConfig,
-                  runningHub,
+                const finalArtifact = await executePostWorkflow({
                   project,
                   hdrItem: batchItem.hdrItem,
                   inputPath: staged.runpodStagePath,
@@ -1591,7 +1617,10 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       },
       getMaxConcurrency(totalPendingItems: number) {
         const batchCount = Math.ceil(totalPendingItems / Math.max(1, config.batchSize));
-        return Math.max(1, Math.min(config.maxInFlight, batchCount));
+        const postWorkflowBatchCapacity = postWorkflowEnabled
+          ? Math.ceil(runningHubMaxInFlight / Math.max(1, config.batchSize))
+          : config.maxInFlight;
+        return Math.max(1, Math.min(batchCount, Math.max(config.maxInFlight, postWorkflowBatchCapacity)));
       },
       getWorkflowBatchSize(totalPendingItems: number) {
         return Math.max(1, Math.min(config.batchSize, totalPendingItems));
