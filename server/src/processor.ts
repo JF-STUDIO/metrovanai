@@ -17,6 +17,10 @@ import { deleteObjectsFromStorage, isConfiguredObjectStorageKey } from './object
 const POINT_PRICE_USD = 0.25;
 const STREAMING_UPLOAD_POLL_MS = 750;
 const STREAMING_UPLOAD_IDLE_TIMEOUT_MS = Number(process.env.METROVAN_STREAMING_UPLOAD_IDLE_TIMEOUT_MS ?? 15 * 60 * 1000);
+const WORKFLOW_BATCH_FILL_WAIT_MS = Math.max(
+  0,
+  Number(process.env.METROVAN_WORKFLOW_BATCH_FILL_WAIT_MS ?? 1200)
+);
 
 type RegenerationCreditReservation = Extract<
   ReturnType<LocalStore['reserveProjectRegenerationCredit']>,
@@ -52,13 +56,6 @@ class AsyncQueue<T> {
       return null;
     }
     return await new Promise<T | null>((resolve) => this.waiters.push(resolve));
-  }
-
-  tryShift(): T | null {
-    if (this.items.length) {
-      return this.items.shift() ?? null;
-    }
-    return null;
   }
 
   async shiftWithTimeout(timeoutMs: number): Promise<T | null> {
@@ -589,6 +586,7 @@ export class ProjectProcessor {
   private async runParallelMergeAndWorkflow(projectId: string, taskExecution: TaskExecutionRunContext, hdrDir: string) {
     const mergeQueue = new AsyncQueue<MergeQueueItem>();
     const workflowQueue = new AsyncQueue<WorkflowQueueItem>();
+    const workflowBatchQueue = new AsyncQueue<WorkflowQueueItem[]>();
     const queuedHdrItemIds = new Set<string>();
     const initialProject = this.store.getProject(projectId);
     const mergeProgress = {
@@ -629,8 +627,9 @@ export class ProjectProcessor {
       this.mergeWorker(projectId, mergeQueue, workflowQueue, taskExecution, hdrDir, mergeProgress)
     );
     const workflowWorkerCount = taskExecution.getMaxConcurrency(Math.max(1, mergeProgress.total));
+    const workflowBatcher = this.workflowBatcher(workflowQueue, workflowBatchQueue, taskExecution);
     const workflowWorkers = Array.from({ length: workflowWorkerCount }, () =>
-      this.workflowWorker(projectId, workflowQueue, taskExecution)
+      this.workflowBatchWorker(projectId, workflowBatchQueue, taskExecution)
     );
 
     while (true) {
@@ -680,6 +679,8 @@ export class ProjectProcessor {
 
     await Promise.all(mergeWorkers);
     workflowQueue.close();
+    await workflowBatcher;
+    workflowBatchQueue.close();
     await Promise.all(workflowWorkers);
   }
 
@@ -763,7 +764,7 @@ export class ProjectProcessor {
     }
   }
 
-  private collectWorkflowBatch(
+  private async collectWorkflowBatch(
     firstItem: WorkflowQueueItem,
     queue: AsyncQueue<WorkflowQueueItem>,
     taskExecution: TaskExecutionRunContext
@@ -774,7 +775,7 @@ export class ProjectProcessor {
     const queuedItems = [firstItem];
 
     while (queuedItems.length < maxBatchSize) {
-      const nextItem = queue.tryShift();
+      const nextItem = await queue.shiftWithTimeout(WORKFLOW_BATCH_FILL_WAIT_MS);
       if (!nextItem) {
         break;
       }
@@ -782,6 +783,22 @@ export class ProjectProcessor {
     }
 
     return queuedItems;
+  }
+
+  private async workflowBatcher(
+    sourceQueue: AsyncQueue<WorkflowQueueItem>,
+    batchQueue: AsyncQueue<WorkflowQueueItem[]>,
+    taskExecution: TaskExecutionRunContext
+  ) {
+    while (true) {
+      const firstItem = await sourceQueue.shift();
+      if (!firstItem) {
+        return;
+      }
+
+      const queuedItems = await this.collectWorkflowBatch(firstItem, sourceQueue, taskExecution);
+      batchQueue.push(queuedItems);
+    }
   }
 
   private resolveWorkflowBatchItems(projectId: string, queuedItems: WorkflowQueueItem[]) {
@@ -979,13 +996,11 @@ export class ProjectProcessor {
     }));
   }
 
-  private async processWorkflowBatchFromFirstItem(
+  private async processWorkflowBatch(
     projectId: string,
-    firstItem: WorkflowQueueItem,
-    queue: AsyncQueue<WorkflowQueueItem>,
+    queuedItems: WorkflowQueueItem[],
     taskExecution: TaskExecutionRunContext
   ) {
-    const queuedItems = this.collectWorkflowBatch(firstItem, queue, taskExecution);
     const { currentProject, executionItems } = this.resolveWorkflowBatchItems(projectId, queuedItems);
     if (!currentProject || !executionItems.length) {
       return;
@@ -1020,18 +1035,18 @@ export class ProjectProcessor {
     }
   }
 
-  private async workflowWorker(
+  private async workflowBatchWorker(
     projectId: string,
-    queue: AsyncQueue<WorkflowQueueItem>,
+    queue: AsyncQueue<WorkflowQueueItem[]>,
     taskExecution: TaskExecutionRunContext
   ) {
     while (true) {
-      const item = await queue.shift();
-      if (!item) {
+      const queuedItems = await queue.shift();
+      if (!queuedItems) {
         return;
       }
 
-      await this.processWorkflowBatchFromFirstItem(projectId, item, queue, taskExecution);
+      await this.processWorkflowBatch(projectId, queuedItems, taskExecution);
       await delay(150);
       continue;
 
