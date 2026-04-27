@@ -80,6 +80,7 @@ import type {
   HdrItem,
   LocalImportReviewState,
   ProjectGroup,
+  ProjectJobState,
   ProjectRecord,
   ResultAsset,
   SceneType
@@ -1758,7 +1759,10 @@ function getProjectStatusLabel(project: ProjectRecord, locale: UiLocale) {
   if (project.status === 'uploading') return copy.status.uploading;
   if (project.status === 'review') return copy.status.review;
   if (project.status === 'importing') return copy.status.importing;
-  if (project.status === 'failed' && project.hdrItems.some((item) => isHdrItemProcessing(item.status))) {
+  if (
+    project.status === 'failed' &&
+    (project.hdrItems.some((item) => isHdrItemProcessing(item.status)) || isProjectJobActivelyProcessing(project.job))
+  ) {
     return copy.status.processing;
   }
   if (project.status === 'failed') return copy.status.failed;
@@ -1812,6 +1816,28 @@ function formatUploadProgressLabel(
 
 function isHdrItemProcessing(status: HdrItem['status']) {
   return status === 'hdr-processing' || status === 'workflow-upload' || status === 'workflow-running' || status === 'processing';
+}
+
+function isProjectJobActivelyProcessing(job: ProjectJobState | null | undefined) {
+  if (!job) {
+    return false;
+  }
+  if (job.status === 'pending' || job.status === 'processing') {
+    return true;
+  }
+  if (job.metrics && (job.metrics.active > 0 || (job.metrics.total > 0 && job.metrics.returned + job.metrics.failed < job.metrics.total))) {
+    return true;
+  }
+  return (
+    job.phase === 'uploading' ||
+    job.phase === 'grouping' ||
+    job.phase === 'queued' ||
+    job.phase === 'hdr_merging' ||
+    job.phase === 'workflow_uploading' ||
+    job.phase === 'workflow_running' ||
+    job.phase === 'result_returning' ||
+    job.phase === 'regenerating'
+  );
 }
 
 function getHdrItemStatusLabel(hdrItem: HdrItem, locale: UiLocale) {
@@ -2469,9 +2495,10 @@ function App() {
   const showProcessingStepContent = currentWorkspaceStep === 3;
   const showProcessingUploadProgress = showProcessingStepContent && uploadActive && uploadMode === 'originals';
   const hasActiveProcessingItems = workspaceHdrItems.some((item) => isHdrItemProcessing(item.status));
-  const jobFailedWhileItemsActive = Boolean(currentProject?.job?.status === 'failed' && hasActiveProcessingItems);
+  const jobActivelyProcessing = isProjectJobActivelyProcessing(currentProject?.job);
+  const jobFailedWhileItemsActive = Boolean(currentProject?.job?.status === 'failed' && (hasActiveProcessingItems || jobActivelyProcessing));
   const showRetryProcessingAction =
-    Boolean(currentProject && currentProject.status === 'failed' && !hasActiveProcessingItems) &&
+    Boolean(currentProject && currentProject.status === 'failed' && !hasActiveProcessingItems && !jobActivelyProcessing) &&
     showProcessingStepContent &&
     !uploadActive;
   const processingPanelTitle = showProcessingUploadProgress

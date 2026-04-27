@@ -102,9 +102,34 @@ export interface ResultAsset {
 export interface ProjectJobState {
   id: string;
   status: 'idle' | 'pending' | 'processing' | 'completed' | 'failed';
+  phase?:
+    | 'idle'
+    | 'uploading'
+    | 'grouping'
+    | 'queued'
+    | 'hdr_merging'
+    | 'workflow_uploading'
+    | 'workflow_running'
+    | 'result_returning'
+    | 'regenerating'
+    | 'completed'
+    | 'failed';
+  phaseLabel?: string;
   percent: number;
   label: string;
   detail: string;
+  currentHdrItemId?: string | null;
+  taskId?: string | null;
+  metrics?: {
+    total: number;
+    submitted: number;
+    returned: number;
+    succeeded: number;
+    failed: number;
+    active: number;
+    queuePosition: number;
+    remoteProgress: number;
+  };
   startedAt: string | null;
   completedAt: string | null;
 }

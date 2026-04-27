@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { HdrItem, ProjectRecord } from './types.js';
 import type { LocalStore } from './store.js';
 import { delay, normalizeHex, sanitizeSegment } from './utils.js';
+import { captureServerError, logServerEvent } from './observability.js';
 import {
   createTaskExecutionProvider,
   type TaskExecutionProvider,
@@ -142,6 +143,7 @@ export class ProjectProcessor {
     this.store.setJobState(projectId, (job) => ({
       ...job,
       status: 'queued',
+      phase: 'queued',
       percent: baselinePercent,
       label: '澶勭悊涓?',
       detail:
@@ -247,6 +249,7 @@ export class ProjectProcessor {
     this.store.setJobState(projectId, (job) => ({
       ...job,
       status: 'running',
+      phase: 'regenerating',
       label: 'Regenerating result',
       detail: `Regenerating ${hdrItem.title} with color card ${colorCardNo}`,
       currentHdrItemId: hdrItemId,
@@ -329,6 +332,7 @@ export class ProjectProcessor {
           this.store.setJobState(projectId, (job) => ({
             ...job,
             status: 'running',
+            phase: 'regenerating',
             label: 'Regenerating result',
             detail: update.detail || `Regenerating ${hdrItem.title}`,
             currentHdrItemId: hdrItemId,
@@ -389,6 +393,7 @@ export class ProjectProcessor {
       this.store.setJobState(projectId, (job) => ({
         ...job,
         status: 'completed',
+        phase: 'completed',
         label: 'Regeneration completed',
         detail: `${hdrItem.title} regenerated with color card ${colorCardNo}`,
         currentHdrItemId: null,
@@ -431,6 +436,7 @@ export class ProjectProcessor {
       this.store.setJobState(projectId, (job) => ({
         ...job,
         status: 'failed',
+        phase: 'failed',
         label: 'Regeneration failed',
         detail: message,
         currentHdrItemId: null,
@@ -479,6 +485,7 @@ export class ProjectProcessor {
     this.store.setJobState(projectId, (job) => ({
       ...job,
       status: 'running',
+      phase: 'hdr_merging',
       label: '澶勭悊涓?',
       detail: options.recovery ? '姝ｅ湪鎭㈠鏈畬鎴愮殑 HDR 浠诲姟' : '姝ｅ湪鍚堝苟 HDR',
       percent: Math.max(1, job.percent)
@@ -719,6 +726,8 @@ export class ProjectProcessor {
       }));
       this.store.setJobState(projectId, (job) => ({
         ...job,
+        status: 'running',
+        phase: 'hdr_merging',
         label: 'HDR processing',
         detail: `Merging ${hdrItem.title}`,
         currentHdrItemId: hdrItem.id
@@ -740,6 +749,7 @@ export class ProjectProcessor {
         }));
         this.store.setJobState(projectId, (job) => ({
           ...job,
+          phase: 'workflow_uploading',
           percent: Math.max(job.percent, Math.round((mergeProgress.completed / Math.max(1, mergeProgress.total)) * 45)),
           detail: `HDR merged ${mergeProgress.completed}/${mergeProgress.total}`
         }));
@@ -751,6 +761,16 @@ export class ProjectProcessor {
       } catch (error) {
         mergeProgress.completed += 1;
         const message = error instanceof Error ? error.message : String(error);
+        captureServerError(error, {
+          event: 'project.hdr_merge.failed',
+          projectId,
+          taskId: hdrItem.id,
+          phase: 'hdr_merging',
+          details: {
+            hdrItemId: hdrItem.id,
+            title: hdrItem.title
+          }
+        });
         this.store.setHdrItemState(projectId, hdrItem.id, (item) => ({
           ...item,
           status: 'error',
@@ -843,6 +863,8 @@ export class ProjectProcessor {
 
     this.store.setJobState(projectId, (job) => ({
       ...job,
+      status: 'running',
+      phase: 'workflow_uploading',
       workflowRealtime: {
         ...job.workflowRealtime,
         entered: job.workflowRealtime.entered + executionItems.length,
@@ -873,6 +895,8 @@ export class ProjectProcessor {
 
     this.store.setJobState(projectId, (job) => ({
       ...job,
+      status: 'running',
+      phase: 'workflow_running',
       percent: Math.max(job.percent, 46),
       label: 'Processing',
       detail: update.detail || 'Cloud processing is running.',
@@ -984,6 +1008,8 @@ export class ProjectProcessor {
     }));
     this.store.setJobState(projectId, (job) => ({
       ...job,
+      status: 'running',
+      phase: 'result_returning',
       percent: Math.max(
         job.percent,
         46 + Math.round(((job.workflowRealtime.returned + 1) / Math.max(1, job.workflowRealtime.total)) * 54)
@@ -1004,6 +1030,18 @@ export class ProjectProcessor {
   }
 
   private failWorkflowItem(projectId: string, hdrItem: HdrItem, message: string) {
+    logServerEvent({
+      level: 'warning',
+      event: 'project.item.failed',
+      projectId,
+      taskId: hdrItem.id,
+      phase: 'workflow_running',
+      details: {
+        hdrItemId: hdrItem.id,
+        title: hdrItem.title,
+        message
+      }
+    });
     this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
       ...entry,
       status: 'error',
@@ -1055,6 +1093,15 @@ export class ProjectProcessor {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      captureServerError(error, {
+        event: 'project.cloud_batch.failed',
+        projectId,
+        phase: 'workflow_running',
+        details: {
+          itemCount: executionItems.length,
+          hdrItemIds: executionItems.map((executionItem) => executionItem.hdrItem.id)
+        }
+      });
       for (const executionItem of executionItems) {
         this.failWorkflowItem(projectId, executionItem.hdrItem, message);
       }

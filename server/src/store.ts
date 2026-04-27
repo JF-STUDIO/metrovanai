@@ -94,6 +94,7 @@ function createEmptyJobState(): ProjectJobState {
   return {
     id: nanoid(10),
     status: 'idle',
+    phase: 'idle',
     percent: 0,
     label: '',
     detail: '',
@@ -117,6 +118,25 @@ function createEmptyJobState(): ProjectJobState {
       remoteProgress: 0
     }
   };
+}
+
+function normalizeProjectJobState(job: ProjectJobState | null | undefined): ProjectJobState {
+  const normalized = {
+    ...createEmptyJobState(),
+    ...(job ?? {})
+  };
+  if (normalized.status === 'completed') {
+    normalized.phase = 'completed';
+  } else if (normalized.status === 'failed') {
+    normalized.phase = 'failed';
+  } else if (normalized.status === 'queued') {
+    normalized.phase = normalized.phase && normalized.phase !== 'idle' ? normalized.phase : 'queued';
+  } else if (normalized.status === 'running') {
+    normalized.phase = normalized.phase && normalized.phase !== 'idle' ? normalized.phase : 'workflow_running';
+  } else if (!normalized.phase) {
+    normalized.phase = 'idle';
+  }
+  return normalized;
 }
 
 function createEmptyRegenerationState() {
@@ -1602,7 +1622,7 @@ export class LocalStore {
 
   setJobState(projectId: string, updater: (job: ProjectJobState) => ProjectJobState) {
     return this.updateProject(projectId, (project) => {
-      project.job = updater(project.job ?? createEmptyJobState());
+      project.job = normalizeProjectJobState(updater(normalizeProjectJobState(project.job)));
       return project;
     });
   }
@@ -1633,9 +1653,7 @@ export class LocalStore {
     project.pointsEstimate = project.hdrItems.length;
     project.resultAssets = this.deriveResultAssets(project);
     project.downloadReady = project.resultAssets.length > 0 && project.status === 'completed';
-    if (!project.job) {
-      project.job = createEmptyJobState();
-    }
+    project.job = normalizeProjectJobState(project.job);
     return project;
   }
 

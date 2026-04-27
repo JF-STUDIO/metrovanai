@@ -69,6 +69,7 @@ import type {
 } from './types.js';
 import { isImageExtension, isRawExtension, sanitizeSegment } from './utils.js';
 import { buildDeploymentReadiness } from './deployment-readiness.js';
+import { captureServerError, createTraceId, initServerObservability, logServerEvent } from './observability.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -138,6 +139,7 @@ function isLocalProxyUploadEnabled() {
 }
 
 assertCloudProductionRuntime();
+await initServerObservability();
 const store = new LocalStore(repoRoot);
 await store.initialize();
 const processor = new ProjectProcessor(repoRoot, store);
@@ -163,6 +165,17 @@ interface RateLimitBucket {
 const rateLimitBuckets = new Map<string, RateLimitBucket>();
 const MIN_CUSTOM_TOP_UP_USD = 1;
 const MAX_CUSTOM_TOP_UP_USD = 50000;
+const clientEventSchema = z.object({
+  level: z.enum(['info', 'warning', 'error']).optional(),
+  message: z.string().min(1).max(1000),
+  stack: z.string().max(6000).nullable().optional(),
+  route: z.string().max(500).optional(),
+  projectId: z.string().max(120).nullable().optional(),
+  taskId: z.string().max(200).nullable().optional(),
+  userAgent: z.string().max(1000).optional(),
+  occurredAt: z.string().max(80).optional(),
+  context: z.record(z.string(), z.unknown()).optional()
+});
 
 function normalizeTopUpAmountUsd(amountUsd: number) {
   if (!Number.isFinite(amountUsd)) {
@@ -924,44 +937,112 @@ function getPublicHdrItemStatusText(status: PublicHdrItemStatus) {
   return '处理中';
 }
 
-function getPublicJobStatus(status: ProjectJobState['status']): PublicJobStatus {
-  if (status === 'queued') {
+const activePublicJobPhases = new Set<ProjectJobState['phase']>([
+  'uploading',
+  'grouping',
+  'queued',
+  'hdr_merging',
+  'workflow_uploading',
+  'workflow_running',
+  'result_returning',
+  'regenerating'
+]);
+
+function hasUnfinishedRemoteWork(job: ProjectJobState) {
+  const total = job.workflowRealtime?.total ?? 0;
+  if (total <= 0) {
+    return (job.workflowRealtime?.active ?? 0) > 0;
+  }
+
+  const finished = (job.workflowRealtime?.returned ?? 0) + (job.workflowRealtime?.failed ?? 0);
+  return finished < total || (job.workflowRealtime?.active ?? 0) > 0;
+}
+
+function getPublicJobStatus(job: ProjectJobState): PublicJobStatus {
+  if (job.status === 'completed') {
+    return 'completed';
+  }
+  if (job.status === 'failed' && !hasUnfinishedRemoteWork(job)) {
+    return 'failed';
+  }
+  if (job.phase === 'queued' || job.status === 'queued') {
     return 'pending';
   }
-  if (status === 'running') {
+  if (job.status === 'running' || activePublicJobPhases.has(job.phase) || hasUnfinishedRemoteWork(job)) {
     return 'processing';
   }
-  return status;
+  return job.status;
 }
 
-function getPublicJobLabel(status: PublicJobStatus) {
-  if (status === 'completed') {
-    return '已完成';
+function getPublicJobPhaseLabel(phase: ProjectJobState['phase'], status: PublicJobStatus) {
+  if (status === 'completed' || phase === 'completed') {
+    return '处理完成';
   }
-  if (status === 'failed') {
+  if (status === 'failed' || phase === 'failed') {
     return '处理失败';
   }
-  if (status === 'processing') {
-    return '处理中';
+  if (phase === 'uploading') {
+    return '正在上传照片';
   }
-  if (status === 'pending') {
-    return '准备中';
+  if (phase === 'grouping') {
+    return '正在确认分组';
   }
-  return '等待处理';
+  if (phase === 'queued') {
+    return '排队中';
+  }
+  if (phase === 'hdr_merging') {
+    return '正在合成照片';
+  }
+  if (phase === 'workflow_uploading') {
+    return '正在提交处理';
+  }
+  if (phase === 'workflow_running') {
+    return '正在处理照片';
+  }
+  if (phase === 'result_returning') {
+    return '正在回传结果';
+  }
+  if (phase === 'regenerating') {
+    return '正在重新生成';
+  }
+  return status === 'pending' ? '准备中' : '等待处理';
 }
 
-function getPublicJobDetail(status: PublicJobStatus) {
+function getPublicJobDetail(job: ProjectJobState, status: PublicJobStatus) {
   if (status === 'completed') {
     return '结果已生成，可在线查看和下载。';
   }
   if (status === 'failed') {
     return '部分照片暂时未能完成，请检查后重试。';
   }
-  if (status === 'processing') {
-    return '系统正在处理当前项目。';
+
+  const realtime = job.workflowRealtime;
+  if (realtime?.total) {
+    const finished = realtime.returned + realtime.failed;
+    const parts = [`已完成 ${finished}/${realtime.total}`];
+    if (realtime.active > 0) {
+      parts.push(`处理中 ${realtime.active}`);
+    }
+    if (realtime.failed > 0) {
+      parts.push(`待重试 ${realtime.failed}`);
+    }
+    return parts.join(' · ');
   }
+
   if (status === 'pending') {
     return '系统正在准备当前任务。';
+  }
+  if (job.phase === 'hdr_merging') {
+    return '正在合成并准备照片。';
+  }
+  if (job.phase === 'workflow_uploading') {
+    return '正在提交照片，请稍候。';
+  }
+  if (job.phase === 'workflow_running') {
+    return '照片正在处理中，完成后会自动显示结果。';
+  }
+  if (job.phase === 'result_returning') {
+    return '正在保存处理结果。';
   }
   return '上传照片后即可开始处理。';
 }
@@ -1084,13 +1165,28 @@ function buildPublicJob(job: ProjectJobState | null) {
     return null;
   }
 
-  const status = getPublicJobStatus(job.status);
+  const status = getPublicJobStatus(job);
+  const phase = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : job.phase;
   return {
     id: job.id,
     status,
+    phase,
+    phaseLabel: getPublicJobPhaseLabel(phase, status),
     percent: Math.max(0, Math.min(100, Math.round(job.percent))),
-    label: getPublicJobLabel(status),
-    detail: getPublicJobDetail(status),
+    label: getPublicJobPhaseLabel(phase, status),
+    detail: getPublicJobDetail(job, status),
+    currentHdrItemId: job.currentHdrItemId,
+    taskId: job.workflowRealtime?.currentNodeId ?? null,
+    metrics: {
+      total: job.workflowRealtime?.total ?? 0,
+      submitted: job.workflowRealtime?.entered ?? 0,
+      returned: job.workflowRealtime?.returned ?? 0,
+      succeeded: job.workflowRealtime?.succeeded ?? 0,
+      failed: job.workflowRealtime?.failed ?? 0,
+      active: job.workflowRealtime?.active ?? 0,
+      queuePosition: job.workflowRealtime?.queuePosition ?? 0,
+      remoteProgress: job.workflowRealtime?.remoteProgress ?? 0
+    },
     startedAt: job.startedAt,
     completedAt: job.completedAt
   };
@@ -1812,6 +1908,12 @@ app.use(
   })
 );
 app.use((req, res, next) => {
+  const traceId = createTraceId('req');
+  (req as express.Request & { traceId?: string }).traceId = traceId;
+  res.setHeader('X-Metrovan-Trace-Id', traceId);
+  next();
+});
+app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -1883,6 +1985,33 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req,
   }
 });
 app.use(express.json({ limit: '10mb' }));
+app.post('/api/observability/client-event', (req, res) => {
+  const parsed = clientEventSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(204).end();
+    return;
+  }
+
+  const auth = getAuthenticatedContext(req, false);
+  const traceId = (req as express.Request & { traceId?: string }).traceId ?? null;
+  logServerEvent({
+    level: parsed.data.level,
+    event: 'client.event',
+    traceId,
+    userKey: auth?.user.userKey ?? null,
+    projectId: parsed.data.projectId ?? null,
+    taskId: parsed.data.taskId ?? null,
+    details: {
+      message: parsed.data.message,
+      stack: parsed.data.stack ?? null,
+      route: parsed.data.route ?? null,
+      userAgent: parsed.data.userAgent ?? null,
+      occurredAt: parsed.data.occurredAt ?? null,
+      context: parsed.data.context ?? {}
+    }
+  });
+  res.status(204).end();
+});
 app.use((req, res, next) => {
   if (!isCsrfProtectedRequest(req)) {
     next();
@@ -3877,8 +4006,33 @@ app.post('/api/projects/:id/start', async (req, res) => {
     }
     respondWithProject(res, project);
   } catch (error) {
+    captureServerError(error, {
+      event: 'project.start.failed',
+      traceId: (req as express.Request & { traceId?: string }).traceId ?? null,
+      userKey: user.userKey,
+      projectId,
+      phase: ownedProject.job?.phase ?? ownedProject.job?.status ?? null
+    });
     res.status(500).json({ error: getPublicErrorMessage(error) });
   }
+});
+
+app.use((error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    next(error);
+    return;
+  }
+
+  captureServerError(error, {
+    event: 'request.unhandled_error',
+    traceId: (req as express.Request & { traceId?: string }).traceId ?? null,
+    phase: 'request',
+    details: {
+      method: req.method,
+      path: req.path
+    }
+  });
+  res.status(500).json({ error: '服务器暂时无法完成请求，请稍后再试。' });
 });
 
 if (fs.existsSync(clientIndexPath)) {

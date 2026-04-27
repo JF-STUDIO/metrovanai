@@ -123,9 +123,23 @@ export interface WorkflowRealtimeInfo {
   remoteProgress: number;
 }
 
+export type ProjectJobPhase =
+  | 'idle'
+  | 'uploading'
+  | 'grouping'
+  | 'queued'
+  | 'hdr_merging'
+  | 'workflow_uploading'
+  | 'workflow_running'
+  | 'result_returning'
+  | 'regenerating'
+  | 'completed'
+  | 'failed';
+
 export interface ProjectJobState {
   id: string;
   status: 'idle' | 'queued' | 'running' | 'completed' | 'failed';
+  phase: ProjectJobPhase;
   percent: number;
   label: string;
   detail: string;
