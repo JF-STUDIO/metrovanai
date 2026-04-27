@@ -9,9 +9,28 @@ import type {
   SceneType
 } from './types';
 
-const RAW_EXTENSIONS = new Set(['.arw', '.cr2', '.cr3', '.nef', '.dng', '.raf', '.rw2', '.orf', '.srw']);
+const RAW_EXTENSIONS = new Set([
+  '.arw',
+  '.cr2',
+  '.cr3',
+  '.crw',
+  '.nef',
+  '.nrw',
+  '.dng',
+  '.raf',
+  '.rw2',
+  '.rwl',
+  '.orf',
+  '.srw',
+  '.3fr',
+  '.fff',
+  '.iiq',
+  '.pef',
+  '.erf'
+]);
 const JPEG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 export const IMPORT_FILE_ACCEPT = [...RAW_EXTENSIONS, ...JPEG_EXTENSIONS].join(',');
+const MIN_EMBEDDED_JPEG_PREVIEW_BYTES = 8 * 1024;
 
 let exifrModulePromise: Promise<typeof import('exifr')> | null = null;
 
@@ -117,6 +136,64 @@ function isRawFile(fileName: string) {
 
 function isJpegFile(fileName: string) {
   return JPEG_EXTENSIONS.has(getFileExtension(fileName));
+}
+
+async function extractEmbeddedJpegPreviewUrl(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bestStart = -1;
+  let bestEnd = -1;
+  let bestLength = 0;
+  let cursor = 0;
+
+  while (cursor < bytes.length - 4) {
+    let start = -1;
+    for (let index = cursor; index < bytes.length - 2; index += 1) {
+      if (bytes[index] === 0xff && bytes[index + 1] === 0xd8 && bytes[index + 2] === 0xff) {
+        start = index;
+        break;
+      }
+    }
+    if (start === -1) {
+      break;
+    }
+
+    let end = -1;
+    for (let index = start + 3; index < bytes.length - 1; index += 1) {
+      if (bytes[index] === 0xff && bytes[index + 1] === 0xd9) {
+        end = index + 2;
+        break;
+      }
+    }
+    if (end === -1) {
+      break;
+    }
+
+    const length = end - start;
+    if (length > bestLength) {
+      bestStart = start;
+      bestEnd = end;
+      bestLength = length;
+    }
+    cursor = end;
+  }
+
+  if (bestStart < 0 || bestEnd <= bestStart || bestLength < MIN_EMBEDDED_JPEG_PREVIEW_BYTES) {
+    return null;
+  }
+
+  return URL.createObjectURL(file.slice(bestStart, bestEnd, 'image/jpeg'));
+}
+
+async function createLocalPreviewUrl(file: File) {
+  const exifr = (await loadExifr()).default;
+  let previewUrl = await exifr.thumbnailUrl(file).catch(() => undefined);
+  if (!previewUrl && isRawFile(file.name)) {
+    previewUrl = (await extractEmbeddedJpegPreviewUrl(file).catch(() => null)) ?? undefined;
+  }
+  if (!previewUrl && isJpegFile(file.name)) {
+    previewUrl = URL.createObjectURL(file);
+  }
+  return previewUrl ?? null;
 }
 
 function parseNullableNumber(value: unknown) {
@@ -298,10 +375,7 @@ async function parseGroupingFrame(file: File) {
   }).catch(() => null)) as Record<string, unknown> | null;
   const metadataState: LocalImportMetadataState = hasUsableExifMetadata(metadata) ? 'exif' : 'fallback';
 
-  let previewUrl = await exifr.thumbnailUrl(file).catch(() => undefined);
-  if (!previewUrl && isJpegFile(file.name)) {
-    previewUrl = URL.createObjectURL(file);
-  }
+  const previewUrl = await createLocalPreviewUrl(file);
   const previewState: LocalImportPreviewState = previewUrl ? 'ready' : 'missing';
 
   return {
@@ -624,12 +698,7 @@ function serializeLocalImportDraft(draft: LocalImportDraft): LocalImportDraft {
 }
 
 async function createPreviewUrl(file: File) {
-  const exifr = (await loadExifr()).default;
-  let previewUrl = await exifr.thumbnailUrl(file).catch(() => undefined);
-  if (!previewUrl && isJpegFile(file.name)) {
-    previewUrl = URL.createObjectURL(file);
-  }
-  return previewUrl ?? null;
+  return await createLocalPreviewUrl(file);
 }
 
 export async function persistLocalImportDraft(draft: LocalImportDraft) {

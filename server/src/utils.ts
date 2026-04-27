@@ -57,9 +57,25 @@ export function isImageExtension(extension: string) {
 }
 
 export function isRawExtension(extension: string) {
-  return new Set(['.arw', '.cr2', '.cr3', '.nef', '.dng', '.raf', '.rw2', '.orf', '.srw']).has(
-    extension.toLowerCase()
-  );
+  return new Set([
+    '.arw',
+    '.cr2',
+    '.cr3',
+    '.crw',
+    '.nef',
+    '.nrw',
+    '.dng',
+    '.raf',
+    '.rw2',
+    '.rwl',
+    '.orf',
+    '.srw',
+    '.3fr',
+    '.fff',
+    '.iiq',
+    '.pef',
+    '.erf'
+  ]).has(extension.toLowerCase());
 }
 
 export function safeUnlink(targetPath: string | null | undefined) {

@@ -14,7 +14,25 @@ import requests
 from PIL import Image
 
 
-RAW_EXTENSIONS = {".arw", ".cr2", ".cr3", ".nef", ".raf", ".dng", ".rw2", ".orf"}
+RAW_EXTENSIONS = {
+    ".arw",
+    ".cr2",
+    ".cr3",
+    ".crw",
+    ".nef",
+    ".nrw",
+    ".raf",
+    ".dng",
+    ".rw2",
+    ".rwl",
+    ".orf",
+    ".srw",
+    ".3fr",
+    ".fff",
+    ".iiq",
+    ".pef",
+    ".erf",
+}
 JPEG_EXTENSIONS = {".jpg", ".jpeg"}
 HDR_LONG_EDGE = 3000
 

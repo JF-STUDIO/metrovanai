@@ -14,7 +14,25 @@ import runpod
 from PIL import Image
 
 
-RAW_EXTENSIONS = {".arw", ".cr2", ".cr3", ".nef", ".raf", ".dng", ".rw2", ".orf"}
+RAW_EXTENSIONS = {
+    ".arw",
+    ".cr2",
+    ".cr3",
+    ".crw",
+    ".nef",
+    ".nrw",
+    ".raf",
+    ".dng",
+    ".rw2",
+    ".rwl",
+    ".orf",
+    ".srw",
+    ".3fr",
+    ".fff",
+    ".iiq",
+    ".pef",
+    ".erf",
+}
 
 
 def env(name: str, default: str = "") -> str:
