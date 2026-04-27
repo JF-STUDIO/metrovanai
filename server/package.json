@@ -12,6 +12,7 @@
     "@sentry/node": "^10.50.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "helmet": "^8.1.0",
     "multer": "^2.0.2",
     "nanoid": "^5.1.6",
     "nodemailer": "^8.0.5",

@@ -279,6 +279,7 @@ export class LocalStore {
       projects: Array.isArray(raw.projects) ? raw.projects : [],
       billing: Array.isArray(raw.billing) ? raw.billing : [],
       paymentOrders: Array.isArray(raw.paymentOrders) ? raw.paymentOrders : [],
+      processedStripeEvents: Array.isArray(raw.processedStripeEvents) ? raw.processedStripeEvents : [],
       activationCodes: Array.isArray(raw.activationCodes) ? raw.activationCodes : [],
       users,
       sessions: sessions.filter((session) => !this.isSessionExpired(session)),
@@ -852,6 +853,36 @@ export class LocalStore {
 
   getPaymentOrderByStripeSessionId(sessionId: string) {
     return this.loadDb().paymentOrders.find((order) => order.stripeCheckoutSessionId === sessionId) ?? null;
+  }
+
+  hasProcessedStripeEvent(eventId: string) {
+    if (!eventId.trim()) {
+      return false;
+    }
+    return this.loadDb().processedStripeEvents.some((event) => event.id === eventId);
+  }
+
+  markStripeEventProcessed(eventId: string, eventType: string) {
+    const normalizedEventId = eventId.trim();
+    if (!normalizedEventId) {
+      return null;
+    }
+
+    const db = this.loadDb();
+    const existing = db.processedStripeEvents.find((event) => event.id === normalizedEventId);
+    if (existing) {
+      return existing;
+    }
+
+    const record = {
+      id: normalizedEventId,
+      type: eventType,
+      processedAt: new Date().toISOString()
+    };
+    db.processedStripeEvents.unshift(record);
+    db.processedStripeEvents = db.processedStripeEvents.slice(0, 5000);
+    this.saveDb(db);
+    return record;
   }
 
   createPaymentOrder(input: {

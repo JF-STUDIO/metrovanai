@@ -25,19 +25,37 @@ export interface GoogleProfile {
   name?: string;
 }
 
-export function hashPassword(password: string) {
+function scrypt(password: string, salt: string, keyLength: number) {
+  return new Promise<Buffer>((resolve, reject) => {
+    crypto.scrypt(password, salt, keyLength, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(derivedKey);
+    });
+  });
+}
+
+export async function hashPassword(password: string) {
   const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  const hash = (await scrypt(password, salt, 64)).toString('hex');
   return `scrypt:${salt}:${hash}`;
 }
 
-export function verifyPassword(password: string, storedHash: string) {
+export async function verifyPassword(password: string, storedHash: string) {
   const [algorithm, salt, expectedHash] = storedHash.split(':');
   if (algorithm !== 'scrypt' || !salt || !expectedHash) {
     return false;
   }
-  const actualHash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'));
+
+  const expectedBuffer = Buffer.from(expectedHash, 'hex');
+  if (expectedBuffer.length !== 64) {
+    return false;
+  }
+
+  const actualBuffer = await scrypt(password, salt, 64);
+  return crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 export function createSessionToken() {

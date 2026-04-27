@@ -1,6 +1,7 @@
 import './env.js';
 import cors from 'cors';
 import express from 'express';
+import helmet from 'helmet';
 import multer from 'multer';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -1900,11 +1901,14 @@ function isAllowedCorsOrigin(origin: string | undefined) {
 }
 
 app.use(
-  cors({
-    origin(origin, callback) {
-      callback(null, isAllowedCorsOrigin(origin) ? origin || true : false);
-    },
-    credentials: true
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
+    hsts: false,
+    originAgentCluster: false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
   })
 );
 app.use((req, res, next) => {
@@ -1946,6 +1950,11 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req,
     return;
   }
 
+  if (store.hasProcessedStripeEvent(event.id)) {
+    res.json({ received: true, duplicate: true });
+    return;
+  }
+
   try {
     if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
       const session = event.data.object as Stripe.Checkout.Session;
@@ -1978,13 +1987,22 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req,
       }
     }
 
+    store.markStripeEventProcessed(event.id, event.type);
     res.json({ received: true });
   } catch (error) {
     console.error('Stripe webhook handling failed:', error);
     res.status(500).json({ error: 'Stripe webhook handling failed.' });
   }
 });
-app.use(express.json({ limit: '10mb' }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      callback(null, isAllowedCorsOrigin(origin) ? origin || true : false);
+    },
+    credentials: true
+  })
+);
+app.use(express.json({ limit: '1mb' }));
 app.post('/api/observability/client-event', (req, res) => {
   const parsed = clientEventSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -2846,7 +2864,7 @@ app.post('/api/auth/register', async (req, res) => {
   const user = store.createUser({
     email,
     displayName: parsed.data.displayName ?? email.split('@')[0] ?? 'user',
-    passwordHash: hashPassword(parsed.data.password)
+    passwordHash: await hashPassword(parsed.data.password)
   });
   writeSecurityAuditLog(req, {
     action: 'auth.register.created',
@@ -2896,7 +2914,7 @@ app.post('/api/auth/login', async (req, res) => {
     return;
   }
 
-  if (!verifyPassword(parsed.data.password, user.passwordHash)) {
+  if (!(await verifyPassword(parsed.data.password, user.passwordHash))) {
     writeSecurityAuditLog(req, {
       action: 'auth.login.failed',
       targetUserId: user.id,
@@ -3081,7 +3099,7 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/auth/password-reset/confirm', (req, res) => {
+app.post('/api/auth/password-reset/confirm', async (req, res) => {
   if (
     !checkRateLimit(req, res, {
       scope: 'auth-password-reset-confirm',
@@ -3115,10 +3133,11 @@ app.post('/api/auth/password-reset/confirm', (req, res) => {
     return;
   }
 
+  const newPasswordHash = await hashPassword(parsed.data.password);
   const updatedUser = store.updateUser(user.id, (current) => ({
     ...current,
     emailVerifiedAt: current.emailVerifiedAt ?? new Date().toISOString(),
-    passwordHash: hashPassword(parsed.data.password)
+    passwordHash: newPasswordHash
   }));
   if (!updatedUser) {
     res.status(400).json({ error: 'This reset link is invalid or expired.' });

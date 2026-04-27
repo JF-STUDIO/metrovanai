@@ -23,6 +23,7 @@ export interface DatabaseShape {
   projects: ProjectRecord[];
   billing: BillingEntry[];
   paymentOrders: PaymentOrderRecord[];
+  processedStripeEvents: ProcessedStripeEventRecord[];
   activationCodes: BillingActivationCode[];
   users: UserRecord[];
   sessions: SessionRecord[];
@@ -30,6 +31,12 @@ export interface DatabaseShape {
   emailVerificationTokens: EmailVerificationTokenRecord[];
   auditLogs: AuditLogEntry[];
   systemSettings: SystemSettings;
+}
+
+export interface ProcessedStripeEventRecord {
+  id: string;
+  type: string;
+  processedAt: string;
 }
 
 export interface MetadataProviderInfo {
@@ -53,6 +60,7 @@ function createEmptyDatabase(): DatabaseShape {
     projects: [],
     billing: [],
     paymentOrders: [],
+    processedStripeEvents: [],
     activationCodes: [],
     users: [],
     sessions: [],
@@ -81,6 +89,7 @@ function normalizeDatabaseShape(raw: Partial<DatabaseShape>): DatabaseShape {
     projects: Array.isArray(raw.projects) ? raw.projects : [],
     billing: Array.isArray(raw.billing) ? raw.billing : [],
     paymentOrders: Array.isArray(raw.paymentOrders) ? raw.paymentOrders : [],
+    processedStripeEvents: Array.isArray(raw.processedStripeEvents) ? raw.processedStripeEvents : [],
     activationCodes: Array.isArray(raw.activationCodes) ? raw.activationCodes : [],
     users: Array.isArray(raw.users) ? raw.users : [],
     sessions: Array.isArray(raw.sessions) ? raw.sessions.map((session) => ({ ...session, csrfTokenHash: session.csrfTokenHash ?? null })) : [],
