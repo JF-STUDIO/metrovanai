@@ -169,12 +169,34 @@ def get_acr_lcp_s3_config() -> dict[str, str] | None:
     }
 
 
+def get_storage_s3_config(storage_key: str) -> dict[str, str] | None:
+    if not storage_key:
+        return None
+
+    endpoint = env("METROVAN_R2_ENDPOINT") or env("METROVAN_OBJECT_STORAGE_ENDPOINT")
+    bucket = env("METROVAN_R2_BUCKET") or env("METROVAN_OBJECT_STORAGE_BUCKET")
+    access_key_id = env("METROVAN_R2_ACCESS_KEY_ID") or env("METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID")
+    secret_access_key = env("METROVAN_R2_SECRET_ACCESS_KEY") or env("METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY")
+    region = env("METROVAN_R2_REGION") or env("METROVAN_OBJECT_STORAGE_REGION", "auto")
+    if not endpoint or not bucket or not access_key_id or not secret_access_key:
+        return None
+
+    return {
+        "endpoint": endpoint.rstrip("/"),
+        "bucket": bucket,
+        "key": storage_key.lstrip("/"),
+        "access_key_id": access_key_id,
+        "secret_access_key": secret_access_key,
+        "region": region,
+    }
+
+
 def download_s3_object(config: dict[str, str], target: Path) -> None:
     try:
         import boto3
         from botocore.config import Config
     except ImportError as error:
-        raise RuntimeError("boto3 is required to download ACR lens profiles from private object storage.") from error
+        raise RuntimeError("boto3 is required to download private object storage files.") from error
 
     target.parent.mkdir(parents=True, exist_ok=True)
     client = boto3.client(
@@ -325,7 +347,12 @@ def download_source(source: dict[str, Any], index: int, target_dir: Path) -> Pat
     target = target_dir / f"{index:04d}_{file_name}"
     url = str(source.get("downloadUrl") or "").strip()
     if not url:
-        raise RuntimeError(f"Source {file_name} does not include a download URL.")
+        storage_key = str(source.get("storageKey") or "").strip()
+        s3_config = get_storage_s3_config(storage_key)
+        if s3_config:
+            download_s3_object(s3_config, target)
+            return target
+        raise RuntimeError(f"Source {file_name} does not include a download URL or storage key.")
     download_url(url, target)
     return target
 
