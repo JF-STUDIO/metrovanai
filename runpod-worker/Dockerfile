@@ -32,5 +32,6 @@ COPY metrovan_processor.py /app/metrovan_processor.py
 
 ENV METROVAN_PROCESSOR_COMMAND="python /app/metrovan_processor.py"
 ENV METROVAN_REGEN_COMMAND="python /app/metrovan_processor.py"
+ENV METROVAN_ACR_LCP_DIR="/opt/metrovan/lcp-profiles"
 
 CMD ["python", "-u", "handler.py"]

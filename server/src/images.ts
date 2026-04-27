@@ -75,6 +75,194 @@ function deleteIfExists(targetPath: string) {
   }
 }
 
+interface AcrLensProfileInfo {
+  path: string;
+  make: string;
+  tokens: Set<string>;
+  focals: number[];
+}
+
+let acrLensProfileCache: AcrLensProfileInfo[] | null = null;
+
+function splitConfiguredPaths(value: string | undefined) {
+  if (!value) {
+    return [];
+  }
+  const separator = value.includes(';') ? ';' : path.delimiter;
+  return value
+    .split(separator)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizeLensText(value: unknown) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/contemporary/g, 'c')
+    .replace(/\|/g, ' ')
+    .match(/[a-z0-9.]+/g)
+    ?.join(' ') ?? '';
+}
+
+function lensTokens(value: unknown) {
+  const tokens = new Set<string>();
+  for (const token of normalizeLensText(value).split(' ').filter(Boolean)) {
+    tokens.add(token);
+    tokens.add(token.replace(/\./g, ''));
+  }
+  return tokens;
+}
+
+function parseFirstNumber(value: unknown) {
+  const match = String(value ?? '').match(/-?\d+(?:\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getAcrLensProfileRoots() {
+  const roots = [
+    ...splitConfiguredPaths(process.env.METROVAN_ACR_LCP_DIR),
+    path.join(process.env.PROGRAMDATA ?? 'C:\\ProgramData', 'Adobe', 'CameraRaw', 'LensProfiles', '1.0'),
+    path.join(process.env.APPDATA ?? '', 'Adobe', 'CameraRaw', 'LensProfiles', '1.0'),
+    '/opt/metrovan/lcp-profiles',
+    '/opt/metrovan/acr-lcp'
+  ];
+  const seen = new Set<string>();
+  return roots.filter((root) => {
+    if (!root || !fs.existsSync(root)) {
+      return false;
+    }
+    const resolved = path.resolve(root);
+    if (seen.has(resolved)) {
+      return false;
+    }
+    seen.add(resolved);
+    return true;
+  });
+}
+
+function walkLcpFiles(root: string) {
+  const files: string[] = [];
+  const stack = [root];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.lcp')) {
+        files.push(fullPath);
+      }
+    }
+  }
+  return files;
+}
+
+function parseAcrLensProfile(profilePath: string): AcrLensProfileInfo | null {
+  let text = '';
+  try {
+    text = fs.readFileSync(profilePath, 'utf8');
+  } catch {
+    return null;
+  }
+  const attr = (name: string) => text.match(new RegExp(`stCamera:${name}="([^"]*)"`))?.[1] ?? '';
+  const focals = [...text.matchAll(/stCamera:FocalLength="(\d+(?:\.\d+)?)"/g)]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value));
+  const searchText = [path.basename(profilePath, path.extname(profilePath)), attr('Make'), attr('Lens'), attr('LensPrettyName'), attr('ProfileName')]
+    .filter(Boolean)
+    .join(' ');
+  return {
+    path: profilePath,
+    make: normalizeLensText(attr('Make')),
+    tokens: lensTokens(searchText),
+    focals
+  };
+}
+
+function loadAcrLensProfiles() {
+  if (acrLensProfileCache) {
+    return acrLensProfileCache;
+  }
+  const profiles: AcrLensProfileInfo[] = [];
+  for (const root of getAcrLensProfileRoots()) {
+    for (const file of walkLcpFiles(root)) {
+      const profile = parseAcrLensProfile(file);
+      if (profile) {
+        profiles.push(profile);
+      }
+    }
+  }
+  acrLensProfileCache = profiles;
+  return profiles;
+}
+
+async function findAcrLensProfile(sourcePath: string) {
+  if (!toolPaths.exiftool) {
+    return null;
+  }
+  const result = await runProcess(
+    toolPaths.exiftool,
+    ['-j', '-Make', '-Model', '-LensModel', '-LensID', '-LensInfo', '-FocalLength', '-FNumber', sourcePath],
+    { cwd: path.dirname(sourcePath), timeoutSeconds: 60 }
+  );
+  if (result.exitCode !== 0) {
+    return null;
+  }
+
+  let metadata: Record<string, unknown> = {};
+  try {
+    const rows = JSON.parse(result.stdout || '[]') as Array<Record<string, unknown>>;
+    metadata = rows[0] ?? {};
+  } catch {
+    return null;
+  }
+
+  const sourceTokens = lensTokens([metadata.LensModel, metadata.LensID, metadata.LensInfo].filter(Boolean).join(' '));
+  if (!sourceTokens.size) {
+    return null;
+  }
+  const make = normalizeLensText(metadata.Make);
+  const focal = parseFirstNumber(metadata.FocalLength);
+
+  let bestProfile: AcrLensProfileInfo | null = null;
+  let bestScore = 0;
+  for (const profile of loadAcrLensProfiles()) {
+    if (make && profile.make && !make.includes(profile.make) && !profile.make.includes(make)) {
+      continue;
+    }
+    let score = 0;
+    for (const token of sourceTokens) {
+      if (profile.tokens.has(token)) {
+        score += 10;
+      }
+    }
+    if (focal !== null && profile.focals.length) {
+      const min = Math.min(...profile.focals);
+      const max = Math.max(...profile.focals);
+      score += focal >= min - 0.25 && focal <= max + 0.25 ? 25 : -Math.min(Math.abs(focal - min), Math.abs(focal - max));
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestProfile = profile;
+    }
+  }
+
+  return bestProfile && bestScore >= 35 ? bestProfile.path : null;
+}
+
 const FALLBACK_PREVIEW_JPEG = Buffer.from(
   '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Ar//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z',
   'base64'
@@ -204,7 +392,16 @@ export async function writeJpegVariant(
   await convertToJpegWithMagick(sourcePath, destinationPath, quality, resize);
 }
 
-function buildRawTherapeeProfile(mode: RawWhiteBalanceMode, resizeLongEdge = HDR_LONG_EDGE) {
+function buildRawTherapeeProfile(mode: RawWhiteBalanceMode, resizeLongEdge = HDR_LONG_EDGE, lcpProfilePath: string | null = null) {
+  const lensProfileLines = [
+    '[LensProfile]',
+    lcpProfilePath ? 'LcMode=lcp' : 'LcMode=lfauto',
+    ...(lcpProfilePath ? [`LCPFile=${lcpProfilePath.replace(/\\/g, '/')}`] : []),
+    'UseDistortion=true',
+    'UseVignette=true',
+    'UseCA=true',
+    ''
+  ];
   return [
     '[Exposure]',
     'Auto=false',
@@ -214,12 +411,7 @@ function buildRawTherapeeProfile(mode: RawWhiteBalanceMode, resizeLongEdge = HDR
     'Enabled=true',
     'Method=Coloropp',
     '',
-    '[LensProfile]',
-    'LcMode=lfauto',
-    'UseDistortion=true',
-    'UseVignette=true',
-    'UseCA=true',
-    '',
+    ...lensProfileLines,
     '[RAW]',
     'CA=true',
     '',
@@ -284,7 +476,8 @@ async function renderRawToJpegWithRawTherapee(
 
   try {
     const profilePath = path.join(tempRoot, 'render.pp3');
-    fs.writeFileSync(profilePath, buildRawTherapeeProfile(mode, resizeLongEdge), 'utf8');
+    const lcpProfilePath = await findAcrLensProfile(sourcePath);
+    fs.writeFileSync(profilePath, buildRawTherapeeProfile(mode, resizeLongEdge, lcpProfilePath), 'utf8');
 
     const renderedPath = path.join(tempRoot, 'rendered.jpg');
     const result = await runProcess(

@@ -1,9 +1,11 @@
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,11 @@ HDR_LONG_EDGE = 3000
 
 def env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
+
+
+ACR_LCP_CACHE_DIR = Path(env("METROVAN_ACR_LCP_CACHE_DIR", "/tmp/metrovan-acr-lcp"))
+ACR_LCP_ZIP_MARKER = ACR_LCP_CACHE_DIR / ".ready"
+_LCP_PROFILE_CACHE: list[dict[str, Any]] | None = None
 
 
 def find_tool(env_name: str, names: list[str]) -> str:
@@ -63,6 +70,182 @@ def is_raw(path: Path) -> bool:
     return path.suffix.lower() in RAW_EXTENSIONS
 
 
+def split_path_list(value: str) -> list[str]:
+    if not value:
+        return []
+    separator = ";" if ";" in value else os.pathsep
+    return [item.strip() for item in value.split(separator) if item.strip()]
+
+
+def normalize_lens_text(value: Any) -> str:
+    text = str(value or "").lower().replace("contemporary", "c").replace("|", " ")
+    return " ".join(re.findall(r"[a-z0-9.]+", text))
+
+
+def text_tokens(value: Any) -> set[str]:
+    tokens = set(normalize_lens_text(value).split())
+    expanded: set[str] = set()
+    for token in tokens:
+        compact = token.replace(".", "")
+        expanded.add(token)
+        expanded.add(compact)
+    return {token for token in expanded if token}
+
+
+def parse_number(value: Any) -> float | None:
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value or ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def read_raw_lens_metadata(source: Path) -> dict[str, Any]:
+    exiftool = TOOLS["exiftool"]
+    if not exiftool:
+        return {}
+
+    result = run_process(
+        exiftool,
+        ["-j", "-Make", "-Model", "-LensModel", "-LensID", "-LensInfo", "-FocalLength", "-FNumber", str(source)],
+        source.parent,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        return {}
+
+    try:
+        rows = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return {}
+    return rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+
+
+def ensure_acr_lcp_zip() -> Path | None:
+    url = env("METROVAN_ACR_LCP_ZIP_URL")
+    if not url:
+        return None
+    if ACR_LCP_ZIP_MARKER.exists():
+        return ACR_LCP_CACHE_DIR
+
+    ACR_LCP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    zip_path = ACR_LCP_CACHE_DIR / "profiles.zip"
+    download_url(url, zip_path)
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(ACR_LCP_CACHE_DIR)
+    try:
+        zip_path.unlink()
+    except OSError:
+        pass
+    ACR_LCP_ZIP_MARKER.write_text("ready", encoding="utf-8")
+    return ACR_LCP_CACHE_DIR
+
+
+def get_acr_lcp_roots() -> list[Path]:
+    roots = [Path(entry) for entry in split_path_list(env("METROVAN_ACR_LCP_DIR"))]
+    extracted = ensure_acr_lcp_zip()
+    if extracted:
+        roots.append(extracted)
+    roots.extend(
+        [
+            Path("/opt/metrovan/lcp-profiles"),
+            Path("/opt/metrovan/acr-lcp"),
+            Path("/usr/share/rawtherapee/lensprofiles"),
+            Path("/usr/share/lensprofiles"),
+            Path("C:/ProgramData/Adobe/CameraRaw/LensProfiles/1.0"),
+        ]
+    )
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        try:
+            key = str(root.resolve())
+        except OSError:
+            key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(root)
+    return unique
+
+
+def parse_lcp_profile(profile_path: Path) -> dict[str, Any] | None:
+    try:
+        text = profile_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+
+    def attr(name: str) -> str:
+        match = re.search(rf'stCamera:{name}="([^"]*)"', text)
+        return match.group(1) if match else ""
+
+    focals = [float(value) for value in re.findall(r'stCamera:FocalLength="(\d+(?:\.\d+)?)"', text)]
+    make = attr("Make")
+    lens = attr("Lens")
+    lens_pretty = attr("LensPrettyName")
+    profile_name = attr("ProfileName")
+    search_text = " ".join([profile_path.stem, make, lens, lens_pretty, profile_name])
+    return {
+        "path": profile_path,
+        "make": normalize_lens_text(make),
+        "tokens": text_tokens(search_text),
+        "focals": focals,
+    }
+
+
+def load_lcp_profiles() -> list[dict[str, Any]]:
+    global _LCP_PROFILE_CACHE
+    if _LCP_PROFILE_CACHE is not None:
+        return _LCP_PROFILE_CACHE
+
+    profiles: list[dict[str, Any]] = []
+    for root in get_acr_lcp_roots():
+        for profile_path in root.rglob("*.lcp"):
+            parsed = parse_lcp_profile(profile_path)
+            if parsed:
+                profiles.append(parsed)
+
+    _LCP_PROFILE_CACHE = profiles
+    return profiles
+
+
+def find_acr_lcp_profile(source: Path) -> Path | None:
+    metadata = read_raw_lens_metadata(source)
+    lens_text = " ".join(str(metadata.get(key) or "") for key in ("LensModel", "LensID", "LensInfo"))
+    lens_tokens = text_tokens(lens_text)
+    if not lens_tokens:
+        return None
+
+    make = normalize_lens_text(metadata.get("Make"))
+    focal = parse_number(metadata.get("FocalLength"))
+    best_profile: dict[str, Any] | None = None
+    best_score = 0.0
+    for profile in load_lcp_profiles():
+        if make and profile["make"] and make not in profile["make"] and profile["make"] not in make:
+            continue
+
+        overlap = lens_tokens.intersection(profile["tokens"])
+        score = float(len(overlap) * 10)
+        if focal is not None and profile["focals"]:
+            min_focal = min(profile["focals"])
+            max_focal = max(profile["focals"])
+            if min_focal - 0.25 <= focal <= max_focal + 0.25:
+                score += 25
+            else:
+                score -= min(abs(focal - min_focal), abs(focal - max_focal))
+
+        if score > best_score:
+            best_score = score
+            best_profile = profile
+
+    return best_profile["path"] if best_profile and best_score >= 35 else None
+
+
 def download_url(url: str, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with requests.get(url, stream=True, timeout=180) as response:
@@ -91,8 +274,22 @@ def download_source(source: dict[str, Any], index: int, target_dir: Path) -> Pat
     return target
 
 
-def build_rawtherapee_profile(mode: str, resize_long_edge: int = HDR_LONG_EDGE) -> str:
+def build_rawtherapee_profile(mode: str, resize_long_edge: int = HDR_LONG_EDGE, lcp_profile: Path | None = None) -> str:
     setting = "Camera" if mode == "camera" else mode
+    lens_profile_lines = [
+        "[LensProfile]",
+        "LcMode=lcp" if lcp_profile else "LcMode=lfauto",
+    ]
+    if lcp_profile:
+        lens_profile_lines.append(f"LCPFile={lcp_profile.as_posix()}")
+    lens_profile_lines.extend(
+        [
+            "UseDistortion=true",
+            "UseVignette=true",
+            "UseCA=true",
+            "",
+        ]
+    )
     return "\n".join(
         [
             "[Exposure]",
@@ -103,12 +300,7 @@ def build_rawtherapee_profile(mode: str, resize_long_edge: int = HDR_LONG_EDGE) 
             "Enabled=true",
             "Method=Coloropp",
             "",
-            "[LensProfile]",
-            "LcMode=lfauto",
-            "UseDistortion=true",
-            "UseVignette=true",
-            "UseCA=true",
-            "",
+            *lens_profile_lines,
             "[RAW]",
             "CA=true",
             "",
@@ -167,7 +359,10 @@ def render_raw_to_jpeg(source: Path, destination: Path, quality: int, mode: str,
             temp_dir = Path(temp_root)
             profile = temp_dir / "render.pp3"
             rendered = temp_dir / "rendered.jpg"
-            profile.write_text(build_rawtherapee_profile(mode, resize_long_edge), encoding="utf-8")
+            lcp_profile = find_acr_lcp_profile(source) if is_raw(source) else None
+            if lcp_profile:
+                print(f"Using ACR lens profile: {lcp_profile.name}", flush=True)
+            profile.write_text(build_rawtherapee_profile(mode, resize_long_edge, lcp_profile), encoding="utf-8")
             result = run_process(
                 rawtherapee,
                 ["-q", "-Y", "-d", "-p", str(profile), "-o", str(rendered), f"-j{quality}", "-c", str(source)],
