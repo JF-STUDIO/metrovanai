@@ -914,8 +914,8 @@ const UI_TEXT = {
     processFlow: 'Process',
     processFlowHint: '',
     waitingProcessing: 'Waiting to process',
-    waitingProcessingHint: 'Overall progress will appear here after upload.',
-    processingProgress: 'Progress',
+    waitingProcessingHint: 'Processing status will appear here after upload.',
+    processingProgress: 'Status',
     estimatedPoints: 'Estimated credits',
     uploadPhotos: 'Drop photos here',
     uploadPhotosHint: 'Create local previews and automatic groups first, then upload the originals after confirmation.',
@@ -3480,7 +3480,7 @@ function App() {
       runpodHdrBatchSize < MIN_RUNPOD_HDR_BATCH_SIZE ||
       runpodHdrBatchSize > MAX_RUNPOD_HDR_BATCH_SIZE
     ) {
-      setAdminMessage(`Runpod HDR 批量数量必须是 ${MIN_RUNPOD_HDR_BATCH_SIZE} 到 ${MAX_RUNPOD_HDR_BATCH_SIZE}。`);
+      setAdminMessage(`云处理批量数量必须是 ${MIN_RUNPOD_HDR_BATCH_SIZE} 到 ${MAX_RUNPOD_HDR_BATCH_SIZE}。`);
       return;
     }
 
@@ -3493,7 +3493,7 @@ function App() {
       setAdminSystemSettings(response.settings);
       setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
       setAdminSystemLoaded(true);
-      setAdminMessage(`已更新：每个 Runpod 任务 ${response.settings.runpodHdrBatchSize} 组 HDR。`);
+      setAdminMessage(`已更新：每个云处理任务 ${response.settings.runpodHdrBatchSize} 组 HDR。`);
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '系统设置保存失败。', locale));
     } finally {
@@ -5033,7 +5033,7 @@ function App() {
             <div className="admin-panel-head">
               <div>
                 <span className="admin-kicker">Processing Settings</span>
-                <h2>Runpod HDR 批量</h2>
+                <h2>云处理 HDR 批量</h2>
               </div>
               <button
                 className="ghost-button"
@@ -5046,7 +5046,7 @@ function App() {
             </div>
             <div className="admin-activation-editor">
               <label className="admin-toggle-field">
-                <span>每个 Runpod 任务包含 HDR 组数</span>
+                <span>每个云处理任务包含 HDR 组数</span>
                 <input
                   value={adminSystemDraft.runpodHdrBatchSize}
                   onChange={(event) => setAdminSystemDraft({ runpodHdrBatchSize: event.target.value })}
