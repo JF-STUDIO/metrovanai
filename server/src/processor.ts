@@ -487,6 +487,9 @@ export class ProjectProcessor {
     await this.runParallelMergeAndWorkflow(projectId, taskExecution, projectDirs.hdr);
     const finalProject = this.store.getProject(projectId);
     const hasSuccess = Boolean(finalProject?.resultAssets.length);
+    const allItemsCompleted = Boolean(
+      finalProject?.hdrItems.length && finalProject.hdrItems.every((item) => this.isHdrItemCompleted(item))
+    );
     const finalFailed = finalProject?.job?.workflowRealtime.failed ?? 0;
 
     this.store.updateProject(projectId, (project) => ({
@@ -508,7 +511,7 @@ export class ProjectProcessor {
       percent: hasSuccess ? 100 : Math.max(job.percent, 1)
     }));
     const completedProject = this.store.getProject(projectId);
-    if (hasSuccess && completedProject) {
+    if (allItemsCompleted && completedProject) {
       await this.cleanupProjectIncomingObjects(completedProject);
     }
   }
