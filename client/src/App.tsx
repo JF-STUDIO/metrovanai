@@ -507,7 +507,7 @@ const UI_TEXT = {
     studioGuideStep4Title: '确认发送',
     studioGuideStep4Body: '确认分组后再上传原图。上传完成并进入自动处理后，可以关闭浏览器。',
     studioGuideStep5Title: '查看结果',
-    studioGuideStep5Body: '结果区可以拖拽排序、点开大图、调整裁剪曝光；最重要的是可以用吸管取墙面色卡或手动输入 HEX，对单张照片免费重新改色一次。',
+    studioGuideStep5Body: '结果区可以拖拽排序、点开大图、调整裁剪曝光；可用吸管吸取其他墙面颜色或手动输入 HEX。每个项目前 10 次免费，之后每次 1 积分。',
     studioGuideStep6Title: '下载和积分',
     studioGuideStep6Body: '下载时选择 HD 原尺寸或自定义尺寸。处理按成功照片数扣积分，充值和账单在用户菜单里查看。',
     points: '积分',
@@ -594,13 +594,13 @@ const UI_TEXT = {
     results: '处理结果',
     resultsHint: '拖拽照片可调整下载后文件夹显示顺序，可按照外景、客厅、厨房、卧室排序。',
     clickToView: '点击查看大图',
-    colorCardNo: '取色重生',
-    colorDropper: '吸取颜色',
+    colorCardNo: '目标色卡',
+    colorDropper: '吸取其他墙面颜色更改',
     colorDropperUnsupported: '当前浏览器不支持吸管，请手动输入 HEX 颜色。',
     colorDropperFailed: '吸取颜色失败，请重试或手动输入。',
     regeneratePanelTitle: '重新生成',
-    regeneratePanelHint: '填写或吸取目标墙面色卡，重新生成当前照片。',
-    resultCardColorHint: '吸取墙面色',
+    regeneratePanelHint: '吸取或填写其他墙面色卡。每个项目前 10 次免费，之后每次 1 积分。',
+    resultCardColorHint: '其他墙面颜色',
     saveColorCard: '保存色卡',
     colorCardSaved: '色卡已保存，下次会自动显示。',
     colorCardAlreadySaved: '这个色卡已经在列表里。',
@@ -609,8 +609,8 @@ const UI_TEXT = {
     colorCardDeleted: '色卡已删除。',
     regenerateResult: '重新生成',
     regeneratingResult: '生成中',
-    regeneratedResult: '已用免费重修',
-    regenerateResultHint: '每张照片免费重新生成 1 次。',
+    regeneratedResult: '继续生成',
+    regenerateResultHint: '每个项目前 10 次免费，之后每次 1 积分。',
     regenerateResultStarted: '已开始重新生成，完成后这张图会自动更新。',
     regenerateResultFailed: '启动重新生成失败。',
     regenerateColorInvalid: '请输入正确的 HEX 颜色，例如 #F2E8D8。',
@@ -872,7 +872,7 @@ const UI_TEXT = {
     studioGuideStep4Title: 'Confirm and send',
     studioGuideStep4Body: 'After confirming groups, originals upload. Once upload is complete and processing starts, you can close the browser.',
     studioGuideStep5Title: 'Review results',
-    studioGuideStep5Body: 'Drag to reorder, open a large preview, adjust crop or exposure, and most importantly use the eyedropper or HEX color to recolor one photo once for free.',
+    studioGuideStep5Body: 'Drag to reorder, open a large preview, adjust crop or exposure, then pick another wall color or enter HEX. Each project includes 10 free regenerations; later runs cost 1 credit each.',
     studioGuideStep6Title: 'Download and credits',
     studioGuideStep6Body: 'Download HD original size or custom size. Credits are charged only for successful images; billing is in the user menu.',
     points: 'Credits',
@@ -959,13 +959,13 @@ const UI_TEXT = {
     results: 'Results',
     resultsHint: 'Drag photos to control the folder order in the final download.',
     clickToView: 'Click to view large image',
-    colorCardNo: 'Color regenerate',
-    colorDropper: 'Pick color',
+    colorCardNo: 'Target color',
+    colorDropper: 'Pick another wall color',
     colorDropperUnsupported: 'This browser does not support the eyedropper. Enter a HEX color manually.',
     colorDropperFailed: 'Color picking failed. Try again or enter HEX manually.',
     regeneratePanelTitle: 'Regenerate',
-    regeneratePanelHint: 'Enter or pick a target wall color and regenerate this image.',
-    resultCardColorHint: 'Pick wall color',
+    regeneratePanelHint: 'Pick or enter another wall color. Each project includes 10 free regenerations; later runs cost 1 credit each.',
+    resultCardColorHint: 'Another wall color',
     saveColorCard: 'Save card',
     colorCardSaved: 'Color card saved and will appear next time.',
     colorCardAlreadySaved: 'This color card is already in the list.',
@@ -974,8 +974,8 @@ const UI_TEXT = {
     colorCardDeleted: 'Color card deleted.',
     regenerateResult: 'Regenerate',
     regeneratingResult: 'Generating',
-    regeneratedResult: 'Free regenerate used',
-    regenerateResultHint: 'Each photo includes one free regeneration.',
+    regeneratedResult: 'Regenerate again',
+    regenerateResultHint: 'Each project includes 10 free regenerations; later runs cost 1 credit each.',
     regenerateResultStarted: 'Regeneration started. This image will update when it finishes.',
     regenerateResultFailed: 'Failed to start regeneration.',
     regenerateColorInvalid: 'Enter a valid HEX color, for example #F2E8D8.',
@@ -1195,6 +1195,7 @@ function createDemoProjects(): ProjectRecord[] {
       currentStep: 2,
       pointsEstimate: 6,
       pointsSpent: 0,
+      regenerationUsage: { freeLimit: 10, freeUsed: 0, paidUsed: 0 },
       photoCount: 8,
       groupCount: 4,
       downloadReady: true,
@@ -1229,6 +1230,7 @@ function createDemoProjects(): ProjectRecord[] {
       currentStep: 3,
       pointsEstimate: 4,
       pointsSpent: 0,
+      regenerationUsage: { freeLimit: 10, freeUsed: 0, paidUsed: 0 },
       photoCount: 18,
       groupCount: 2,
       downloadReady: false,
@@ -1250,6 +1252,7 @@ function createDemoProjects(): ProjectRecord[] {
       currentStep: 4,
       pointsEstimate: 7,
       pointsSpent: 7,
+      regenerationUsage: { freeLimit: 10, freeUsed: 0, paidUsed: 0 },
       photoCount: 24,
       groupCount: 3,
       downloadReady: true,
@@ -2387,7 +2390,15 @@ function App() {
   const currentViewerIsRegenerating =
     Boolean(currentViewerAsset && resultRegenerateBusy[currentViewerAsset.hdrItemId]) ||
     currentViewerRegeneration?.status === 'running';
-  const currentViewerRegenerateUsed = Boolean(currentViewerRegeneration?.freeUsed);
+  const currentProjectRegenerationUsage = currentProject?.regenerationUsage ?? {
+    freeLimit: 10,
+    freeUsed: 0,
+    paidUsed: 0
+  };
+  const projectFreeRegenerationsRemaining = Math.max(
+    0,
+    currentProjectRegenerationUsage.freeLimit - currentProjectRegenerationUsage.freeUsed
+  );
   const currentWorkspaceStep = currentProject?.currentStep ?? 1;
   const useLocalReviewDraft = Boolean(activeLocalDraft && currentWorkspaceStep <= 2);
   const workspaceHdrItems = useLocalReviewDraft
@@ -4608,7 +4619,7 @@ function App() {
   async function handleRegenerateResult(asset: ResultAsset) {
     if (!currentProject || isDemoMode) return;
     const regeneration = asset.regeneration;
-    if (regeneration?.status === 'running' || regeneration?.freeUsed || resultRegenerateBusy[asset.hdrItemId]) {
+    if (regeneration?.status === 'running' || resultRegenerateBusy[asset.hdrItemId]) {
       return;
     }
 
@@ -6627,7 +6638,6 @@ function App() {
                           const previewUrl = resolveMediaUrl(asset.previewUrl ?? asset.storageUrl);
                           const regeneration = asset.regeneration;
                           const isRegenerating = regeneration?.status === 'running' || Boolean(resultRegenerateBusy[asset.hdrItemId]);
-                          const regenerateUsed = Boolean(regeneration?.freeUsed);
                           const selectedColorCard = getResultColorCard(asset);
                           const normalizedSelectedColor = normalizeHex(selectedColorCard) ?? DEFAULT_REGENERATION_COLOR;
                           return (
@@ -6702,15 +6712,11 @@ function App() {
                                     onPointerDown={(event) => event.stopPropagation()}
                                   >
                                     <div className="result-card-selector">
-                                      <div className="result-card-selector-copy">
-                                        <strong>{copy.colorCardNo}</strong>
-                                        <span>{copy.resultCardColorHint}</span>
-                                      </div>
                                       <button
                                         className="result-card-eyedropper"
                                         type="button"
                                         onClick={() => void handlePickResultColor(asset)}
-                                        disabled={isRegenerating || regenerateUsed}
+                                        disabled={isRegenerating}
                                         title={copy.colorDropper}
                                         aria-label={copy.colorDropper}
                                       >
@@ -6743,22 +6749,18 @@ function App() {
                                         }}
                                         placeholder="#F2E8D8"
                                         maxLength={7}
-                                        disabled={isRegenerating || regenerateUsed}
+                                        disabled={isRegenerating}
                                       />
+                                      <button
+                                        className="result-regenerate-button"
+                                        type="button"
+                                        onClick={() => void handleRegenerateResult(asset)}
+                                        disabled={isRegenerating}
+                                        title={`${copy.regenerateResultHint} ${projectFreeRegenerationsRemaining}/${currentProjectRegenerationUsage.freeLimit}`}
+                                      >
+                                        {isRegenerating ? copy.regeneratingResult : copy.regenerateResult}
+                                      </button>
                                     </div>
-                                    <button
-                                      className="result-regenerate-button"
-                                      type="button"
-                                      onClick={() => void handleRegenerateResult(asset)}
-                                      disabled={isRegenerating || regenerateUsed}
-                                      title={copy.regenerateResultHint}
-                                    >
-                                      {isRegenerating
-                                        ? copy.regeneratingResult
-                                        : regenerateUsed
-                                          ? copy.regeneratedResult
-                                          : copy.regenerateResult}
-                                    </button>
                                   </div>
                                 )}
                               </div>
@@ -7456,13 +7458,10 @@ function App() {
                       className="result-editor-regenerate-button"
                       type="button"
                       onClick={() => void handleRegenerateResult(currentViewerAsset)}
-                      disabled={currentViewerIsRegenerating || currentViewerRegenerateUsed}
+                      disabled={currentViewerIsRegenerating}
+                      title={`${copy.regenerateResultHint} ${projectFreeRegenerationsRemaining}/${currentProjectRegenerationUsage.freeLimit}`}
                     >
-                      {currentViewerIsRegenerating
-                        ? copy.regeneratingResult
-                        : currentViewerRegenerateUsed
-                          ? copy.regeneratedResult
-                          : copy.regenerateResult}
+                      {currentViewerIsRegenerating ? copy.regeneratingResult : copy.regenerateResult}
                     </button>
                   </div>
 

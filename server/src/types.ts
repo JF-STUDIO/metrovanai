@@ -78,6 +78,12 @@ export interface ResultRegenerationState {
   errorMessage: string | null;
 }
 
+export interface ProjectRegenerationUsage {
+  freeLimit: number;
+  freeUsed: number;
+  paidUsed: number;
+}
+
 export interface ProjectGroup {
   id: string;
   index: number;
@@ -277,6 +283,7 @@ export interface ProjectRecord {
   currentStep: 1 | 2 | 3 | 4;
   pointsEstimate: number;
   pointsSpent: number;
+  regenerationUsage: ProjectRegenerationUsage;
   photoCount: number;
   groupCount: number;
   downloadReady: boolean;

@@ -1095,6 +1095,12 @@ function buildPublicJob(job: ProjectJobState | null) {
 }
 
 function buildPublicProject(project: ProjectRecord) {
+  const regenerationUsage = project.regenerationUsage ?? {
+    freeLimit: 10,
+    freeUsed: project.hdrItems.filter((hdrItem) => hdrItem.regeneration?.freeUsed).length,
+    paidUsed: 0
+  };
+
   return {
     id: project.id,
     userKey: project.userKey,
@@ -1105,6 +1111,7 @@ function buildPublicProject(project: ProjectRecord) {
     currentStep: project.currentStep,
     pointsEstimate: project.pointsEstimate,
     pointsSpent: project.pointsSpent,
+    regenerationUsage,
     photoCount: project.photoCount,
     groupCount: project.groupCount,
     downloadReady: project.downloadReady,

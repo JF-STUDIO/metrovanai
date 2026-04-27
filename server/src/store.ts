@@ -12,6 +12,7 @@ import type {
   PasswordResetTokenRecord,
   ProjectGroup,
   ProjectJobState,
+  ProjectRegenerationUsage,
   ProjectRecord,
   ResultAsset,
   SceneType,
@@ -34,6 +35,8 @@ import {
   type TrashRetentionCategory
 } from './storage.js';
 import { createMetadataProvider, MAX_RUNPOD_HDR_BATCH_SIZE, type DatabaseShape, type MetadataProvider } from './metadata.js';
+
+const DEFAULT_PROJECT_REGENERATION_FREE_LIMIT = 10;
 
 interface GroupTemplate {
   sceneType: SceneType;
@@ -116,6 +119,24 @@ function createEmptyRegenerationState() {
     startedAt: null,
     completedAt: null,
     errorMessage: null
+  };
+}
+
+function normalizeProjectRegenerationUsage(
+  usage: Partial<ProjectRegenerationUsage> | undefined,
+  hdrItems: HdrItem[] = []
+): ProjectRegenerationUsage {
+  const legacyFreeUsed = hdrItems.filter((item) => item.regeneration?.freeUsed).length;
+  const freeLimit = Math.max(
+    0,
+    Math.round(Number(usage?.freeLimit ?? DEFAULT_PROJECT_REGENERATION_FREE_LIMIT))
+  );
+  const freeUsed = Math.max(0, Math.round(Number(usage?.freeUsed ?? legacyFreeUsed)));
+  const paidUsed = Math.max(0, Math.round(Number(usage?.paidUsed ?? 0)));
+  return {
+    freeLimit,
+    freeUsed: Math.min(freeUsed, freeLimit),
+    paidUsed
   };
 }
 
@@ -739,6 +760,7 @@ export class LocalStore {
       currentStep: 1,
       pointsEstimate: 0,
       pointsSpent: 0,
+      regenerationUsage: normalizeProjectRegenerationUsage(undefined),
       photoCount: 0,
       groupCount: 1,
       downloadReady: false,
@@ -1114,6 +1136,131 @@ export class LocalStore {
     return { ok: true as const, entry, availablePoints: summary.availablePoints - requiredPoints, requiredPoints };
   }
 
+  reserveProjectRegenerationCredit(projectId: string, amountUsdPerPoint: number) {
+    const db = this.loadDb();
+    const project = db.projects.find((item) => item.id === projectId);
+    if (!project) {
+      return {
+        ok: false as const,
+        error: 'Project not found.',
+        charged: false as const,
+        free: false as const,
+        entry: null,
+        availablePoints: 0,
+        requiredPoints: 0,
+        usage: normalizeProjectRegenerationUsage(undefined)
+      };
+    }
+
+    const now = new Date().toISOString();
+    project.regenerationUsage = normalizeProjectRegenerationUsage(project.regenerationUsage, project.hdrItems);
+    if (project.regenerationUsage.freeUsed < project.regenerationUsage.freeLimit) {
+      project.regenerationUsage = {
+        ...project.regenerationUsage,
+        freeUsed: project.regenerationUsage.freeUsed + 1
+      };
+      project.updatedAt = now;
+      this.saveDb(db);
+      return {
+        ok: true as const,
+        charged: false as const,
+        free: true as const,
+        entry: null,
+        availablePoints: this.getBillingSummaryFromEntries(
+          db.billing.filter((entry) => entry.userKey === project.userKey)
+        ).availablePoints,
+        requiredPoints: 0,
+        usage: project.regenerationUsage
+      };
+    }
+
+    const requiredPoints = 1;
+    const summary = this.getBillingSummaryFromEntries(db.billing.filter((entry) => entry.userKey === project.userKey));
+    if (summary.availablePoints < requiredPoints) {
+      return {
+        ok: false as const,
+        error: `Insufficient credits. Current balance ${summary.availablePoints}, required ${requiredPoints}.`,
+        charged: false as const,
+        free: false as const,
+        entry: null,
+        availablePoints: summary.availablePoints,
+        requiredPoints,
+        usage: project.regenerationUsage
+      };
+    }
+
+    const entry: BillingEntry = {
+      id: nanoid(12),
+      userKey: project.userKey,
+      type: 'charge',
+      points: requiredPoints,
+      amountUsd: Number((requiredPoints * amountUsdPerPoint).toFixed(2)),
+      note: `Project regeneration: ${project.name}`,
+      projectId: null,
+      projectName: project.name,
+      createdAt: now
+    };
+    db.billing.unshift(entry);
+    project.regenerationUsage = {
+      ...project.regenerationUsage,
+      paidUsed: project.regenerationUsage.paidUsed + 1
+    };
+    project.updatedAt = now;
+    this.saveDb(db);
+    return {
+      ok: true as const,
+      charged: true as const,
+      free: false as const,
+      entry,
+      availablePoints: summary.availablePoints - requiredPoints,
+      requiredPoints,
+      usage: project.regenerationUsage
+    };
+  }
+
+  refundProjectRegenerationCredit(
+    projectId: string,
+    reservation: { charged: boolean; free: boolean; entry: BillingEntry | null }
+  ) {
+    const db = this.loadDb();
+    const project = db.projects.find((item) => item.id === projectId);
+    if (!project) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    project.regenerationUsage = normalizeProjectRegenerationUsage(project.regenerationUsage, project.hdrItems);
+    if (reservation.free) {
+      project.regenerationUsage = {
+        ...project.regenerationUsage,
+        freeUsed: Math.max(0, project.regenerationUsage.freeUsed - 1)
+      };
+    }
+
+    if (reservation.charged && reservation.entry) {
+      const entry: BillingEntry = {
+        id: nanoid(12),
+        userKey: project.userKey,
+        type: 'credit',
+        points: reservation.entry.points,
+        amountUsd: 0,
+        note: `Project regeneration refund: ${project.name}`,
+        projectId: null,
+        projectName: project.name,
+        createdAt: now
+      };
+      db.billing.unshift(entry);
+      project.regenerationUsage = {
+        ...project.regenerationUsage,
+        paidUsed: Math.max(0, project.regenerationUsage.paidUsed - 1)
+      };
+    }
+
+    project.updatedAt = now;
+    this.saveDb(db);
+    return project.regenerationUsage;
+  }
+
   settleProjectProcessingCredits(projectId: string, amountUsdPerPoint: number) {
     const db = this.loadDb();
     const project = db.projects.find((item) => item.id === projectId);
@@ -1470,6 +1617,7 @@ export class LocalStore {
         ...(item.regeneration ?? {})
       }
     }));
+    project.regenerationUsage = normalizeProjectRegenerationUsage(project.regenerationUsage, project.hdrItems);
     project.photoCount = project.hdrItems.reduce((sum, item) => sum + item.exposures.length, 0);
     project.groupCount = project.groups.length;
     project.pointsEstimate = project.hdrItems.length;

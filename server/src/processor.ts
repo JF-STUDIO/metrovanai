@@ -17,6 +17,11 @@ const POINT_PRICE_USD = 0.25;
 const STREAMING_UPLOAD_POLL_MS = 750;
 const STREAMING_UPLOAD_IDLE_TIMEOUT_MS = Number(process.env.METROVAN_STREAMING_UPLOAD_IDLE_TIMEOUT_MS ?? 15 * 60 * 1000);
 
+type RegenerationCreditReservation = Extract<
+  ReturnType<LocalStore['reserveProjectRegenerationCredit']>,
+  { ok: true }
+>;
+
 class AsyncQueue<T> {
   private readonly items: T[] = [];
   private readonly waiters: Array<(value: T | null) => void> = [];
@@ -208,14 +213,16 @@ export class ProjectProcessor {
       throw new Error('This result is not ready for regeneration.');
     }
 
-    if (hdrItem.regeneration?.freeUsed) {
-      throw new Error('The free regeneration for this photo has already been used.');
-    }
-
     const colorCardNo = normalizeHex(input.colorCardNo);
     if (!colorCardNo) {
       throw new Error('Invalid regeneration color.');
     }
+
+    const creditReservation = this.store.reserveProjectRegenerationCredit(projectId, POINT_PRICE_USD);
+    if (!creditReservation.ok) {
+      throw new Error(creditReservation.error || 'Insufficient credits for regeneration.');
+    }
+
     const now = new Date().toISOString();
     this.store.setHdrItemState(projectId, hdrItemId, (item) => ({
       ...item,
@@ -263,7 +270,7 @@ export class ProjectProcessor {
       }
     }));
 
-    const promise = this.runRegeneration(projectId, hdrItemId, colorCardNo).finally(() => {
+    const promise = this.runRegeneration(projectId, hdrItemId, colorCardNo, creditReservation).finally(() => {
       this.activeRegenerations.delete(activeKey);
     });
     this.activeRegenerations.set(activeKey, promise);
@@ -271,11 +278,17 @@ export class ProjectProcessor {
     return this.store.getProject(projectId);
   }
 
-  private async runRegeneration(projectId: string, hdrItemId: string, colorCardNo: string) {
+  private async runRegeneration(
+    projectId: string,
+    hdrItemId: string,
+    colorCardNo: string,
+    creditReservation: RegenerationCreditReservation
+  ) {
     const taskExecution = this.taskExecution.createRunContext();
     const initialProject = this.store.getProject(projectId);
     const initialHdrItem = initialProject?.hdrItems.find((item) => item.id === hdrItemId);
     if (!initialProject || !initialHdrItem) {
+      this.store.refundProjectRegenerationCredit(projectId, creditReservation);
       return;
     }
 
@@ -395,6 +408,7 @@ export class ProjectProcessor {
         }
       }));
     } catch (error) {
+      this.store.refundProjectRegenerationCredit(projectId, creditReservation);
       const message = error instanceof Error ? error.message : String(error);
       const completedAt = new Date().toISOString();
       this.store.setHdrItemState(projectId, hdrItemId, (item) => ({

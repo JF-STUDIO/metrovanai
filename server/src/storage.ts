@@ -497,6 +497,7 @@ export class LocalDiskStorageProvider implements StorageProvider {
       currentStep: 1,
       pointsEstimate: 0,
       pointsSpent: 0,
+      regenerationUsage: { freeLimit: 10, freeUsed: 0, paidUsed: 0 },
       photoCount: 0,
       groupCount: 0,
       downloadReady: false,
