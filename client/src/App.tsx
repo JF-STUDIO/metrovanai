@@ -596,6 +596,7 @@ const UI_TEXT = {
     clickToView: '点击查看大图',
     colorCardNo: '目标色卡',
     colorDropper: '吸取其他墙面颜色更改',
+    colorDropperCompact: '吸取颜色',
     colorDropperUnsupported: '当前浏览器不支持吸管，请手动输入 HEX 颜色。',
     colorDropperFailed: '吸取颜色失败，请重试或手动输入。',
     regeneratePanelTitle: '重新生成',
@@ -608,6 +609,7 @@ const UI_TEXT = {
     deleteColorCardConfirm: (color: string) => `删除色卡 ${color}？`,
     colorCardDeleted: '色卡已删除。',
     regenerateResult: '重新生成',
+    regenerateResultCompact: '生成',
     regeneratingResult: '生成中',
     regeneratedResult: '继续生成',
     regenerateResultHint: '每个项目前 10 次免费，之后每次 1 积分。',
@@ -961,6 +963,7 @@ const UI_TEXT = {
     clickToView: 'Click to view large image',
     colorCardNo: 'Target color',
     colorDropper: 'Pick another wall color',
+    colorDropperCompact: 'Pick color',
     colorDropperUnsupported: 'This browser does not support the eyedropper. Enter a HEX color manually.',
     colorDropperFailed: 'Color picking failed. Try again or enter HEX manually.',
     regeneratePanelTitle: 'Regenerate',
@@ -973,6 +976,7 @@ const UI_TEXT = {
     deleteColorCardConfirm: (color: string) => `Delete color card ${color}?`,
     colorCardDeleted: 'Color card deleted.',
     regenerateResult: 'Regenerate',
+    regenerateResultCompact: 'Run',
     regeneratingResult: 'Generating',
     regeneratedResult: 'Regenerate again',
     regenerateResultHint: 'Each project includes 10 free regenerations; later runs cost 1 credit each.',
@@ -1820,6 +1824,16 @@ function normalizeHex(value: string) {
   const trimmed = value.trim().replace(/^#/, '').toUpperCase();
   if (!trimmed || !/^[0-9A-F]{6}$/.test(trimmed)) return null;
   return `#${trimmed}`;
+}
+
+function normalizeHexDraft(value: string) {
+  const body = value
+    .trim()
+    .toUpperCase()
+    .replace(/#/g, '')
+    .replace(/[^0-9A-F]/g, '')
+    .slice(0, 6);
+  return body ? `#${body}` : '';
 }
 
 function isStrongPasswordInput(password: string) {
@@ -6725,7 +6739,7 @@ function App() {
                                           <path d="M14.8 4.2l5 5-2.1 2.1-1.1-1.1-6.5 6.5H7.8l-2.4 2.4-1.5-1.5 2.4-2.4v-2.3l6.5-6.5-1.1-1.1 2.1-2.1z" />
                                           <path d="M8.4 14.8l5.7-5.7.8.8-5.7 5.7H8.4v-.8z" />
                                         </svg>
-                                        <em>{copy.colorDropper}</em>
+                                        <em>{copy.colorDropperCompact}</em>
                                       </button>
                                       <input
                                         className="result-card-hex-input"
@@ -6735,7 +6749,7 @@ function App() {
                                         onChange={(event) =>
                                           setResultColorCards((current) => ({
                                             ...current,
-                                            [asset.hdrItemId]: event.target.value
+                                            [asset.hdrItemId]: normalizeHexDraft(event.target.value)
                                           }))
                                         }
                                         onBlur={(event) => {
@@ -6758,7 +6772,7 @@ function App() {
                                         disabled={isRegenerating}
                                         title={`${copy.regenerateResultHint} ${projectFreeRegenerationsRemaining}/${currentProjectRegenerationUsage.freeLimit}`}
                                       >
-                                        {isRegenerating ? copy.regeneratingResult : copy.regenerateResult}
+                                        {isRegenerating ? copy.regeneratingResult : copy.regenerateResultCompact}
                                       </button>
                                     </div>
                                   </div>
@@ -7485,7 +7499,7 @@ function App() {
                         onChange={(event) =>
                           setResultColorCards((current) => ({
                             ...current,
-                            [currentViewerAsset.hdrItemId]: event.target.value
+                            [currentViewerAsset.hdrItemId]: normalizeHexDraft(event.target.value)
                           }))
                         }
                         onBlur={(event) => {

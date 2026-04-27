@@ -1564,14 +1564,16 @@ img {
   align-items: center;
   justify-content: flex-start;
   pointer-events: auto;
+  max-width: calc(100% - 1.44rem);
 }
 
 .result-card-selector {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 0.38rem;
   min-width: 0;
   max-width: 100%;
+  width: fit-content;
   padding: 0.34rem 0.42rem;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
@@ -1582,12 +1584,13 @@ img {
     0 16px 38px rgba(0, 0, 0, 0.34),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
   backdrop-filter: blur(16px);
+  overflow: hidden;
 }
 
 .result-card-eyedropper {
   position: relative;
   min-width: 0;
-  max-width: 13.4rem;
+  max-width: 8.65rem;
   height: 2.04rem;
   display: inline-flex;
   align-items: center;
@@ -1602,7 +1605,7 @@ img {
   font-size: 0.66rem;
   font-weight: 900;
   overflow: hidden;
-  flex: 1 1 auto;
+  flex: 1 1 7.8rem;
   box-shadow:
     0 0 0 1px rgba(124, 232, 255, 0.1),
     0 10px 22px rgba(0, 0, 0, 0.2);
@@ -1673,10 +1676,12 @@ img {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 4.4rem;
 }
 
 .result-card-hex-input {
-  width: 5.65rem;
+  width: 5.15rem;
+  min-width: 4.35rem;
   height: 2.04rem;
   border: 0;
   color: #fff;
@@ -1688,6 +1693,8 @@ img {
   letter-spacing: 0.02em;
   text-transform: uppercase;
   outline: none;
+  flex: 0 1 5.15rem;
+  box-sizing: border-box;
 }
 
 .result-card-hex-input:focus {
@@ -1697,7 +1704,7 @@ img {
 
 .result-regenerate-button {
   min-height: 2rem;
-  padding: 0.42rem 0.68rem;
+  padding: 0.42rem 0.58rem;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
   color: #0b0b0c;
@@ -1708,7 +1715,10 @@ img {
   font-size: 0.72rem;
   font-weight: 900;
   white-space: nowrap;
-  flex: 0 0 auto;
+  flex: 0 1 4.25rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .result-regenerate-button:disabled {
@@ -10985,23 +10995,26 @@ body {
   }
 
   .result-card-eyedropper {
-    max-width: 9.6rem;
+    max-width: 7.4rem;
     height: 1.92rem;
     padding-right: 0.46rem;
   }
 
   .result-card-eyedropper em {
     font-size: 0.6rem;
+    max-width: 3.6rem;
   }
 
   .result-card-hex-input {
-    width: 5.15rem;
+    width: 4.8rem;
+    min-width: 4.2rem;
     height: 1.92rem;
   }
 
   .result-regenerate-button {
     min-height: 1.92rem;
-    padding-inline: 0.54rem;
+    padding-inline: 0.48rem;
+    flex-basis: 3.75rem;
   }
 
   .modal-backdrop {
