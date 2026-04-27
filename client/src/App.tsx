@@ -504,7 +504,7 @@ const UI_TEXT = {
     studioGuideStep2Title: '导入照片',
     studioGuideStep2Body: '把 RAW 或 JPG 拖进上传区。浏览器会先读取缩略图和相机数据，不会立刻上传原片。',
     studioGuideStep3Title: '检查 HDR 分组',
-    studioGuideStep3Body: '系统会按曝光自动分组。如果有误，可以拆成单张、合并到其他 HDR 组，或继续添加照片。',
+    studioGuideStep3Body: '系统会按曝光自动分组。确认无误后继续上传处理，也可以继续添加照片。',
     studioGuideStep4Title: '确认发送',
     studioGuideStep4Body: '确认分组后再上传原图。上传完成并进入自动处理后，可以关闭浏览器。',
     studioGuideStep5Title: '查看结果',
@@ -547,8 +547,8 @@ const UI_TEXT = {
     processFlow: '处理流程',
     processFlowHint: '',
     waitingProcessing: '等待处理',
-    waitingProcessingHint: '上传后会在这里显示整体处理进度。',
-    processingProgress: '处理进度',
+    waitingProcessingHint: '上传后会在这里显示处理状态。',
+    processingProgress: '状态',
     estimatedPoints: '预计积分',
     uploadPhotos: '把照片拖到这里',
     uploadPhotosHint: '先在本地生成预览并自动分组，确认后再上传原图。',
@@ -6749,6 +6749,7 @@ function App() {
                                         type="text"
                                         inputMode="text"
                                         value={selectedColorCard}
+                                        maxLength={7}
                                         onChange={(event) =>
                                           setResultColorCards((current) => ({
                                             ...current,
@@ -6765,7 +6766,6 @@ function App() {
                                           }
                                         }}
                                         placeholder="#F2E8D8"
-                                        maxLength={7}
                                         disabled={isRegenerating}
                                       />
                                       <button
