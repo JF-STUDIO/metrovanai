@@ -24,6 +24,16 @@ interface ObjectStorageConfig {
   maxFileBytes: number;
 }
 
+export type PersistentObjectCategory = 'originals' | 'previews' | 'hdr' | 'results' | 'work';
+
+const PERSISTENT_CATEGORY_FOLDERS: Record<PersistentObjectCategory, string> = {
+  originals: '原片',
+  previews: '预览图',
+  hdr: 'HDR完的',
+  results: '处理完的',
+  work: '临时文件'
+};
+
 export interface DirectObjectUploadTarget {
   id: string;
   originalName: string;
@@ -121,6 +131,30 @@ function encodeObjectKey(value: string) {
   return value.split('/').map(encodePathSegment).join('/');
 }
 
+function normalizeStorageKey(value: string | null | undefined) {
+  return String(value ?? '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '');
+}
+
+function buildUserFolder(input: { userKey: string; userDisplayName?: string | null }) {
+  const userKey = sanitizeSegment(input.userKey) || 'user';
+  const displayName = sanitizeSegment(input.userDisplayName ?? '');
+  if (!displayName || displayName.toLowerCase() === userKey.toLowerCase()) {
+    return userKey;
+  }
+  return `${displayName}-${userKey}`;
+}
+
+function buildProjectFolder(input: { projectId: string; projectName?: string | null }) {
+  const projectId = sanitizeSegment(input.projectId) || 'project';
+  const projectName = sanitizeSegment(input.projectName ?? '');
+  if (!projectName || projectName.toLowerCase() === projectId.toLowerCase()) {
+    return projectId;
+  }
+  return `${projectName}-${projectId}`;
+}
+
 function getObjectUrl(config: ObjectStorageConfig, key: string) {
   const endpointUrl = new URL(config.endpoint);
   const encodedKey = encodeObjectKey(key);
@@ -142,7 +176,7 @@ function getSigningKey(config: ObjectStorageConfig, dateStamp: string) {
   return hmac(serviceKey, 'aws4_request');
 }
 
-function createPresignedUrl(config: ObjectStorageConfig, method: 'GET' | 'PUT', key: string, expiresSeconds: number) {
+function createPresignedUrl(config: ObjectStorageConfig, method: 'GET' | 'PUT' | 'DELETE', key: string, expiresSeconds: number) {
   const now = new Date();
   const amzDate = toAmzDate(now);
   const dateStamp = amzDate.slice(0, 8);
@@ -168,7 +202,54 @@ function createPresignedUrl(config: ObjectStorageConfig, method: 'GET' | 'PUT', 
   return url.toString();
 }
 
-function buildIncomingStorageKey(input: { userKey: string; projectId: string; originalName: string }) {
+function buildIncomingProjectPrefix(
+  config: ObjectStorageConfig,
+  input: { userKey: string; projectId: string; userDisplayName?: string | null; projectName?: string | null }
+) {
+  return toUnixPath(
+    path.posix.join(
+      config.incomingPrefix,
+      buildUserFolder(input),
+      buildProjectFolder(input),
+      PERSISTENT_CATEGORY_FOLDERS.originals,
+      ''
+    )
+  );
+}
+
+function buildLegacyIncomingProjectPrefix(config: ObjectStorageConfig, input: { userKey: string; projectId: string }) {
+  return toUnixPath(
+    path.posix.join(
+      config.incomingPrefix,
+      sanitizeSegment(input.userKey) || 'user',
+      sanitizeSegment(input.projectId) || 'project',
+      ''
+    )
+  );
+}
+
+function hasNormalizedIncomingProjectIdentity(
+  config: ObjectStorageConfig,
+  input: { userKey: string; projectId: string; storageKey: string }
+) {
+  const parts = normalizeStorageKey(input.storageKey).split('/').filter(Boolean);
+  const userKey = sanitizeSegment(input.userKey) || 'user';
+  const projectId = sanitizeSegment(input.projectId) || 'project';
+  return (
+    parts[0] === config.incomingPrefix &&
+    (parts[1] === userKey || parts[1]?.endsWith(`-${userKey}`)) &&
+    (parts[2] === projectId || parts[2]?.endsWith(`-${projectId}`)) &&
+    parts[3] === PERSISTENT_CATEGORY_FOLDERS.originals
+  );
+}
+
+function buildIncomingStorageKey(input: {
+  userKey: string;
+  projectId: string;
+  userDisplayName?: string | null;
+  projectName?: string | null;
+  originalName: string;
+}) {
   const config = getObjectStorageConfig({ requireDirectUpload: true });
   if (!config) {
     throw new Error('Direct object upload is not configured.');
@@ -177,9 +258,7 @@ function buildIncomingStorageKey(input: { userKey: string; projectId: string; or
   const fileName = sanitizeSegment(path.basename(input.originalName.replace(/\\/g, '/'))) || 'source';
   return toUnixPath(
     path.posix.join(
-      config.incomingPrefix,
-      sanitizeSegment(input.userKey) || 'user',
-      sanitizeSegment(input.projectId) || 'project',
+      buildIncomingProjectPrefix(config, input),
       nanoid(12),
       fileName
     )
@@ -194,22 +273,27 @@ export function assertDirectObjectUploadConfigured() {
   return config;
 }
 
-export function isDirectUploadKeyForProject(input: { userKey: string; projectId: string; storageKey: string }) {
+export function isDirectUploadKeyForProject(input: {
+  userKey: string;
+  projectId: string;
+  userDisplayName?: string | null;
+  projectName?: string | null;
+  storageKey: string;
+}) {
   const config = assertDirectObjectUploadConfigured();
-  const prefix = toUnixPath(
-    path.posix.join(
-      config.incomingPrefix,
-      sanitizeSegment(input.userKey) || 'user',
-      sanitizeSegment(input.projectId) || 'project',
-      ''
-    )
+  const storageKey = normalizeStorageKey(input.storageKey);
+  const prefixes = [buildIncomingProjectPrefix(config, input), buildLegacyIncomingProjectPrefix(config, input)];
+  return (
+    prefixes.some((prefix) => storageKey === prefix.slice(0, -1) || storageKey.startsWith(prefix)) ||
+    hasNormalizedIncomingProjectIdentity(config, { ...input, storageKey })
   );
-  return input.storageKey === prefix.slice(0, -1) || input.storageKey.startsWith(prefix);
 }
 
 export function createDirectObjectUploadTarget(input: {
   userKey: string;
   projectId: string;
+  userDisplayName?: string | null;
+  projectName?: string | null;
   originalName: string;
   mimeType: string;
   size: number;
@@ -247,7 +331,9 @@ export function createObjectDownloadUrl(storageKey: string, expiresSeconds?: num
 export function createPersistentObjectKey(input: {
   userKey: string;
   projectId: string;
-  category: 'originals' | 'previews' | 'hdr' | 'results' | 'work';
+  userDisplayName?: string | null;
+  projectName?: string | null;
+  category: PersistentObjectCategory;
   fileName: string;
 }) {
   const config = getObjectStorageConfig();
@@ -259,13 +345,23 @@ export function createPersistentObjectKey(input: {
   return toUnixPath(
     path.posix.join(
       config.persistentPrefix,
-      sanitizeSegment(input.userKey) || 'user',
-      sanitizeSegment(input.projectId) || 'project',
-      sanitizeSegment(input.category),
-      nanoid(10),
-      fileName
+      buildUserFolder(input),
+      buildProjectFolder(input),
+      PERSISTENT_CATEGORY_FOLDERS[input.category],
+      `${nanoid(10)}-${fileName}`
     )
   );
+}
+
+export function isConfiguredObjectStorageKey(storageKey: string | null | undefined) {
+  const config = getObjectStorageConfig();
+  if (!config || !storageKey) {
+    return false;
+  }
+
+  const normalizedKey = normalizeStorageKey(storageKey);
+  const prefixes = [config.incomingPrefix, config.persistentPrefix].filter(Boolean);
+  return prefixes.some((prefix) => normalizedKey === prefix || normalizedKey.startsWith(`${prefix}/`));
 }
 
 export async function uploadFileToObjectStorage(input: {
@@ -307,7 +403,9 @@ export async function uploadFileToObjectStorage(input: {
 export async function mirrorLocalFileToObjectStorage(input: {
   userKey: string;
   projectId: string;
-  category: 'originals' | 'previews' | 'hdr' | 'results' | 'work';
+  userDisplayName?: string | null;
+  projectName?: string | null;
+  category: PersistentObjectCategory;
   sourcePath: string;
   fileName?: string;
   contentType?: string;
@@ -319,6 +417,8 @@ export async function mirrorLocalFileToObjectStorage(input: {
   const storageKey = createPersistentObjectKey({
     userKey: input.userKey,
     projectId: input.projectId,
+    userDisplayName: input.userDisplayName,
+    projectName: input.projectName,
     category: input.category,
     fileName: input.fileName ?? path.basename(input.sourcePath)
   });
@@ -327,6 +427,47 @@ export async function mirrorLocalFileToObjectStorage(input: {
     storageKey,
     contentType: input.contentType
   });
+}
+
+export async function deleteObjectFromStorage(storageKey: string) {
+  const config = getObjectStorageConfig();
+  if (!config || !isConfiguredObjectStorageKey(storageKey)) {
+    return false;
+  }
+
+  const deleteUrl = createPresignedUrl(config, 'DELETE', normalizeStorageKey(storageKey), config.uploadExpiresSeconds);
+  const response = await fetch(deleteUrl, { method: 'DELETE' });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Object delete failed: ${response.status} ${await response.text().catch(() => '')}`.trim());
+  }
+  return true;
+}
+
+export async function deleteObjectsFromStorage(storageKeys: Iterable<string | null | undefined>) {
+  const uniqueKeys = Array.from(
+    new Set(
+      Array.from(storageKeys)
+        .map((key) => normalizeStorageKey(key))
+        .filter((key) => key && isConfiguredObjectStorageKey(key))
+    )
+  );
+  const failed: Array<{ storageKey: string; error: string }> = [];
+  let deleted = 0;
+
+  for (const storageKey of uniqueKeys) {
+    try {
+      if (await deleteObjectFromStorage(storageKey)) {
+        deleted += 1;
+      }
+    } catch (error) {
+      failed.push({
+        storageKey,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  return { deleted, failed };
 }
 
 export async function downloadObjectToFile(storageKey: string, targetPath: string, options?: { overwrite?: boolean }) {

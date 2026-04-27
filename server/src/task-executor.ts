@@ -8,6 +8,7 @@ import { MAX_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
 import {
   createObjectDownloadUrl,
   createPersistentObjectKey,
+  deleteObjectFromStorage,
   isObjectStorageConfigured,
   mirrorLocalFileToObjectStorage
 } from './object-storage.js';
@@ -567,6 +568,8 @@ function createLocalHdrMergeContext(store: LocalStore) {
     const mirrored = await mirrorLocalFileToObjectStorage({
       userKey: project.userKey,
       projectId: project.id,
+      userDisplayName: project.userDisplayName,
+      projectName: project.name,
       category: 'hdr',
       sourcePath: mergedPath,
       fileName: mergedFileName,
@@ -699,6 +702,8 @@ async function executeRunningHubWorkflowFromFile(input: {
   const mirrored = await mirrorLocalFileToObjectStorage({
     userKey: input.project.userKey,
     projectId: input.project.id,
+    userDisplayName: input.project.userDisplayName,
+    projectName: input.project.name,
     category: 'results',
     sourcePath: resultPath,
     fileName: path.basename(resultPath),
@@ -810,6 +815,8 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
         ? await mirrorLocalFileToObjectStorage({
             userKey: project.userKey,
             projectId: project.id,
+            userDisplayName: project.userDisplayName,
+            projectName: project.name,
             category: 'work',
             sourcePath: mergedPath,
             fileName: mergedFileName,
@@ -929,6 +936,8 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
         const mirrored = await mirrorLocalFileToObjectStorage({
           userKey: project.userKey,
           projectId: project.id,
+          userDisplayName: project.userDisplayName,
+          projectName: project.name,
           category: 'results',
           sourcePath: resultPath,
           fileName: path.basename(resultPath),
@@ -1048,6 +1057,8 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       const mirrored = await mirrorLocalFileToObjectStorage({
         userKey: input.project.userKey,
         projectId: input.project.id,
+        userDisplayName: input.project.userDisplayName,
+        projectName: input.project.name,
         category: input.category,
         sourcePath: input.filePath,
         fileName: input.fileName,
@@ -1154,6 +1165,8 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         const mirrored = await mirrorLocalFileToObjectStorage({
           userKey: input.project.userKey,
           projectId: input.project.id,
+          userDisplayName: input.project.userDisplayName,
+          projectName: input.project.name,
           category: 'results',
           sourcePath: input.resultPath,
           fileName: path.basename(input.resultPath),
@@ -1209,6 +1222,8 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       const outputStorageKey = createPersistentObjectKey({
         userKey: project.userKey,
         projectId: project.id,
+        userDisplayName: project.userDisplayName,
+        projectName: project.name,
         category: shouldRunPostWorkflow ? 'work' : 'results',
         fileName: runpodStageFileName
       });
@@ -1313,7 +1328,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         });
 
         if (shouldRunPostWorkflow) {
-          return await executePostWorkflow({
+          const finalArtifact = await executePostWorkflow({
             project,
             hdrItem,
             inputPath: runpodStagePath,
@@ -1321,6 +1336,12 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
             onProgress,
             options
           });
+          if (resultStorageKey) {
+            await deleteObjectFromStorage(resultStorageKey).catch((error) =>
+              console.warn('Could not delete temporary Runpod stage object', error)
+            );
+          }
+          return finalArtifact;
         }
 
         return {
@@ -1455,6 +1476,8 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
           const outputStorageKey = createPersistentObjectKey({
             userKey: project.userKey,
             projectId: project.id,
+            userDisplayName: project.userDisplayName,
+            projectName: project.name,
             category: postWorkflowEnabled ? 'work' : 'results',
             fileName: runpodStageFileName
           });
@@ -1573,7 +1596,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
             }
 
             try {
-              await writeResultArtifact({
+              const stageStorageKey = await writeResultArtifact({
                 project,
                 jobId: `${jobId}-${batchItem.hdrItem.id}`,
                 result: artifact,
@@ -1590,6 +1613,11 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
                   onProgress: (update) => onProgress?.({ ...update, hdrItemId: batchItem.hdrItem.id }),
                   options
                 });
+                if (stageStorageKey) {
+                  await deleteObjectFromStorage(stageStorageKey).catch((error) =>
+                    console.warn('Could not delete temporary Runpod batch stage object', error)
+                  );
+                }
                 return { hdrItemId: batchItem.hdrItem.id, artifact: finalArtifact };
               }
 

@@ -3314,6 +3314,8 @@ app.post('/api/projects/:id/direct-upload/targets', (req, res) => {
       return createDirectObjectUploadTarget({
         userKey: user.userKey,
         projectId,
+        userDisplayName: project.userDisplayName,
+        projectName: project.name,
         originalName: normalizeUploadedFileName(file.originalName),
         mimeType: file.mimeType,
         size: file.size
@@ -3367,7 +3369,15 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
       if (!isSupportedUploadFileName(file.originalName)) {
         throw new Error('Only RAW and JPG files are supported.');
       }
-      if (!isDirectUploadKeyForProject({ userKey: user.userKey, projectId, storageKey: file.storageKey })) {
+      if (
+        !isDirectUploadKeyForProject({
+          userKey: user.userKey,
+          projectId,
+          userDisplayName: project.userDisplayName,
+          projectName: project.name,
+          storageKey: file.storageKey
+        })
+      ) {
         throw new Error('Direct upload key does not belong to this project.');
       }
 

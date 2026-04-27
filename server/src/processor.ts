@@ -12,6 +12,7 @@ import {
   type WorkflowExecutionProgress,
   type TaskExecutionRunContext
 } from './task-executor.js';
+import { deleteObjectsFromStorage, isConfiguredObjectStorageKey } from './object-storage.js';
 
 const POINT_PRICE_USD = 0.25;
 const STREAMING_UPLOAD_POLL_MS = 750;
@@ -897,7 +898,36 @@ export class ProjectProcessor {
     );
   }
 
-  private completeWorkflowItem(projectId: string, hdrItem: HdrItem, result: WorkflowExecutionArtifact) {
+  private collectExposureObjectKeys(item: HdrItem) {
+    return item.exposures.flatMap((exposure) => [exposure.storageKey, exposure.previewKey]).filter((key): key is string =>
+      isConfiguredObjectStorageKey(key)
+    );
+  }
+
+  private async cleanupCompletedSourceObjects(projectId: string, completedHdrItemId: string) {
+    const project = this.store.getProject(projectId);
+    const completedItem = project?.hdrItems.find((item) => item.id === completedHdrItemId);
+    if (!project || !completedItem || !this.isHdrItemCompleted(completedItem)) {
+      return;
+    }
+
+    const protectedKeys = new Set(
+      project.hdrItems
+        .filter((item) => item.id !== completedHdrItemId && !this.isHdrItemCompleted(item))
+        .flatMap((item) => this.collectExposureObjectKeys(item))
+    );
+    const keysToDelete = this.collectExposureObjectKeys(completedItem).filter((key) => !protectedKeys.has(key));
+    if (!keysToDelete.length) {
+      return;
+    }
+
+    const cleanup = await deleteObjectsFromStorage(keysToDelete);
+    if (cleanup.failed.length) {
+      console.warn('R2 source cleanup skipped some objects', cleanup.failed);
+    }
+  }
+
+  private async completeWorkflowItem(projectId: string, hdrItem: HdrItem, result: WorkflowExecutionArtifact) {
     const resultStorageKey = result.resultStorageKey ?? this.store.toStorageKey(result.resultPath);
     this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
       ...entry,
@@ -927,6 +957,7 @@ export class ProjectProcessor {
         currentNodePercent: 100
       }
     }));
+    await this.cleanupCompletedSourceObjects(projectId, hdrItem.id);
   }
 
   private failWorkflowItem(projectId: string, hdrItem: HdrItem, message: string) {
@@ -976,7 +1007,7 @@ export class ProjectProcessor {
           continue;
         }
         if (result.artifact) {
-          this.completeWorkflowItem(projectId, hdrItem, result.artifact);
+          await this.completeWorkflowItem(projectId, hdrItem, result.artifact);
         } else {
           this.failWorkflowItem(projectId, hdrItem, result.errorMessage || 'Cloud processing did not return a result.');
         }
