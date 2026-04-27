@@ -1754,6 +1754,9 @@ function getProjectStatusLabel(project: ProjectRecord, locale: UiLocale) {
   if (project.status === 'uploading') return copy.status.uploading;
   if (project.status === 'review') return copy.status.review;
   if (project.status === 'importing') return copy.status.importing;
+  if (project.status === 'failed' && project.hdrItems.some((item) => isHdrItemProcessing(item.status))) {
+    return copy.status.processing;
+  }
   if (project.status === 'failed') return copy.status.failed;
   const label = copy.stepLabels[project.currentStep - 1] ?? copy.stepLabels[0];
   return locale === 'en' ? `Step ${project.currentStep} / ${label}` : `第 ${project.currentStep} 步 / ${label}`;
@@ -2451,13 +2454,21 @@ function App() {
   const showAdvancedGroupingControls = false;
   const showProcessingStepContent = currentWorkspaceStep === 3;
   const showProcessingUploadProgress = showProcessingStepContent && uploadActive && uploadMode === 'originals';
+  const hasActiveProcessingItems = workspaceHdrItems.some((item) => isHdrItemProcessing(item.status));
+  const jobFailedWhileItemsActive = Boolean(currentProject?.job?.status === 'failed' && hasActiveProcessingItems);
   const showRetryProcessingAction =
-    Boolean(currentProject && currentProject.status === 'failed') && showProcessingStepContent && !uploadActive;
+    Boolean(currentProject && currentProject.status === 'failed' && !hasActiveProcessingItems) &&
+    showProcessingStepContent &&
+    !uploadActive;
   const processingPanelTitle = showProcessingUploadProgress
     ? copy.uploadOriginalsTitle
+    : jobFailedWhileItemsActive
+      ? copy.processingGroupsTitle
     : currentProject?.job?.label || copy.waitingProcessing;
   const processingPanelDetail = showProcessingUploadProgress
     ? `${uploadProgressLabel} · ${copy.uploadOriginalsDoNotClose}`
+    : jobFailedWhileItemsActive
+      ? copy.processingGroupsHint
     : currentProject?.job?.detail || copy.waitingProcessingHint;
   const showResultsStepContent = currentWorkspaceStep === 4 && hasResultContent;
   const adminTotals = useMemo(
