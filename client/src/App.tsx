@@ -2409,8 +2409,16 @@ function App() {
   const uploadProgressLabel = formatUploadProgressLabel(uploadSnapshot, uploadPercent, copy);
   const uploadProgressWidth = uploadPercent > 0 ? uploadPercent : 6;
   const showReviewStepContent = (currentWorkspaceStep === 2 || currentWorkspaceStep === 3) && hasReviewContent;
-  const showReviewActions = !isDemoMode && currentWorkspaceStep === 2;
-  const showProcessingGroupGrid = !isDemoMode && currentWorkspaceStep === 3 && hasReviewContent;
+  const projectStatus = currentProject?.status;
+  const showProcessingGroupGrid =
+    !isDemoMode &&
+    hasReviewContent &&
+    (currentWorkspaceStep === 3 ||
+      projectStatus === 'uploading' ||
+      projectStatus === 'processing' ||
+      projectStatus === 'failed');
+  const showReviewActions = !isDemoMode && currentWorkspaceStep === 2 && !showProcessingGroupGrid;
+  const canEditHdrGrouping = !isDemoMode && currentWorkspaceStep === 2 && !uploadActive && !showProcessingGroupGrid;
   const showReviewLocalImportProgress = showReviewStepContent && uploadActive && uploadMode === 'local';
   const showReviewUploadProgress =
     currentWorkspaceStep === 2 && uploadActive && uploadMode === 'originals' && Boolean(activeLocalDraft);
@@ -6484,7 +6492,7 @@ function App() {
                                   const hdrItemProcessing = showProcessingGroupGrid && isHdrItemProcessing(hdrItem.status);
                                   const hdrItemCompleted = showProcessingGroupGrid && hdrItem.status === 'completed';
                                   const hdrItemFailed = showProcessingGroupGrid && hdrItem.status === 'error';
-                                  const localReviewState = activeLocalDraft ? getHdrLocalReviewState(hdrItem) : null;
+                                  const localReviewState = activeLocalDraft && canEditHdrGrouping ? getHdrLocalReviewState(hdrItem) : null;
                                   const localReviewCopy =
                                     localReviewState && localReviewState !== 'normal'
                                       ? getLocalReviewCopy(localReviewState, locale)
@@ -6516,7 +6524,7 @@ function App() {
                                             <strong>{copy.hdrItemProcessing}</strong>
                                           </div>
                                         )}
-                                        {!showProcessingGroupGrid && (
+                                        {canEditHdrGrouping && (
                                           <div className="asset-overlay">
                                             <span className="asset-index">{hdrItem.index}</span>
                                             <span className="asset-count">{selectedIndex + 1}/{hdrItem.exposures.length}</span>
@@ -6524,13 +6532,12 @@ function App() {
                                               className="asset-delete"
                                               type="button"
                                               onClick={() => void handleDeleteHdr(hdrItem)}
-                                              disabled={showProcessingGroupGrid}
                                             >
                                               {copy.delete}
                                             </button>
                                           </div>
                                         )}
-                                        {hdrItem.exposures.length > 1 && !showProcessingGroupGrid && (
+                                        {hdrItem.exposures.length > 1 && canEditHdrGrouping && (
                                           <>
                                             <button className="viewer-arrow left" type="button" onClick={() => void handleShiftExposure(hdrItem, -1)}>
                                               {'<'}
@@ -6545,13 +6552,13 @@ function App() {
                                         <strong>{selectedExposure?.originalName ?? hdrItem.title}</strong>
                                         {!showProcessingGroupGrid && <span>{hdrItem.statusText}</span>}
                                         {showProcessingGroupGrid && hdrItemFailed && <span>{getHdrItemStatusLabel(hdrItem, locale)}</span>}
-                                        {!showProcessingGroupGrid && localReviewCopy && (
+                                        {canEditHdrGrouping && localReviewCopy && (
                                           <div className={`asset-local-review ${localReviewState}`}>
                                             <strong>{localReviewCopy.title}</strong>
                                             <span>{localReviewCopy.hint}</span>
                                           </div>
                                         )}
-                                        {activeLocalDraft && !showProcessingGroupGrid && workspaceHdrItems.length > 1 && (
+                                        {activeLocalDraft && canEditHdrGrouping && workspaceHdrItems.length > 1 && (
                                           <div className="hdr-manual-tools">
                                             <span>{copy.mergeHdrGroup}</span>
                                             <select
@@ -6574,7 +6581,7 @@ function App() {
                                             </select>
                                           </div>
                                         )}
-                                        {activeLocalDraft && !showProcessingGroupGrid && hdrItem.exposures.length > 1 && (
+                                        {activeLocalDraft && canEditHdrGrouping && hdrItem.exposures.length > 1 && (
                                           <button
                                             className="ghost-button compact hdr-split-button"
                                             type="button"
