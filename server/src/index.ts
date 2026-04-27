@@ -39,6 +39,7 @@ import { MAX_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
 import {
   assertDirectObjectUploadConfigured,
   createDirectObjectUploadTarget,
+  deleteObjectsFromStorage,
   downloadDirectObjectToFile,
   getDirectObjectUploadCapabilities,
   isDirectUploadKeyForProject,
@@ -1127,6 +1128,37 @@ function buildPublicProject(project: ProjectRecord) {
 
 function respondWithProject(res: express.Response, project: ProjectRecord, statusCode = 200) {
   res.status(statusCode).json({ project: buildPublicProject(project) });
+}
+
+function collectProjectObjectStorageKeys(project: ProjectRecord) {
+  const keys = new Set<string>();
+  const addKey = (key: string | null | undefined) => {
+    if (key) {
+      keys.add(key);
+    }
+  };
+
+  for (const hdrItem of project.hdrItems) {
+    addKey(hdrItem.mergedKey);
+    addKey(hdrItem.resultKey);
+    for (const exposure of hdrItem.exposures) {
+      addKey(exposure.storageKey);
+      addKey(exposure.previewKey);
+    }
+  }
+  for (const asset of project.resultAssets) {
+    addKey(asset.storageKey);
+  }
+
+  return Array.from(keys);
+}
+
+async function deleteProjectObjectStorage(project: ProjectRecord) {
+  const cleanup = await deleteObjectsFromStorage(collectProjectObjectStorageKeys(project));
+  if (cleanup.failed.length) {
+    console.warn(`R2 cleanup skipped ${cleanup.failed.length} objects for project ${project.id}`, cleanup.failed);
+  }
+  return cleanup;
 }
 
 function sendProtectedStorageFile(res: express.Response, filePath: string | null, storageKey?: string | null) {
@@ -2390,7 +2422,7 @@ app.patch('/api/admin/users/:id', (req, res) => {
   res.json({ user: buildAdminUserRecord(updated) });
 });
 
-app.delete('/api/admin/users/:id', (req, res) => {
+app.delete('/api/admin/users/:id', async (req, res) => {
   const actor = requireAdminApiAccess(req, res);
   if (!actor) {
     return;
@@ -2413,11 +2445,17 @@ app.delete('/api/admin/users/:id', (req, res) => {
     return;
   }
 
+  const userProjects = store.listProjects(user.userKey);
+  const cloudCleanups = await Promise.all(userProjects.map((project) => deleteProjectObjectStorage(project)));
   const deletion = store.deleteUser(user.id);
   if (!deletion) {
     res.status(404).json({ error: 'User not found.' });
     return;
   }
+  const cloudCleanup = {
+    deleted: cloudCleanups.reduce((sum, cleanup) => sum + cleanup.deleted, 0),
+    failed: cloudCleanups.flatMap((cleanup) => cleanup.failed)
+  };
 
   writeAdminAuditLog(req, actor, {
     action: 'admin.user.delete',
@@ -2427,7 +2465,8 @@ app.delete('/api/admin/users/:id', (req, res) => {
       userKey: user.userKey,
       removed: deletion.removed,
       archiveCount: deletion.archives.length,
-      archiveErrors: deletion.archiveErrors
+      archiveErrors: deletion.archiveErrors,
+      cloudCleanup
     }
   });
 
@@ -2436,7 +2475,8 @@ app.delete('/api/admin/users/:id', (req, res) => {
     deletedUserId: user.id,
     deletedUserEmail: user.email,
     removed: deletion.removed,
-    archiveErrors: deletion.archiveErrors
+    archiveErrors: deletion.archiveErrors,
+    cloudCleanup
   });
 });
 
@@ -3209,7 +3249,7 @@ app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
   sendProtectedStorageFile(res, asset.storagePath, asset.storageKey);
 });
 
-app.delete('/api/projects/:id', (req, res) => {
+app.delete('/api/projects/:id', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
     return;
@@ -3217,13 +3257,23 @@ app.delete('/api/projects/:id', (req, res) => {
 
   try {
     const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
+    const cloudCleanup = project ? await deleteProjectObjectStorage(project) : null;
     const deletion = project ? store.deleteProject(project.id) : null;
     if (!deletion) {
       res.status(404).json({ error: 'Project not found.' });
       return;
     }
 
-    res.json({ ok: true, pendingCleanup: Boolean(deletion.archive?.pending) });
+    res.json({
+      ok: true,
+      pendingCleanup: Boolean(deletion.archive?.pending),
+      cloudCleanup: cloudCleanup
+        ? {
+            deleted: cloudCleanup.deleted,
+            failed: cloudCleanup.failed.length
+          }
+        : null
+    });
   } catch (error) {
     console.error('Project delete failed:', error);
     res.status(500).json({ error: '项目删除失败，请稍后再试。' });
@@ -3656,16 +3706,29 @@ app.post('/api/projects/:id/hdr-items/:hdrItemId/move', (req, res) => {
   respondWithProject(res, project);
 });
 
-app.delete('/api/projects/:id/hdr-items/:hdrItemId', (req, res) => {
+app.delete('/api/projects/:id/hdr-items/:hdrItemId', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
     return;
   }
 
   const projectId = String(req.params.id ?? '');
-  if (!store.getProjectForUser(projectId, user.userKey)) {
+  const currentProject = store.getProjectForUser(projectId, user.userKey);
+  if (!currentProject) {
     res.status(404).json({ error: 'Project not found.' });
     return;
+  }
+
+  const targetItem = currentProject.hdrItems.find((item) => item.id === String(req.params.hdrItemId ?? ''));
+  if (targetItem) {
+    const cleanup = await deleteObjectsFromStorage([
+      targetItem.mergedKey,
+      targetItem.resultKey,
+      ...targetItem.exposures.flatMap((exposure) => [exposure.storageKey, exposure.previewKey])
+    ]);
+    if (cleanup.failed.length) {
+      console.warn(`R2 cleanup skipped ${cleanup.failed.length} objects for HDR item ${targetItem.id}`, cleanup.failed);
+    }
   }
 
   const project = store.deleteHdrItem(projectId, String(req.params.hdrItemId ?? ''));
