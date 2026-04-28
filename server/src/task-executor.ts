@@ -10,6 +10,7 @@ import { MAX_RUNPOD_HDR_BATCH_SIZE, MIN_RUNPOD_HDR_BATCH_SIZE } from './metadata
 import {
   createObjectDownloadUrl,
   createPersistentObjectKey,
+  isConfiguredObjectStorageKey,
   isObjectStorageConfigured,
   mirrorLocalFileToObjectStorage
 } from './object-storage.js';
@@ -274,24 +275,8 @@ function shouldRunpodPostWorkflow() {
   return value === 'true' || value === '1' || value === 'yes';
 }
 
-function trimStoragePrefix(value: string | undefined, fallback: string) {
-  return String(value ?? fallback)
-    .trim()
-    .replace(/^\/+|\/+$/g, '');
-}
-
 function isLikelyObjectStorageKey(storageKey: string | null | undefined) {
-  if (!storageKey) {
-    return false;
-  }
-
-  const normalizedKey = storageKey.replace(/\\/g, '/').replace(/^\/+/, '');
-  const prefixes = [
-    trimStoragePrefix(process.env.METROVAN_OBJECT_STORAGE_INCOMING_PREFIX, 'incoming'),
-    trimStoragePrefix(process.env.METROVAN_OBJECT_STORAGE_PERSISTENT_PREFIX, 'projects')
-  ].filter(Boolean);
-
-  return prefixes.some((prefix) => normalizedKey === prefix || normalizedKey.startsWith(`${prefix}/`));
+  return isConfiguredObjectStorageKey(storageKey);
 }
 
 function trimTrailingSlash(value: string) {

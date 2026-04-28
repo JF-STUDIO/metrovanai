@@ -1745,6 +1745,57 @@ function isCloudObjectStorageKey(storageKey: string | null | undefined) {
   return prefixes.some((prefix) => normalizedKey === prefix || normalizedKey.startsWith(`${prefix}/`));
 }
 
+function hasUsableExposureSource(exposure: Pick<ExposureFile, 'storageKey' | 'storagePath'>) {
+  if (isCloudObjectStorageKey(exposure.storageKey)) {
+    return true;
+  }
+
+  if (!exposure.storagePath) {
+    return false;
+  }
+
+  try {
+    return fs.existsSync(exposure.storagePath) && fs.statSync(exposure.storagePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function getHdrItemExposureIdentity(hdrItem: Pick<HdrItem, 'exposures'>) {
+  return hdrItem.exposures
+    .map((exposure) => normalizeDirectUploadManifestName(exposure.originalName || exposure.fileName))
+    .sort((left, right) => left.localeCompare(right))
+    .join('|');
+}
+
+function projectHdrItemsAfterLayout(
+  project: ProjectRecord,
+  incomingHdrItems: HdrItem[],
+  mode: 'replace' | 'merge'
+) {
+  if (mode === 'replace') {
+    return incomingHdrItems;
+  }
+
+  const mergedByIdentity = new Map(project.hdrItems.map((item) => [getHdrItemExposureIdentity(item), item]));
+  for (const incoming of incomingHdrItems) {
+    mergedByIdentity.set(getHdrItemExposureIdentity(incoming), incoming);
+  }
+  return Array.from(mergedByIdentity.values());
+}
+
+function collectMissingExposureSourceNames(hdrItems: HdrItem[]) {
+  const missing: string[] = [];
+  for (const hdrItem of hdrItems) {
+    for (const exposure of hdrItem.exposures) {
+      if (!hasUsableExposureSource(exposure)) {
+        missing.push(exposure.originalName || exposure.fileName);
+      }
+    }
+  }
+  return Array.from(new Set(missing));
+}
+
 function allocateOriginalTargetPath(originalsDir: string, desiredFileName: string, reservedPaths: Set<string>) {
   const parsed = path.parse(desiredFileName);
   const safeStem = sanitizeSegment(parsed.name) || 'source';
@@ -4414,6 +4465,19 @@ app.post('/api/projects/:id/hdr-layout', async (req, res) => {
     const hdrItems = parsed.data.hdrItems.length
       ? await buildHdrItemsFromFrontendLayout(project, store, stagedFiles, parsed.data.hdrItems)
       : [];
+    if (parsed.data.inputComplete) {
+      const missingSourceNames = collectMissingExposureSourceNames(
+        projectHdrItemsAfterLayout(project, hdrItems, parsed.data.mode)
+      );
+      if (missingSourceNames.length) {
+        res.status(409).json({
+          error: `Upload is not complete yet. Retry the unfinished files before processing: ${missingSourceNames
+            .slice(0, 5)
+            .join(', ')}${missingSourceNames.length > 5 ? `, +${missingSourceNames.length - 5} more` : ''}.`
+        });
+        return;
+      }
+    }
     const updated =
       parsed.data.mode === 'merge'
         ? store.mergeHdrItems(projectId, hdrItems, { inputComplete: parsed.data.inputComplete })

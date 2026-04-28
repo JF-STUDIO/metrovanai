@@ -650,7 +650,9 @@ export class ProjectProcessor {
     return (
       item.exposures.length > 0 &&
       item.exposures.every(
-        (exposure) => Boolean(exposure.storageKey) || Boolean(exposure.storagePath && fs.existsSync(exposure.storagePath))
+        (exposure) =>
+          isConfiguredObjectStorageKey(exposure.storageKey) ||
+          Boolean(exposure.storagePath && fs.existsSync(exposure.storagePath))
       )
     );
   }
