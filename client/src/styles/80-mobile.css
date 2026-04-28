@@ -135,6 +135,10 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .studio-shell .feature-launch-head p {
+    white-space: normal;
+  }
+
   .landing-hero,
   .restored-hero {
     min-height: auto;

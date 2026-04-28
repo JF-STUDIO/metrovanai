@@ -872,12 +872,13 @@
 }
 
 .feature-launch-head p {
-  max-width: 42rem;
+  max-width: none;
   margin: 0.72rem auto 0;
   color: rgba(242, 246, 255, 0.64);
   font-size: clamp(0.86rem, 1.05vw, 1rem);
   line-height: 1.55;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .feature-filter-row {
