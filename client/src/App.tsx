@@ -868,7 +868,7 @@ const UI_TEXT = {
     billingChargedTotal: '累计扣点',
     recentBilling: '最近账单',
     recentBillingHint: '包含充值记录与项目处理扣点。',
-    billingOpenRecharge: '去充值',
+    billingOpenRecharge: '充值',
     noBilling: '还没有账单记录',
     noBillingHint: '充值后会在这里显示明细。',
     rechargeTitle: '积分充值',
@@ -2429,6 +2429,7 @@ function App() {
   const [rechargeActivationCode, setRechargeActivationCode] = useState('');
   const [rechargeMessage, setRechargeMessage] = useState('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState('');
@@ -2510,6 +2511,7 @@ function App() {
   const resultCropFrameDragRef = useRef<ResultCropFrameDragState | null>(null);
   const resultCanvasRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const emailVerificationHandledRef = useRef(false);
   const checkoutHandledRef = useRef(false);
 
@@ -2999,7 +3001,7 @@ function App() {
   }, [activeRoute, adminWorkflowLoaded, hasAdminSession, locale]);
 
   useEffect(() => {
-    if (!userMenuOpen) {
+    if (!userMenuOpen && !historyMenuOpen) {
       return;
     }
 
@@ -3007,13 +3009,16 @@ function App() {
       if (!userMenuRef.current?.contains(event.target as Node)) {
         setUserMenuOpen(false);
       }
+      if (!historyMenuRef.current?.contains(event.target as Node)) {
+        setHistoryMenuOpen(false);
+      }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
     return () => {
       document.removeEventListener('mousedown', handlePointerDown);
     };
-  }, [userMenuOpen]);
+  }, [userMenuOpen, historyMenuOpen]);
 
   useEffect(() => {
     const completedProjectId = currentProject?.status === 'completed' ? currentProject.id : null;
@@ -4183,6 +4188,7 @@ function App() {
     setRechargeMessage('');
     setSettingsOpen(false);
     setUserMenuOpen(false);
+    setHistoryMenuOpen(false);
     setMessage('');
     setAuthMessage('');
     setSettingsMessage('');
@@ -4195,6 +4201,7 @@ function App() {
 
   async function handleOpenBilling(mode: 'topup' | 'billing' = 'billing') {
     setUserMenuOpen(false);
+    setHistoryMenuOpen(false);
     setBillingModalMode(mode);
     setBillingOpen(true);
     if (isDemoMode || !session) {
@@ -4210,6 +4217,7 @@ function App() {
 
   function openStudioGuide() {
     setUserMenuOpen(false);
+    setHistoryMenuOpen(false);
     setStudioGuideStep(0);
     setStudioGuideOpen(true);
   }
@@ -4227,6 +4235,7 @@ function App() {
   }
 
   function openRecharge() {
+    setHistoryMenuOpen(false);
     setCustomRechargeAmount('');
     setRechargeActivationCode('');
     setRechargeMessage('');
@@ -6289,8 +6298,73 @@ function App() {
               <span className="points-pill-label">{copy.points}</span>
               <strong className="points-pill-value">{isDemoMode ? '42.5' : billingSummary?.availablePoints ?? 0}</strong>
               <button className="points-plus" type="button" aria-label={copy.topUp} onClick={() => void handleOpenBilling('topup')}>
-                +
+                {copy.billingOpenRecharge}
               </button>
+            </div>
+            <div className="history-menu" ref={historyMenuRef}>
+              <button
+                className="history-menu-trigger"
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={historyMenuOpen}
+                onClick={() => setHistoryMenuOpen((current) => !current)}
+              >
+                {copy.historyProjects}
+              </button>
+              {historyMenuOpen && (
+                <div className="history-menu-popover" role="dialog" aria-label={copy.historyProjects}>
+                  <div className="history-menu-head">
+                    <strong>{copy.historyProjects}</strong>
+                    <span>{isDemoMode ? copy.historyProjectsHintDemo : copy.historyProjectsHint}</span>
+                  </div>
+                  <div className="project-list compact-history-list">
+                    {visibleProjects.map((project) => (
+                      <article key={project.id} className={`project-tile${project.id === currentProjectId ? ' active' : ''}`}>
+                        <div className="project-tile-head">
+                          <div className="project-tile-heading-row">
+                            <strong>{project.name}</strong>
+                            <button className="text-link tile-rename-link" type="button" onClick={() => void handleRenameProject(project)}>
+                              {copy.rename}
+                            </button>
+                          </div>
+                          <span>{formatPhotoCount(project.photoCount, locale)} / {formatDate(project.createdAt, locale)}</span>
+                          <em>{getProjectStatusLabel(project, locale)}</em>
+                        </div>
+                        <div className="project-tile-actions">
+                          <button
+                            className="ghost-button compact"
+                            type="button"
+                            onClick={() => {
+                              setCurrentProjectId(project.id);
+                              setHistoryMenuOpen(false);
+                            }}
+                          >
+                            {copy.open}
+                          </button>
+                          <button
+                            className="ghost-button compact"
+                            type="button"
+                            disabled={!project.downloadReady}
+                            onClick={() => handleDownloadProject(project)}
+                          >
+                            {copy.download}
+                          </button>
+                          <button className="ghost-button compact" type="button" onClick={() => void handleDeleteProject(project)}>
+                            {copy.delete}
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+
+                    {!visibleProjects.length && (
+                      <div className="empty-state">
+                        <strong>{copy.noProject}</strong>
+                        <span>{copy.noProjectHint}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="user-menu" ref={userMenuRef}>
               <button
@@ -6326,55 +6400,6 @@ function App() {
         {message && <div className="global-message">{message}</div>}
 
         <div className="studio-layout">
-          <aside className="sidebar-card">
-            <div className="sidebar-head">
-              <div className="sidebar-copy">
-                <strong>{copy.historyProjects}</strong>
-                <span>{isDemoMode ? copy.historyProjectsHintDemo : copy.historyProjectsHint}</span>
-              </div>
-            </div>
-
-            <div className="project-list">
-              {visibleProjects.map((project) => (
-                <article key={project.id} className={`project-tile${project.id === currentProjectId ? ' active' : ''}`}>
-                  <div className="project-tile-head">
-                    <div className="project-tile-heading-row">
-                      <strong>{project.name}</strong>
-                      <button className="text-link tile-rename-link" type="button" onClick={() => void handleRenameProject(project)}>
-                        {copy.rename}
-                      </button>
-                    </div>
-                    <span>{formatPhotoCount(project.photoCount, locale)} / {formatDate(project.createdAt, locale)}</span>
-                    <em>{getProjectStatusLabel(project, locale)}</em>
-                  </div>
-                  <div className="project-tile-actions">
-                    <button className="ghost-button compact" type="button" onClick={() => setCurrentProjectId(project.id)}>
-                      {copy.open}
-                    </button>
-                    <button
-                      className="ghost-button compact"
-                      type="button"
-                      disabled={!project.downloadReady}
-                      onClick={() => handleDownloadProject(project)}
-                    >
-                      {copy.download}
-                    </button>
-                    <button className="ghost-button compact" type="button" onClick={() => void handleDeleteProject(project)}>
-                      {copy.delete}
-                    </button>
-                  </div>
-                </article>
-              ))}
-
-              {!visibleProjects.length && (
-                <div className="empty-state">
-                  <strong>{copy.noProject}</strong>
-                  <span>{copy.noProjectHint}</span>
-                </div>
-              )}
-            </div>
-          </aside>
-
           <section className="workspace">
             {!currentProject ? (
               <section className="feature-launch-panel">
@@ -6413,6 +6438,7 @@ function App() {
                           <p>{feature.description[locale]}</p>
                           <div className="studio-feature-meta">
                             <em>{feature.pointLabel[locale]}</em>
+                            <span className="studio-feature-use">{locale === 'en' ? 'Use' : '去使用'}</span>
                           </div>
                         </div>
                       </button>
