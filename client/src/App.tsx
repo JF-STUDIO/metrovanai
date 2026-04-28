@@ -4267,6 +4267,12 @@ function App() {
     navigateToRoute('home');
   }
 
+  function returnToStudioFeatureCards() {
+    navigateToRoute('studio');
+    setCurrentProjectId(null);
+    setMessage('');
+  }
+
   async function handleOpenBilling(mode: 'topup' | 'billing' = 'billing') {
     setUserMenuOpen(false);
     setHistoryMenuOpen(false);
@@ -6485,7 +6491,7 @@ function App() {
       <main className={`studio-shell${isDemoMode ? ' demo-shell' : ''}`}>
         <div className="ambient-layer studio-ambient" />
         <header className="studio-header">
-          <button className="brand-button" type="button" onClick={() => navigateToRoute('home')}>
+          <button className="brand-button" type="button" onClick={returnToStudioFeatureCards}>
             <span className="studio-brand-mark-shell" aria-hidden="true">
               <img className="studio-brand-mark" src={logoMark} alt="Metrovan AI" decoding="async" />
             </span>
@@ -6499,10 +6505,7 @@ function App() {
               <button
                 className="studio-new-project-trigger"
                 type="button"
-                onClick={() => {
-                  setCurrentProjectId(null);
-                  setMessage('');
-                }}
+                onClick={returnToStudioFeatureCards}
               >
                 {copy.newProject}
               </button>
@@ -6673,10 +6676,7 @@ function App() {
                         <button
                           className="ghost-button compact project-head-back"
                           type="button"
-                          onClick={() => {
-                            setCurrentProjectId(null);
-                            setMessage('');
-                          }}
+                          onClick={returnToStudioFeatureCards}
                         >
                           {locale === 'en' ? 'Back to tools' : '返回功能卡片'}
                         </button>
