@@ -1,10 +1,12 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
+import { AuthModal } from './components/AuthModal';
+import { LandingPage } from './pages/LandingPage';
 import logoFull from './assets/metrovan-logo-full.png';
 import logoMark from './assets/metrovan-logo-mark.png';
-import jinSignatureAvatar from './assets/jin-signature-avatar.jpg';
+import showcaseExteriorAfter from './assets/showcase-exterior-after.jpg';
 import showcaseInteriorAfter from './assets/showcase-interior-after.jpg';
 import showcaseInteriorBefore from './assets/showcase-interior-before.jpg';
 import {
@@ -53,6 +55,7 @@ import {
   redeemActivationCode,
   requestPasswordReset,
   regenerateResult,
+  retryFailedProcessing,
   selectExposure,
   startProcessing,
   updateAccountSettings,
@@ -88,7 +91,9 @@ import type {
 
 type AuthMode = 'signin' | 'signup' | 'reset-request' | 'reset-confirm' | 'verify-email';
 type UiLocale = 'zh' | 'en';
-type AppRoute = 'home' | 'studio' | 'admin';
+type AppRoute = 'home' | 'plans' | 'studio' | 'admin';
+type StudioFeatureId = 'hdr-true-color' | 'hdr-white-wall' | 'dusk-exterior' | 'blue-hour' | 'season-shift';
+type StudioFeatureStatus = 'available' | 'beta' | 'locked';
 
 const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
 const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
@@ -207,6 +212,22 @@ interface ResultCropFrameDragState {
   aspectRatio: number | null;
 }
 
+interface StudioFeatureDefinition {
+  id: StudioFeatureId;
+  category: 'all' | 'interior' | 'exterior' | 'special' | 'new';
+  status: StudioFeatureStatus;
+  tag: Record<UiLocale, string>;
+  title: Record<UiLocale, string>;
+  description: Record<UiLocale, string>;
+  detail: Record<UiLocale, string>;
+  exposureLabel: Record<UiLocale, string>;
+  pointLabel: Record<UiLocale, string>;
+  defaultName: Record<UiLocale, string>;
+  tone: 'warm' | 'white' | 'dusk' | 'blue' | 'season';
+  beforeImage?: string;
+  afterImage?: string;
+}
+
 const DEFAULT_DOWNLOAD_DRAFT: DownloadDraft = {
   includeHd: true,
   includeCustom: false,
@@ -218,8 +239,223 @@ const DEFAULT_DOWNLOAD_DRAFT: DownloadDraft = {
   customWidth: '',
   customHeight: ''
 };
-const LANDING_VIDEO_URL =
-  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260217_030345_246c0224-10a4-422c-b324-070b7c0eceda.mp4';
+const STUDIO_FEATURES_LEGACY: StudioFeatureDefinition[] = [
+  {
+    id: 'hdr-true-color',
+    category: 'interior',
+    status: 'available',
+    tag: { zh: '室内 · HDR', en: 'Interior · HDR' },
+    title: { zh: 'HDR 真实色彩', en: 'HDR True Color' },
+    description: {
+      zh: '约 90% 还原墙壁颜色，平衡窗景与室内曝光；结果区可替换错误墙面颜色。',
+      en: 'Restores wall color with about 90% fidelity, balances windows and interior light, and supports wall color correction in results.'
+    },
+    detail: {
+      zh: '适合有真实墙色、木地板、自然光和窗景的室内房源。保留原始墙面色彩，不做统一去色。',
+      en: 'Best for interiors with real wall colors, wood floors, natural light, and window views. Keeps the original wall tone instead of washing color out.'
+    },
+    exposureLabel: { zh: '3-7 张曝光', en: '3-7 exposures' },
+    pointLabel: { zh: '1 积分 / 张', en: '1 pt / photo' },
+    defaultName: { zh: 'HDR 真实色彩', en: 'HDR True Color' },
+    tone: 'warm',
+    beforeImage: showcaseInteriorBefore,
+    afterImage: showcaseInteriorAfter
+  },
+  {
+    id: 'hdr-white-wall',
+    category: 'interior',
+    status: 'beta',
+    tag: { zh: '室内 · 白墙', en: 'Interior · White Wall' },
+    title: { zh: 'HDR 白墙', en: 'HDR White Wall' },
+    description: {
+      zh: '适用于白墙空间，可 100% 准确统一白墙；彩色墙面会按白墙逻辑去色。',
+      en: 'For white-wall rooms. White walls stay fully neutral; colored walls are desaturated by white-wall logic.'
+    },
+    detail: {
+      zh: '适合公寓、样板间、极简白墙空间。彩色墙面项目建议使用 HDR 真实色彩。',
+      en: 'Best for apartments, staging rooms, and minimal white-wall spaces. Use HDR True Color for colored wall projects.'
+    },
+    exposureLabel: { zh: '3-7 张曝光', en: '3-7 exposures' },
+    pointLabel: { zh: '1 积分 / 张', en: '1 pt / photo' },
+    defaultName: { zh: 'HDR 白墙', en: 'HDR White Wall' },
+    tone: 'white',
+    beforeImage: showcaseInteriorBefore,
+    afterImage: showcaseInteriorAfter
+  },
+  {
+    id: 'dusk-exterior',
+    category: 'exterior',
+    status: 'locked',
+    tag: { zh: '室外 · 黄昏', en: 'Exterior · Dusk' },
+    title: { zh: '白天变黄昏室外修图', en: 'Day to Dusk Exterior' },
+    description: {
+      zh: '把白天外景转换成黄昏氛围，增强建筑灯光和天空层次。',
+      en: 'Turns daytime exteriors into a dusk look with stronger building glow and sky depth.'
+    },
+    detail: {
+      zh: '建设中。上线后用于室外门头、车道、前院和建筑立面。',
+      en: 'Coming soon. Designed for exterior fronts, driveways, yards, and facades.'
+    },
+    exposureLabel: { zh: '单张或 HDR', en: 'Single or HDR' },
+    pointLabel: { zh: '建设中', en: 'Coming soon' },
+    defaultName: { zh: '白天变黄昏', en: 'Day to Dusk' },
+    tone: 'dusk',
+    beforeImage: showcaseExteriorAfter,
+    afterImage: showcaseExteriorAfter
+  },
+  {
+    id: 'blue-hour',
+    category: 'exterior',
+    status: 'locked',
+    tag: { zh: '室外 · 蓝调', en: 'Exterior · Blue Hour' },
+    title: { zh: '蓝调时刻照片修图', en: 'Blue Hour Retouch' },
+    description: {
+      zh: '适用于窗外蓝调和夜景外观，统一天空、灯光和建筑质感。',
+      en: 'For blue-hour window and exterior looks, balancing sky, lights, and facade texture.'
+    },
+    detail: {
+      zh: '建设中。适合室外蓝调、窗外蓝调和夜景营销图。',
+      en: 'Coming soon. Built for exterior blue hour, window blue hour, and night listing images.'
+    },
+    exposureLabel: { zh: '单张或 HDR', en: 'Single or HDR' },
+    pointLabel: { zh: '建设中', en: 'Coming soon' },
+    defaultName: { zh: '蓝调时刻', en: 'Blue Hour' },
+    tone: 'blue',
+    beforeImage: showcaseExteriorAfter,
+    afterImage: showcaseExteriorAfter
+  },
+  {
+    id: 'season-shift',
+    category: 'special',
+    status: 'locked',
+    tag: { zh: '特殊场景', en: 'Special Scene' },
+    title: { zh: '季节转换', en: 'Season Shift' },
+    description: {
+      zh: '转换草地、树木和环境季节氛围，用于不同销售季节的房源展示。',
+      en: 'Changes grass, trees, and seasonal atmosphere for different listing campaigns.'
+    },
+    detail: {
+      zh: '建设中。后续用于春夏秋冬氛围转换。',
+      en: 'Coming soon. Planned for spring, summer, fall, and winter scene conversions.'
+    },
+    exposureLabel: { zh: '单张照片', en: 'Single image' },
+    pointLabel: { zh: '建设中', en: 'Coming soon' },
+    defaultName: { zh: '季节转换', en: 'Season Shift' },
+    tone: 'season',
+    beforeImage: showcaseExteriorAfter,
+    afterImage: showcaseExteriorAfter
+  }
+];
+void STUDIO_FEATURES_LEGACY;
+
+const STUDIO_FEATURES: StudioFeatureDefinition[] = [
+  {
+    id: 'hdr-true-color',
+    category: 'interior',
+    status: 'available',
+    tag: { zh: '室内 · HDR', en: 'Interior · HDR' },
+    title: { zh: 'HDR 真实色彩', en: 'HDR True Color' },
+    description: {
+      zh: '可 90% 还原墙壁颜色，平衡窗景与室内曝光；结果区可以替换错误墙面的颜色。',
+      en: 'Restores wall color with about 90% fidelity, balances windows and interior light, and supports wall color correction in results.'
+    },
+    detail: {
+      zh: '保留房间原本的墙面色彩，通过多曝光合成提亮窗景、压暗高光，呈现自然通透的室内空间。',
+      en: 'Best for interiors with real wall colors, wood floors, natural light, and window views. Keeps the original wall tone instead of washing color out.'
+    },
+    exposureLabel: { zh: '3-7 张曝光', en: '3-7 exposures' },
+    pointLabel: { zh: '1 积分 / 张', en: '1 pt / photo' },
+    defaultName: { zh: 'HDR 真实色彩', en: 'HDR True Color' },
+    tone: 'warm',
+    beforeImage: showcaseInteriorBefore,
+    afterImage: showcaseInteriorAfter
+  },
+  {
+    id: 'hdr-white-wall',
+    category: 'interior',
+    status: 'beta',
+    tag: { zh: '室内 · 白墙', en: 'Interior · White Wall' },
+    title: { zh: 'HDR 白墙', en: 'HDR White Wall' },
+    description: {
+      zh: '适用于白墙空间，可 100% 准确统一白墙；如果是彩色墙面会进行去色。',
+      en: 'For white-wall rooms. White walls stay fully neutral; colored walls are desaturated by white-wall logic.'
+    },
+    detail: {
+      zh: '适合公寓、样板间和极简白墙空间。彩色墙面项目建议使用 HDR 真实色彩。',
+      en: 'Best for apartments, staging rooms, and minimal white-wall spaces. Use HDR True Color for colored wall projects.'
+    },
+    exposureLabel: { zh: '3-7 张曝光', en: '3-7 exposures' },
+    pointLabel: { zh: '1 积分 / 张', en: '1 pt / photo' },
+    defaultName: { zh: 'HDR 白墙', en: 'HDR White Wall' },
+    tone: 'white',
+    beforeImage: showcaseInteriorBefore,
+    afterImage: showcaseInteriorAfter
+  },
+  {
+    id: 'dusk-exterior',
+    category: 'exterior',
+    status: 'locked',
+    tag: { zh: '室外 · 黄昏', en: 'Exterior · Dusk' },
+    title: { zh: '白天变黄昏室外修图', en: 'Day to Dusk Exterior' },
+    description: {
+      zh: '把白天外景转换成黄昏氛围，增强建筑灯光和天空层次。',
+      en: 'Turns daytime exteriors into a dusk look with stronger building glow and sky depth.'
+    },
+    detail: {
+      zh: '建设中。上线后用于室外门头、车道、前院和建筑立面。',
+      en: 'Coming soon. Designed for exterior fronts, driveways, yards, and facades.'
+    },
+    exposureLabel: { zh: '单张或 HDR', en: 'Single or HDR' },
+    pointLabel: { zh: '建设中', en: 'Coming soon' },
+    defaultName: { zh: '白天变黄昏', en: 'Day to Dusk' },
+    tone: 'dusk',
+    beforeImage: showcaseExteriorAfter,
+    afterImage: showcaseExteriorAfter
+  },
+  {
+    id: 'blue-hour',
+    category: 'exterior',
+    status: 'locked',
+    tag: { zh: '室外 · 蓝调', en: 'Exterior · Blue Hour' },
+    title: { zh: '蓝调时刻照片修图', en: 'Blue Hour Retouch' },
+    description: {
+      zh: '适用窗外蓝调和夜景外观，统一天空、灯光和建筑质感。',
+      en: 'For blue-hour window and exterior looks, balancing sky, lights, and facade texture.'
+    },
+    detail: {
+      zh: '建设中。适合室外蓝调、窗外蓝调和夜景营销图。',
+      en: 'Coming soon. Built for exterior blue hour, window blue hour, and night listing images.'
+    },
+    exposureLabel: { zh: '单张或 HDR', en: 'Single or HDR' },
+    pointLabel: { zh: '建设中', en: 'Coming soon' },
+    defaultName: { zh: '蓝调时刻', en: 'Blue Hour' },
+    tone: 'blue',
+    beforeImage: showcaseExteriorAfter,
+    afterImage: showcaseExteriorAfter
+  },
+  {
+    id: 'season-shift',
+    category: 'special',
+    status: 'locked',
+    tag: { zh: '特殊场景', en: 'Special Scene' },
+    title: { zh: '季节转换', en: 'Season Shift' },
+    description: {
+      zh: '转换草地、树木和环境季节氛围，用于不同销售季节的房源展示。',
+      en: 'Changes grass, trees, and seasonal atmosphere for different listing campaigns.'
+    },
+    detail: {
+      zh: '建设中。后续用于春夏秋冬氛围转换。',
+      en: 'Coming soon. Planned for spring, summer, fall, and winter scene conversions.'
+    },
+    exposureLabel: { zh: '单张照片', en: 'Single image' },
+    pointLabel: { zh: '建设中', en: 'Coming soon' },
+    defaultName: { zh: '季节转换', en: 'Season Shift' },
+    tone: 'season',
+    beforeImage: showcaseExteriorAfter,
+    afterImage: showcaseExteriorAfter
+  }
+];
+
 const DEFAULT_REGENERATION_COLOR = '#F2E8D8';
 const RESULT_COLOR_CARD_STORAGE_KEY = 'metrovanai_result_color_cards';
 const STUDIO_GUIDE_DISMISSED_PREFIX = 'metrovanai_studio_guide_dismissed';
@@ -2114,123 +2350,20 @@ function getRouteFromPath(pathname = window.location.pathname): AppRoute {
   const normalized = pathname.replace(/\/+$/, '').toLowerCase();
   if (normalized === '/admin') return 'admin';
   if (normalized === '/studio') return 'studio';
+  if (normalized === '/plans' || normalized === '/pricing') return 'plans';
   return 'home';
 }
 
 function getPathForRoute(route: AppRoute) {
   if (route === 'admin') return '/admin';
   if (route === 'studio') return '/studio';
+  if (route === 'plans') return '/plans';
   return '/home';
-}
-
-function attemptLandingVideoPlayback(video: HTMLVideoElement | null) {
-  if (!video) {
-    return;
-  }
-
-  video.muted = true;
-  video.defaultMuted = true;
-  video.playsInline = true;
-  video.setAttribute('muted', '');
-  video.setAttribute('playsinline', '');
-  video.setAttribute('webkit-playsinline', 'true');
-
-  const playPromise = video.play();
-  if (playPromise && typeof playPromise.catch === 'function') {
-    void playPromise.catch(() => {
-      // Mobile browsers sometimes defer autoplay until the page is visible or touched once.
-    });
-  }
-}
-
-function ShowcaseCornerFrame() {
-  return (
-    <>
-      <div className="showcase-sci-corner showcase-sci-corner-top-left" />
-      <div className="showcase-sci-corner showcase-sci-corner-top-right" />
-      <div className="showcase-sci-corner showcase-sci-corner-bottom-left" />
-      <div className="showcase-sci-corner showcase-sci-corner-bottom-right" />
-    </>
-  );
-}
-
-function ShowcaseIconBase({ children }: { children: ReactNode }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {children}
-    </svg>
-  );
-}
-
-function ShowcaseIconCheck() {
-  return (
-    <ShowcaseIconBase>
-      <path d="m5 13 4 4L19 7" />
-    </ShowcaseIconBase>
-  );
-}
-
-function ShowcaseIconCpu() {
-  return (
-    <ShowcaseIconBase>
-      <rect x="7" y="7" width="10" height="10" rx="2" />
-      <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" />
-    </ShowcaseIconBase>
-  );
-}
-
-function ShowcaseIconSparkles() {
-  return (
-    <ShowcaseIconBase>
-      <path d="m12 3 1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8L12 3Z" />
-      <path d="m18.5 15.5.8 1.8 1.7.7-1.7.8-.8 1.7-.7-1.7-1.8-.8 1.8-.7.7-1.8Z" />
-    </ShowcaseIconBase>
-  );
-}
-
-function ShowcaseIconSunMedium() {
-  return (
-    <ShowcaseIconBase>
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2.5v2.2M12 19.3v2.2M4.7 4.7l1.6 1.6M17.7 17.7l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.7 19.3l1.6-1.6M17.7 6.3l1.6-1.6" />
-    </ShowcaseIconBase>
-  );
-}
-
-function ShowcaseIconShieldCheck() {
-  return (
-    <ShowcaseIconBase>
-      <path d="M12 3 6 5.7v5.1c0 4.1 2.5 7.8 6 9.2 3.5-1.4 6-5.1 6-9.2V5.7L12 3Z" />
-      <path d="m9.2 12.2 2 2 3.7-4" />
-    </ShowcaseIconBase>
-  );
-}
-
-function ShowcaseFeature({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
-  return (
-    <article className="showcase-sci-feature-card">
-      <span className="showcase-sci-feature-icon">{icon}</span>
-      <div>
-        <strong>{title}</strong>
-        <small>{text}</small>
-      </div>
-    </article>
-  );
-}
-
-function ShowcaseStatusRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="showcase-sci-status-row">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
 }
 
 function App() {
   const isDemoMode = new URLSearchParams(window.location.search).get('demo') === '1';
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => getRouteFromPath());
-  const [landingView, setLandingView] = useState<'home' | 'plans'>('home');
   const [locale, setLocale] = useState<UiLocale>(getStoredLocale);
   const [session, setSession] = useState<SessionState | null>(() => {
     if (isDemoMode) {
@@ -2326,6 +2459,9 @@ function App() {
   const [downloadDraft, setDownloadDraft] = useState<DownloadDraft>(DEFAULT_DOWNLOAD_DRAFT);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectAddress, setNewProjectAddress] = useState('');
+  const [selectedFeatureId, setSelectedFeatureId] = useState<StudioFeatureId>('hdr-true-color');
+  const [createDialogFiles, setCreateDialogFiles] = useState<File[]>([]);
+  const [createDialogDragActive, setCreateDialogDragActive] = useState(false);
   const [groupColorOverrides, setGroupColorOverrides] = useState<Record<string, string>>({});
   const [localImportDrafts, setLocalImportDrafts] = useState<Record<string, LocalImportDraft>>({});
   const [resultViewerIndex, setResultViewerIndex] = useState<number | null>(null);
@@ -2340,12 +2476,12 @@ function App() {
   const [studioGuideStep, setStudioGuideStep] = useState(0);
   const [studioGuideAutoOpenedFor, setStudioGuideAutoOpenedFor] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const createFileInputRef = useRef<HTMLInputElement | null>(null);
   const resultCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const resultLayoutSnapshotRef = useRef<Record<string, DOMRect>>({});
   const resultCropDragRef = useRef<ResultCropDragState | null>(null);
   const resultCropFrameDragRef = useRef<ResultCropFrameDragState | null>(null);
   const resultCanvasRef = useRef<HTMLDivElement | null>(null);
-  const landingVideoRef = useRef<HTMLVideoElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const emailVerificationHandledRef = useRef(false);
   const checkoutHandledRef = useRef(false);
@@ -2353,6 +2489,8 @@ function App() {
   const demoProjects = useMemo(() => createDemoProjects(), []);
   const visibleProjects = isDemoMode ? demoProjects : projects;
   const copy = UI_TEXT[locale];
+  const selectedFeature = STUDIO_FEATURES.find((feature) => feature.id === selectedFeatureId) ?? STUDIO_FEATURES[0];
+  const availableFeatureCount = STUDIO_FEATURES.filter((feature) => feature.status !== 'locked').length;
   const activeStepLabels = isDemoMode ? copy.demoStepLabels : copy.stepLabels;
   const studioGuideSteps = useMemo(
     () => [
@@ -2931,38 +3069,6 @@ function App() {
   }
 
   useEffect(() => {
-    if (session) {
-      return;
-    }
-
-    const video = landingVideoRef.current;
-    if (!video) {
-      return;
-    }
-
-    const retryPlayback = () => attemptLandingVideoPlayback(video);
-    const retryWhenVisible = () => {
-      if (document.visibilityState === 'visible') {
-        retryPlayback();
-      }
-    };
-
-    const frameId = window.requestAnimationFrame(retryPlayback);
-    window.addEventListener('pageshow', retryPlayback);
-    window.addEventListener('touchstart', retryPlayback, { passive: true });
-    window.addEventListener('pointerdown', retryPlayback, { passive: true });
-    document.addEventListener('visibilitychange', retryWhenVisible);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      window.removeEventListener('pageshow', retryPlayback);
-      window.removeEventListener('touchstart', retryPlayback);
-      window.removeEventListener('pointerdown', retryPlayback);
-      document.removeEventListener('visibilitychange', retryWhenVisible);
-    };
-  }, [session]);
-
-  useEffect(() => {
     if (isDemoMode) {
       return;
     }
@@ -3288,9 +3394,6 @@ function App() {
       window.history.pushState({}, '', nextUrl);
     }
     setActiveRoute(nextRoute);
-    if (nextRoute === 'home') {
-      setLandingView('home');
-    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -4036,6 +4139,53 @@ function App() {
     setSettingsOpen(true);
   }
 
+  function getFeatureProjectName(feature: StudioFeatureDefinition) {
+    return `${feature.defaultName[locale]} · ${new Date().toISOString().slice(0, 10)}`;
+  }
+
+  function openFeatureProjectDialog(feature: StudioFeatureDefinition) {
+    if (feature.status === 'locked') {
+      return;
+    }
+
+    setSelectedFeatureId(feature.id);
+    setNewProjectName(getFeatureProjectName(feature));
+    setNewProjectAddress('');
+    setCreateDialogFiles([]);
+    setCreateDialogDragActive(false);
+    setCreateDialogOpen(true);
+    setMessage('');
+  }
+
+  function closeCreateProjectDialog() {
+    setCreateDialogOpen(false);
+    setCreateDialogFiles([]);
+    setCreateDialogDragActive(false);
+  }
+
+  function handleCreateDialogFiles(files: FileList | File[] | null) {
+    if (!files || files.length === 0) return;
+
+    const { supported, unsupported } = filterSupportedImportFiles(Array.from(files));
+    if (!supported.length) {
+      setMessage(copy.uploadNoSupportedFiles);
+      return;
+    }
+
+    setCreateDialogFiles((current) => {
+      const seen = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+      const additions = supported.filter((file) => {
+        const key = `${file.name}:${file.size}:${file.lastModified}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return [...current, ...additions];
+    });
+    setCreateDialogDragActive(false);
+    setMessage(unsupported.length ? copy.uploadUnsupportedFiles(unsupported.length) : '');
+  }
+
   async function handleSaveSettings() {
     if (!session) {
       return;
@@ -4066,12 +4216,13 @@ function App() {
     }
   }
 
-  async function handleCreateProject() {
+  async function handleCreateProject(startUploadAfterCreate = false) {
     if (!session || !newProjectName.trim()) {
       setMessage(copy.createProjectNameRequired);
       return;
     }
 
+    const filesToUpload = startUploadAfterCreate ? [...createDialogFiles] : [];
     setBusy(true);
     try {
       const response = await createProject({
@@ -4082,7 +4233,14 @@ function App() {
       setCreateDialogOpen(false);
       setNewProjectName('');
       setNewProjectAddress('');
+      setCreateDialogFiles([]);
+      setCreateDialogDragActive(false);
       setMessage('');
+      if (filesToUpload.length) {
+        window.setTimeout(() => {
+          void handleUploadForProject(response.project, filesToUpload);
+        }, 0);
+      }
     } catch (error) {
       setMessage(getUserFacingErrorMessage(error, copy.createProjectFailed, locale));
     } finally {
@@ -4127,8 +4285,8 @@ function App() {
     }
   }
 
-  async function handleUpload(files: FileList | File[] | null) {
-    if (!currentProject || !files || files.length === 0) return;
+  async function handleUploadForProject(targetProject: ProjectRecord, files: FileList | File[] | null) {
+    if (!files || files.length === 0) return;
 
     const { supported, unsupported } = filterSupportedImportFiles(Array.from(files));
     if (!supported.length) {
@@ -4136,6 +4294,7 @@ function App() {
       return;
     }
 
+    const existingDraft = localImportDrafts[targetProject.id] ?? null;
     setBusy(true);
     setUploadActive(true);
     setUploadMode('local');
@@ -4143,12 +4302,12 @@ function App() {
     setUploadSnapshot(null);
     setDragActive(false);
     try {
-      const nextDraft = await buildLocalImportDraft(currentProject.id, supported, setUploadPercent);
-      const response = await patchProject(currentProject.id, { currentStep: 2, status: 'review' });
+      const nextDraft = await buildLocalImportDraft(targetProject.id, supported, setUploadPercent);
+      const response = await patchProject(targetProject.id, { currentStep: 2, status: 'review' });
       upsertProject(response.project);
-      if (activeLocalDraft) {
-        const merged = mergeLocalImportDrafts(activeLocalDraft, nextDraft);
-        updateLocalImportDraft(currentProject.id, () => merged.draft);
+      if (existingDraft) {
+        const merged = mergeLocalImportDrafts(existingDraft, nextDraft);
+        updateLocalImportDraft(targetProject.id, () => merged.draft);
         merged.unusedObjectUrls.forEach((url) => URL.revokeObjectURL(url));
         const notices = [
           unsupported.length ? copy.uploadUnsupportedFiles(unsupported.length) : '',
@@ -4172,6 +4331,11 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function handleUpload(files: FileList | File[] | null) {
+    if (!currentProject) return;
+    await handleUploadForProject(currentProject, files);
   }
 
   function triggerFilePicker() {
@@ -4473,7 +4637,7 @@ function App() {
     }
   }
 
-  async function handleStartProcessing() {
+  async function handleStartProcessing(options: { retryFailed?: boolean } = {}) {
     if (!currentProject) return;
     if (!workspaceHdrItems.length) {
       setMessage(copy.importPhotosFirst);
@@ -4602,7 +4766,9 @@ function App() {
         setUploadSnapshot(null);
         setMessage(copy.uploadOriginalsCanClose);
       } else {
-        const response = await startProcessing(currentProject.id);
+        const response = options.retryFailed
+          ? await retryFailedProcessing(currentProject.id)
+          : await startProcessing(currentProject.id);
         upsertProject(response.project);
         setMessage('');
       }
@@ -5649,521 +5815,48 @@ function App() {
     );
   }
 
-  if (activeRoute === 'home' || !session) {
+  if (activeRoute === 'home' || activeRoute === 'plans' || !session) {
     return (
       <>
-        <main className="landing-shell">
-          <div className="landing-video-wrap">
-            <video
-              ref={landingVideoRef}
-              className="landing-video"
-              autoPlay
-              loop
-              muted
-              playsInline
-              preload="metadata"
-              disablePictureInPicture
-              onCanPlay={() => attemptLandingVideoPlayback(landingVideoRef.current)}
-              src={LANDING_VIDEO_URL}
-            />
-            <div className="landing-video-overlay" />
-          </div>
-          <div className="ambient-layer" />
-          <header className="landing-nav">
-            <button className="brand-button landing-brand" type="button" onClick={() => navigateToRoute('home')}>
-              <img className="landing-brand-logo" src={logoFull} alt="Metrovan AI" decoding="async" />
-            </button>
-            <nav className="landing-links" aria-label="Primary">
-              <button
-                className={`landing-home-link${landingView === 'home' ? ' active' : ''}`}
-                type="button"
-                onClick={() => {
-                  setLandingView('home');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-              >
-                {copy.home}
-              </button>
-              <button
-                className={`landing-home-link${landingView === 'plans' ? ' active' : ''}`}
-                type="button"
-                onClick={() => {
-                  setLandingView('plans');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-              >
-                {copy.plansNav}
-              </button>
-            </nav>
-            <div className="landing-actions">
-              <button
-                className="solid-button nav-signin"
-                type="button"
-                onClick={() => (session ? navigateToRoute('studio') : openAuth('signin'))}
-              >
-                {session ? copy.studioLabel : copy.landingSignIn}
-              </button>
-            </div>
-          </header>
-
-          {message && <div className="global-message landing-global-message">{message}</div>}
-
-          {landingView === 'home' && (
-            <>
-          <section className="landing-hero restored-hero">
-            <div className="hero-copy centered">
-              <span className="hero-badge restored-badge">
-                <span className="hero-badge-pill">New</span>
-                <span>AI real estate image alchemy</span>
-              </span>
-              <h1>
-                Real estate edits.
-                <br />
-                One clear <em>glow.</em>
-              </h1>
-              <p>Keep wall colors consistent across every listing.</p>
-              <div className="hero-actions centered">
-                <button
-                  className="solid-button large rounded-pill"
-                  type="button"
-                  onClick={() => (session ? navigateToRoute('studio') : openAuth('signup'))}
-                >
-                  {copy.landingStartProject}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="showcase-section">
-            <div className="showcase-stage showcase-stage-sci">
-              <div className="showcase-sci-grid">
-                <article className="showcase-sci-main showcase-sci-shell">
-                  <ShowcaseCornerFrame />
-                  <div className="showcase-sci-heading">
-                    <div>
-                      <span className="showcase-sci-kicker">AI Real Estate Engine</span>
-                      <strong>Interior Consistency System</strong>
-                    </div>
-                    <span className="showcase-sci-chip" aria-hidden="true">
-                      <ShowcaseIconCpu />
-                    </span>
-                  </div>
-
-                  <figure className="showcase-sci-render">
-                    <div className="showcase-sci-render-layer showcase-sci-render-before">
-                      <img src={showcaseInteriorBefore} alt="Interior original capture" loading="lazy" decoding="async" />
-                    </div>
-                    <div className="showcase-sci-render-layer showcase-sci-render-after" aria-hidden="true">
-                      <img src={showcaseInteriorAfter} alt="" loading="lazy" decoding="async" />
-                    </div>
-                    <div className="showcase-sci-render-tiles" aria-hidden="true" />
-                    <div className="showcase-sci-render-noise" aria-hidden="true" />
-                    <div className="showcase-sci-render-scanline" aria-hidden="true">
-                      <span className="showcase-sci-render-scanline-core" />
-                      <span className="showcase-sci-render-scanline-halo" />
-                    </div>
-                    <div className="showcase-sci-render-status" aria-hidden="true">
-                      <span className="showcase-sci-render-status-dot" />
-                      <span className="showcase-sci-render-status-text">AI Rendering</span>
-                      <span className="showcase-sci-render-status-bar">
-                        <span className="showcase-sci-render-status-bar-fill" />
-                      </span>
-                    </div>
-                    <span className="showcase-sci-render-tag showcase-sci-render-tag-before">Before</span>
-                    <span className="showcase-sci-render-tag showcase-sci-render-tag-after">After</span>
-                    <div className="showcase-sci-render-reticle" aria-hidden="true">
-                      <span className="showcase-sci-render-reticle-ring" />
-                      <span className="showcase-sci-render-reticle-cross" />
-                    </div>
-                    <figcaption className="showcase-sci-render-caption">
-                      <div className="showcase-sci-render-caption-side is-before">
-                        <strong>Raw Capture</strong>
-                        <small>Color cast · Uneven light · Soft detail.</small>
-                      </div>
-                      <div className="showcase-sci-render-caption-side is-after">
-                        <strong>AI Enhanced</strong>
-                        <small>Neutral white · Balanced light · Sky replaced.</small>
-                      </div>
-                    </figcaption>
-                  </figure>
-
-                  <div className="showcase-sci-steps" aria-hidden="true">
-                    <article className="showcase-sci-step-card">
-                      <span>01</span>
-                      <div>
-                        <strong>Analyze</strong>
-                        <small>Detect lighting and color drift.</small>
-                      </div>
-                    </article>
-                    <article className="showcase-sci-step-card">
-                      <span>02</span>
-                      <div>
-                        <strong>Calibrate</strong>
-                        <small>Unify exposure and natural tone.</small>
-                      </div>
-                    </article>
-                    <article className="showcase-sci-step-card">
-                      <span>03</span>
-                      <div>
-                        <strong>Deliver</strong>
-                        <small>Keep textures and structure realistic.</small>
-                      </div>
-                    </article>
-                  </div>
-                </article>
-
-                <aside className="showcase-sci-sidebar">
-                  <article className="showcase-sci-shell showcase-sci-status-card">
-                    <span className="showcase-sci-kicker">Consistency Lock</span>
-                    <div className="showcase-sci-status-list">
-                      <ShowcaseStatusRow label="Color Tone" value="Stable" />
-                      <ShowcaseStatusRow label="Color Shift" value="0.3%" />
-                      <ShowcaseStatusRow label="Material Integrity" value="Locked" />
-                      <ShowcaseStatusRow label="Geometry" value="Preserved" />
-                    </div>
-                  </article>
-
-                  <div className="showcase-sci-feature-stack">
-                    <ShowcaseFeature
-                      icon={<ShowcaseIconSunMedium />}
-                      title="Smart Lighting"
-                      text="Balances indoor light without blowing out windows."
-                    />
-                    <ShowcaseFeature
-                      icon={<ShowcaseIconSparkles />}
-                      title="Clean Color"
-                      text="Removes color cast while keeping original wall and floor tones."
-                    />
-                    <ShowcaseFeature
-                      icon={<ShowcaseIconShieldCheck />}
-                      title="Realism Guard"
-                      text="Prevents harsh highlights, plastic texture, and overprocessed results."
-                    />
-                  </div>
-
-                  <article className="showcase-sci-shell showcase-sci-ready-card">
-                    <span className="showcase-sci-ready-icon" aria-hidden="true">
-                      <ShowcaseIconCheck />
-                    </span>
-                    <div>
-                      <strong>Ready for listing delivery</strong>
-                      <small>Fast, consistent, realistic real estate photo enhancement.</small>
-                    </div>
-                  </article>
-                </aside>
-              </div>
-            </div>
-          </section>
-
-          <section className="quote-section">
-            <div className="quote-marks">"</div>
-            <p className="quote-copy">
-              Metrovan AI gives every listing a quiet cinematic finish. Rooms feel aligned, colors stay calm,
-              <span> and the whole home carries one polished visual atmosphere.</span>
-            </p>
-            <div className="quote-end-mark">"</div>
-            <div className="quote-author">
-              <div className="quote-avatar">
-                <img src={jinSignatureAvatar} alt="Jin Studio Team" loading="lazy" decoding="async" />
-              </div>
-              <div>
-                <strong>Jin Studio Team</strong>
-                <span>Real Estate Media Operations</span>
-              </div>
-            </div>
-          </section>
-            </>
-          )}
-          {landingView === 'plans' && (
-            <section className="plans-section">
-              <div className="plans-hero">
-                <span className="plans-hero-badge">
-                  <span className="plans-hero-pill">Plans</span>
-                  <span>{copy.plansHeroKicker}</span>
-                </span>
-                <h1 className="plans-hero-title">{copy.plansHeroTitle}</h1>
-                <p className="plans-hero-sub">{copy.plansHeroSub}</p>
-                <div className="plans-hero-meta">
-                  <span><em>$0.25</em>{copy.plansMetaUnit}</span>
-                  <span className="plans-hero-meta-sep" aria-hidden="true" />
-                  <span><em>1 : 1</em>{copy.plansMetaPhoto}</span>
-                  <span className="plans-hero-meta-sep" aria-hidden="true" />
-                  <span><em>40%</em>{copy.plansMetaMax}</span>
-                </div>
-              </div>
-
-              <div className="plans-lock-banner" role="note">
-                <span className="plans-lock-pill">
-                  <svg className="plans-lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <rect x="3.5" y="10.5" width="17" height="11" rx="2" />
-                    <path d="M7 10.5V7a5 5 0 0 1 10 0v3.5" />
-                  </svg>
-                  <span>{copy.plansLockBadge}</span>
-                </span>
-                <div className="plans-lock-text">
-                  <strong>{copy.plansLockTitle}</strong>
-                  <span>{copy.plansLockSub}</span>
-                </div>
-              </div>
-
-              <div className="plans-tiers">
-                {[
-                  { id: 'p-100', amount: 100, points: 420, bonus: 20, off: 5, tag: copy.plansTagStarter, featured: false },
-                  { id: 'p-500', amount: 500, points: 2200, bonus: 200, off: 10, tag: copy.plansTagGrowth, featured: false },
-                  { id: 'p-1000', amount: 1000, points: 4800, bonus: 800, off: 20, tag: copy.plansTagPro, featured: true },
-                  { id: 'p-2000', amount: 2000, points: 11200, bonus: 3200, off: 40, tag: copy.plansTagStudio, featured: false }
-                ].map((tier) => (
-                  <article key={tier.id} className={`plans-tier-card${tier.featured ? ' is-featured' : ''}`}>
-                    {tier.featured && <span className="plans-tier-ribbon">{copy.plansBestValue}</span>}
-                    <span className="plans-tier-tag">{tier.tag}</span>
-                    <div className="plans-tier-price">
-                      <span className="plans-tier-currency">$</span>
-                      <span className="plans-tier-amount">{tier.amount.toLocaleString()}</span>
-                      <span className="plans-tier-unit">USD</span>
-                    </div>
-                    <div className="plans-tier-points">
-                      <strong>{tier.points.toLocaleString()}</strong>
-                      <span>{copy.plansCredits}</span>
-                    </div>
-                    <ul className="plans-tier-list">
-                      <li><span className="plans-tick" aria-hidden="true">+</span>{copy.plansOffLabel(tier.off)}</li>
-                      <li><span className="plans-tick" aria-hidden="true">+</span>{copy.plansBonusLabel(tier.bonus)}</li>
-                      <li><span className="plans-tick" aria-hidden="true">+</span>{copy.plansPerPhoto}</li>
-                    </ul>
-                    <button
-                      className="solid-button plans-tier-cta"
-                      type="button"
-                      onClick={() => (session ? navigateToRoute('studio') : openAuth('signup'))}
-                    >
-                      {copy.plansChoose}
-                    </button>
-                  </article>
-                ))}
-              </div>
-
-              <div className="plans-benefits">
-                <div className="plans-block-head">
-                  <span className="plans-block-kicker">{copy.plansBenefitsKicker}</span>
-                  <strong>{copy.plansBenefitsTitle}</strong>
-                </div>
-                <div className="plans-benefits-grid">
-                  {[
-                    { k: '01', t: copy.plansBen1Title, d: copy.plansBen1Desc },
-                    { k: '02', t: copy.plansBen2Title, d: copy.plansBen2Desc },
-                    { k: '03', t: copy.plansBen3Title, d: copy.plansBen3Desc },
-                    { k: '04', t: copy.plansBen4Title, d: copy.plansBen4Desc },
-                    { k: '05', t: copy.plansBen5Title, d: copy.plansBen5Desc },
-                    { k: '06', t: copy.plansBen6Title, d: copy.plansBen6Desc }
-                  ].map((benefit) => (
-                    <article key={benefit.k} className="plans-benefit-card">
-                      <span className="plans-benefit-index">{benefit.k}</span>
-                      <strong>{benefit.t}</strong>
-                      <p>{benefit.d}</p>
-                    </article>
-                  ))}
-                </div>
-              </div>
-
-              <div className="plans-scenes">
-                <div className="plans-block-head">
-                  <span className="plans-block-kicker">{copy.plansScenesKicker}</span>
-                  <strong>{copy.plansScenesTitle}</strong>
-                </div>
-                <div className="plans-scenes-grid plans-scenes-grid-3">
-                  {[
-                    { id: 's1', tag: copy.plansScene1Tag, title: copy.plansScene1Title, desc: copy.plansScene1Desc, metaLabel: copy.plansScene1MetaLabel, metaValue: copy.plansScene1MetaValue },
-                    { id: 's2', tag: copy.plansScene2Tag, title: copy.plansScene2Title, desc: copy.plansScene2Desc, metaLabel: copy.plansScene2MetaLabel, metaValue: copy.plansScene2MetaValue },
-                    { id: 's3', tag: copy.plansScene3Tag, title: copy.plansScene3Title, desc: copy.plansScene3Desc, metaLabel: copy.plansScene3MetaLabel, metaValue: copy.plansScene3MetaValue }
-                  ].map((scene) => (
-                    <article key={scene.id} className="plans-scene-card">
-                      <span className="plans-scene-tag">{scene.tag}</span>
-                      <strong>{scene.title}</strong>
-                      <p>{scene.desc}</p>
-                      <span className="plans-scene-rec">{scene.metaLabel}: <em>{scene.metaValue}</em></span>
-                    </article>
-                  ))}
-                </div>
-              </div>
-
-              <div className="plans-faq">
-                <div className="plans-block-head">
-                  <span className="plans-block-kicker">{copy.plansFaqKicker}</span>
-                  <strong>{copy.plansFaqTitle}</strong>
-                </div>
-                <div className="plans-faq-list">
-                  {[
-                    { q: copy.plansFaq1Q, a: copy.plansFaq1A },
-                    { q: copy.plansFaq2Q, a: copy.plansFaq2A },
-                    { q: copy.plansFaq3Q, a: copy.plansFaq3A },
-                    { q: copy.plansFaq5Q, a: copy.plansFaq5A }
-                  ].map((item, index) => (
-                    <details key={index} className="plans-faq-item">
-                      <summary>
-                        <span className="plans-faq-q">{item.q}</span>
-                        <span className="plans-faq-caret" aria-hidden="true">+</span>
-                      </summary>
-                      <p>{item.a}</p>
-                    </details>
-                  ))}
-                </div>
-              </div>
-
-              <div className="plans-cta-band">
-                <div>
-                  <strong>{copy.plansCtaTitle}</strong>
-                  <span>{copy.plansCtaSub}</span>
-                </div>
-                <button
-                  className="solid-button large rounded-pill plans-cta-btn"
-                  type="button"
-                  onClick={() => (session ? navigateToRoute('studio') : openAuth('signup'))}
-                >
-                  {copy.plansCtaBtn}
-                </button>
-              </div>
-            </section>
-          )}
-        </main>
+        <LandingPage
+          activeRoute={activeRoute === 'plans' ? 'plans' : 'home'}
+          copy={copy}
+          hasSession={Boolean(session)}
+          message={message}
+          onNavigate={navigateToRoute}
+          onOpenAuth={openAuth}
+        />
 
         {authOpen && !session && (
-          <div className="modal-backdrop" onClick={closeAuth}>
-            <div className="modal-card auth-card" onClick={(event) => event.stopPropagation()}>
-              <div className="auth-chip">Metrovan AI Access</div>
-              <div className="modal-head">
-                <div className="auth-copy">
-                  <strong>{authTitle}</strong>
-                  <span>{authSubtitle}</span>
-                </div>
-                <button className="close-button" type="button" onClick={closeAuth}>
-                  ×
-                </button>
-              </div>
-              {!isAuthLinkMode && (
-                <div className="auth-provider-stack">
-                  <button
-                    className="provider-button"
-                    type="button"
-                    onClick={handleGoogleAuth}
-                    disabled={authBusy || googleAuthEnabled === false}
-                  >
-                    <span className="provider-icon">G</span>
-                    <span>{copy.authUseGoogle}</span>
-                  </button>
-                  {googleAuthEnabled === false && <div className="provider-note">{copy.authGoogleComingSoon}</div>}
-                  <div className="auth-divider">
-                    <span>{copy.authUseEmail}</span>
-                  </div>
-                </div>
-              )}
-              {!isAuthLinkMode && (
-                <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
-                  <button
-                    className={`auth-tab${authMode === 'signin' ? ' active' : ''}`}
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('signin');
-                      setAuthMessage('');
-                    }}
-                    disabled={authBusy}
-                  >
-                    {copy.authModeSignin}
-                  </button>
-                  <button
-                    className={`auth-tab${authMode === 'signup' ? ' active' : ''}`}
-                    type="button"
-                    onClick={() => {
-                      setAuthMode('signup');
-                      setAuthMessage('');
-                    }}
-                    disabled={authBusy}
-                  >
-                    {copy.authModeSignup}
-                  </button>
-                </div>
-              )}
-              {authMessage && <div className="auth-feedback">{authMessage}</div>}
-              <div className="form-grid">
-                {authMode === 'signup' && (
-                  <label>
-                    <span>{copy.authName}</span>
-                    <input
-                      disabled={authBusy}
-                      value={auth.name}
-                      onChange={(event) => setAuth((current) => ({ ...current, name: event.target.value }))}
-                      placeholder="zhou jin"
-                    />
-                  </label>
-                )}
-                {authMode !== 'reset-confirm' && authMode !== 'verify-email' && (
-                  <label>
-                    <span>{copy.authEmail}</span>
-                    <input
-                      disabled={authBusy}
-                      type="email"
-                      autoComplete={authMode === 'signin' ? 'username' : 'email'}
-                      value={auth.email}
-                      onChange={(event) => setAuth((current) => ({ ...current, email: event.target.value }))}
-                      placeholder="name@email.com"
-                    />
-                  </label>
-                )}
-                {authMode !== 'reset-request' && authMode !== 'verify-email' && (
-                  <label>
-                    <span>{authMode === 'reset-confirm' ? copy.authNewPassword : copy.authPassword}</span>
-                    <input
-                      disabled={authBusy}
-                      type="password"
-                      autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
-                      value={auth.password}
-                      onChange={(event) => setAuth((current) => ({ ...current, password: event.target.value }))}
-                      placeholder={authMode === 'reset-confirm' ? copy.authNewPasswordPlaceholder : copy.authPasswordPlaceholder}
-                    />
-                  </label>
-                )}
-                {authMode === 'signin' && (
-                  <div className="auth-inline-actions">
-                    <button className="text-link auth-inline-link" type="button" onClick={handleForgotPassword} disabled={authBusy}>
-                      {copy.authForgotPassword}
-                    </button>
-                  </div>
-                )}
-                {(authMode === 'signup' || authMode === 'reset-confirm') && (
-                  <label>
-                    <span>{copy.authConfirmPassword}</span>
-                    <input
-                      disabled={authBusy}
-                      type="password"
-                      autoComplete="new-password"
-                      value={auth.confirmPassword}
-                      onChange={(event) => setAuth((current) => ({ ...current, confirmPassword: event.target.value }))}
-                      placeholder={copy.authConfirmPasswordPlaceholder}
-                    />
-                  </label>
-                )}
-              </div>
-              <div className="modal-actions auth-actions">
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => {
-                    if (authMode === 'reset-confirm' || authMode === 'verify-email') {
-                      clearAuthTokenQuery();
-                    }
-                    setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
-                    setAuthMessage('');
-                  }}
-                  disabled={authBusy}
-                >
-                  {isAuthLinkMode ? copy.authBackToLogin : authMode === 'signin' ? copy.authNoAccount : copy.authHasAccount}
-                </button>
-                {!isEmailVerifyMode && (
-                  <button className="solid-button auth-submit" type="button" onClick={submitAuth} disabled={authBusy}>
-                    {authSubmitLabel}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
+          <AuthModal
+            copy={copy}
+            authMode={authMode}
+            authBusy={authBusy}
+            auth={auth}
+            authTitle={authTitle}
+            authSubtitle={authSubtitle}
+            authMessage={authMessage}
+            authSubmitLabel={authSubmitLabel}
+            googleAuthEnabled={googleAuthEnabled}
+            isAuthLinkMode={isAuthLinkMode}
+            isEmailVerifyMode={isEmailVerifyMode}
+            onClose={closeAuth}
+            onGoogleAuth={handleGoogleAuth}
+            onSelectMode={(mode) => {
+              setAuthMode(mode);
+              setAuthMessage('');
+            }}
+            onAuthChange={(patch) => setAuth((current) => ({ ...current, ...patch }))}
+            onForgotPassword={handleForgotPassword}
+            onToggleMode={() => {
+              if (authMode === 'reset-confirm' || authMode === 'verify-email') {
+                clearAuthTokenQuery();
+              }
+              setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+              setAuthMessage('');
+            }}
+            onSubmit={submitAuth}
+          />
         )}
       </>
     );
@@ -6189,6 +5882,18 @@ function App() {
             </button>
           )}
           <div className="header-actions">
+            {!isDemoMode && (
+              <button
+                className="studio-new-project-trigger"
+                type="button"
+                onClick={() => {
+                  setCurrentProjectId(null);
+                  setMessage('');
+                }}
+              >
+                {copy.newProject}
+              </button>
+            )}
             <button className="studio-guide-trigger" type="button" onClick={openStudioGuide}>
               {copy.studioGuideOpen}
             </button>
@@ -6239,9 +5944,6 @@ function App() {
                 <strong>{copy.historyProjects}</strong>
                 <span>{isDemoMode ? copy.historyProjectsHintDemo : copy.historyProjectsHint}</span>
               </div>
-              <button className="solid-button small" type="button" onClick={() => setCreateDialogOpen(true)}>
-                {copy.newProject}
-              </button>
             </div>
 
             <div className="project-list">
@@ -6287,13 +5989,61 @@ function App() {
 
           <section className="workspace">
             {!currentProject ? (
-              <div className="workspace-empty">
-                <strong>{copy.createFirstProject}</strong>
-                <p>{copy.createFirstProjectHint}</p>
-                <button className="solid-button" type="button" onClick={() => setCreateDialogOpen(true)}>
-                  {copy.newProject}
-                </button>
-              </div>
+              <section className="feature-launch-panel">
+                <div className="feature-launch-head">
+                  <div>
+                    <h1>新建项目</h1>
+                    <p>选择最贴合您拍摄场景的修图功能。每张功能卡片对应一条经过调校的处理流程，所需积分实时显示。</p>
+                  </div>
+                  <div className="feature-filter-row" aria-label="Feature categories">
+                    <span className="active">全部</span>
+                    <span>室内</span>
+                    <span>室外</span>
+                    <span>特殊场景</span>
+                    <span>新功能</span>
+                  </div>
+                </div>
+                <div className="feature-card-grid">
+                  {STUDIO_FEATURES.map((feature) => {
+                    const locked = feature.status === 'locked';
+                    return (
+                      <button
+                        key={feature.id}
+                        className={`studio-feature-card tone-${feature.tone}${locked ? ' locked' : ''}`}
+                        type="button"
+                        onClick={() => openFeatureProjectDialog(feature)}
+                        disabled={locked}
+                      >
+                        <div className="studio-feature-visual">
+                          {feature.beforeImage && feature.afterImage ? (
+                            <>
+                              <img className="studio-feature-before" src={feature.beforeImage} alt="" loading="lazy" decoding="async" />
+                              <img className="studio-feature-after" src={feature.afterImage} alt="" loading="lazy" decoding="async" />
+                              <span className="studio-feature-scanline" aria-hidden="true" />
+                            </>
+                          ) : (
+                            <span className="studio-feature-gradient" aria-hidden="true" />
+                          )}
+                          <span className="studio-feature-tag">{feature.tag[locale]}</span>
+                          {locked && <span className="studio-feature-lock">建设中</span>}
+                        </div>
+                        <div className="studio-feature-body">
+                          <strong>{feature.title[locale]}</strong>
+                          <p>{feature.description[locale]}</p>
+                          <div className="studio-feature-meta">
+                            <span>{feature.exposureLabel[locale]}</span>
+                            <em>{feature.pointLabel[locale]}</em>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="feature-launch-note">
+                  <strong>{availableFeatureCount}</strong>
+                  <span>个功能可用，更多功能正在接入。</span>
+                </div>
+              </section>
             ) : (
               <>
                 <section className="panel project-head-card">
@@ -6352,7 +6102,7 @@ function App() {
                         <strong>{workspacePointsEstimate}</strong>
                       </div>
                       {showRetryProcessingAction && (
-                        <button className="ghost-button compact" type="button" onClick={() => void handleStartProcessing()} disabled={busy}>
+                        <button className="ghost-button compact" type="button" onClick={() => void handleStartProcessing({ retryFailed: true })} disabled={busy}>
                           {copy.retryProcessing}
                         </button>
                       )}
@@ -7222,6 +6972,116 @@ function App() {
       )}
 
       {createDialogOpen && (
+        <div className="modal-backdrop" onClick={closeCreateProjectDialog}>
+          <div className="modal-card feature-create-modal" onClick={(event) => event.stopPropagation()}>
+            <button className="feature-create-close" type="button" onClick={closeCreateProjectDialog} aria-label={copy.close}>
+              ×
+            </button>
+
+            <section className={`feature-create-summary tone-${selectedFeature.tone}`}>
+              <div className="feature-create-icon" aria-hidden="true">
+                {selectedFeature.beforeImage && selectedFeature.afterImage ? (
+                  <>
+                    <img src={selectedFeature.beforeImage} alt="" decoding="async" />
+                    <img src={selectedFeature.afterImage} alt="" decoding="async" />
+                  </>
+                ) : (
+                  <span />
+                )}
+              </div>
+              <div>
+                <strong>{selectedFeature.title[locale]}</strong>
+                <span>{selectedFeature.detail[locale]}</span>
+              </div>
+            </section>
+
+            <div className="feature-create-body">
+              <div className="feature-create-title">
+                <h2>{copy.createProjectTitle}</h2>
+                <p>{locale === 'en' ? 'Name this project and upload the photos that need processing.' : '为这个项目命名，并上传需要处理的照片。'}</p>
+              </div>
+
+              <label className="feature-create-field">
+                <span>{copy.projectName}</span>
+                <input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder={selectedFeature.defaultName[locale]} />
+              </label>
+
+              <label className="feature-create-field feature-create-priority">
+                <span>{locale === 'en' ? 'Processing priority' : '处理优先级'}</span>
+                <select defaultValue="standard" aria-label={locale === 'en' ? 'Processing priority' : '处理优先级'}>
+                  <option value="standard">{locale === 'en' ? 'Standard (starts within 10 minutes)' : '标准（10 分钟内开始）'}</option>
+                  <option value="normal">{locale === 'en' ? 'Normal queue' : '普通队列'}</option>
+                </select>
+              </label>
+
+              <div
+                className={`feature-create-dropzone${createDialogDragActive ? ' drag-active' : ''}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => createFileInputRef.current?.click()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    createFileInputRef.current?.click();
+                  }
+                }}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setCreateDialogDragActive(true);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setCreateDialogDragActive(true);
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  setCreateDialogDragActive(false);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setCreateDialogDragActive(false);
+                  handleCreateDialogFiles(event.dataTransfer.files);
+                }}
+              >
+                <input
+                  ref={createFileInputRef}
+                  type="file"
+                  multiple
+                  accept={IMPORT_FILE_ACCEPT}
+                  onChange={(event) => {
+                    handleCreateDialogFiles(event.target.files);
+                    event.target.value = '';
+                  }}
+                />
+                <span className="feature-create-upload-arrow" aria-hidden="true">↑</span>
+                <strong>{locale === 'en' ? 'Drag RAW / JPG here, or click to choose files' : '拖拽 RAW / JPG 到这里，或点击选择文件'}</strong>
+                <em>{locale === 'en' ? 'Supports ARW, CR2, CR3, NEF, RAF, DNG, JPG · up to 2 GB per file' : '支持 ARW、CR2、CR3、NEF、RAF、DNG、JPG · 单张最大 2 GB'}</em>
+              </div>
+
+              {createDialogFiles.length > 0 && (
+                <div className="feature-create-selected-files" aria-live="polite">
+                  <strong>{locale === 'en' ? `${createDialogFiles.length} files selected` : `已选择 ${createDialogFiles.length} 张照片`}</strong>
+                  <span>
+                    {createDialogFiles.slice(0, 3).map((file) => file.name).join(' · ')}
+                    {createDialogFiles.length > 3 ? ' · ...' : ''}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-actions feature-create-actions">
+              <button className="ghost-button" type="button" onClick={closeCreateProjectDialog} disabled={busy}>
+                {copy.cancel}
+              </button>
+              <button className="solid-button" type="button" onClick={() => void handleCreateProject(true)} disabled={busy}>
+                {busy ? copy.authWorking : locale === 'en' ? 'Create project and start' : '创建项目并开始'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {false && createDialogOpen && (
         <div className="modal-backdrop" onClick={() => setCreateDialogOpen(false)}>
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">

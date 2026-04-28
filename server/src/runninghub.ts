@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { openAsBlob } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { delay, ensureDir } from './utils.js';
 
 const BASE_URL = 'https://www.runninghub.cn/';
@@ -67,6 +69,22 @@ function ensureApiKey(apiKey: string) {
   if (!apiKey?.trim()) {
     throw new Error('Missing RunningHub API key.');
   }
+}
+
+function isTransientRunningHubError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('task_queue_maxed') ||
+    normalized.includes('queue') ||
+    normalized.includes('525') ||
+    normalized.includes('fetch failed') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('etimedout') ||
+    normalized.includes('timeout') ||
+    normalized.includes('temporarily') ||
+    normalized.includes('too many')
+  );
 }
 
 async function ensureSuccess(response: Response) {
@@ -182,28 +200,42 @@ export class RunningHubClient {
     instanceType: string
   ) {
     ensureApiKey(apiKey);
-    const response = await fetch(new URL('task/openapi/create', BASE_URL), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey.trim()}`,
-        Host: 'www.runninghub.cn',
-        Accept: 'application/json'
-      },
-      body: JSON.stringify({
-        apiKey: apiKey.trim(),
-        workflowId: workflowId.trim(),
-        nodeInfoList,
-        ...(instanceType?.trim() ? { instanceType: instanceType.trim() } : {})
-      })
-    });
-    const parsed = await ensureSuccess(response);
-    const data = nested(parsed, 'data');
-    const taskId = firstNonEmpty(text(data, 'taskId'), text(parsed, 'taskId'), data ? String(data) : '');
-    if (!taskId) {
-      throw new Error('RunningHub create response missing taskId.');
+
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= 10; attempt += 1) {
+      try {
+        const response = await fetch(new URL('task/openapi/create', BASE_URL), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey.trim()}`,
+            Host: 'www.runninghub.cn',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({
+            apiKey: apiKey.trim(),
+            workflowId: workflowId.trim(),
+            nodeInfoList,
+            ...(instanceType?.trim() ? { instanceType: instanceType.trim() } : {})
+          })
+        });
+        const parsed = await ensureSuccess(response);
+        const data = nested(parsed, 'data');
+        const taskId = firstNonEmpty(text(data, 'taskId'), text(parsed, 'taskId'), data ? String(data) : '');
+        if (!taskId) {
+          throw new Error('RunningHub create response missing taskId.');
+        }
+        return taskId;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= 10 || !isTransientRunningHubError(error)) {
+          break;
+        }
+        await delay(Math.min(30000, 2500 * attempt));
+      }
     }
-    return taskId;
+
+    throw new Error(lastError instanceof Error ? lastError.message : String(lastError));
   }
 
   async getTaskStatus(apiKey: string, taskId: string): Promise<RunningHubStatusResult> {
@@ -288,7 +320,23 @@ export class RunningHubClient {
     const deadline = Date.now() + maxWaitSeconds * 1000;
 
     while (Date.now() < deadline) {
-      const status = await this.getTaskStatus(apiKey, taskId);
+      let status: RunningHubStatusResult;
+      try {
+        status = await this.getTaskStatus(apiKey, taskId);
+      } catch (error) {
+        if (!isTransientRunningHubError(error)) {
+          throw error;
+        }
+        onProgress?.({
+          taskStatus: 'RUNNING',
+          monitorState: 'retrying',
+          detail: error instanceof Error ? error.message : String(error),
+          remoteProgress: 0,
+          queuePosition: 0
+        });
+        await delay(5000);
+        continue;
+      }
       onProgress?.({
         taskStatus: status.status || 'RUNNING',
         monitorState: status.queuePosition > 0 ? 'polling' : 'connected',
@@ -321,13 +369,29 @@ export class RunningHubClient {
   }
 
   async downloadFile(url: string, targetPath: string) {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`File download failed: ${response.status} ${await response.text()}`);
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`File download failed: ${response.status} ${await response.text()}`);
+        }
+        if (!response.body) {
+          throw new Error('File download failed: empty response body.');
+        }
+
+        ensureDir(path.dirname(targetPath));
+        await pipeline(Readable.fromWeb(response.body as unknown as Parameters<typeof Readable.fromWeb>[0]), fs.createWriteStream(targetPath));
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= 4 || !isTransientRunningHubError(error)) {
+          break;
+        }
+        await delay(2000 * attempt);
+      }
     }
 
-    ensureDir(path.dirname(targetPath));
-    const arrayBuffer = await response.arrayBuffer();
-    fs.writeFileSync(targetPath, new Uint8Array(arrayBuffer));
+    throw new Error(lastError instanceof Error ? lastError.message : String(lastError));
   }
 }

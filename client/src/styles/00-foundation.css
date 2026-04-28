@@ -1,0 +1,794 @@
+@import url('https://api.fontshare.com/v2/css?f[]=clash-display@500,600,700&f[]=general-sans@400,500,600,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  color: #f5f7fb;
+  background: #040404;
+
+  --hp-display: 'Space Grotesk', 'Clash Display', 'General Sans',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --hp-body: 'Inter', 'General Sans', system-ui, -apple-system,
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --hp-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular,
+    'PingFang SC', 'Microsoft YaHei', monospace;
+
+  --landing-display-font: var(--hp-display);
+  --landing-text-font: var(--hp-body);
+
+  --fs-display: clamp(2.4rem, 5.4vw, 4.6rem);
+  --fs-section: clamp(1.6rem, 2.6vw, 2.4rem);
+  --fs-kicker: 0.7rem;
+
+  --ls-display: -0.03em;
+  --ls-section: -0.015em;
+  --ls-kicker: 0.18em;
+
+  --lh-display: 1.04;
+  --lh-body: 1.6;
+
+  --r-sm: 0.5rem;
+  --r-md: 0.85rem;
+  --r-lg: 1.2rem;
+  --r-pill: 999px;
+
+  --accent: #7ce8ff;
+  --accent-rgb: 124, 232, 255;
+  --accent-soft: rgba(var(--accent-rgb), 0.32);
+  --accent-line: rgba(var(--accent-rgb), 0.18);
+  --accent-glow: rgba(var(--accent-rgb), 0.55);
+
+  --elev-1: 0 14px 36px -22px rgba(0, 0, 0, 0.65);
+  --elev-2: 0 36px 90px -36px rgba(var(--accent-rgb), 0.3),
+    0 18px 48px -28px rgba(0, 0, 0, 0.6);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+.landing-shell,
+.studio-shell {
+  position: relative;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top center, rgba(26, 66, 110, 0.36), transparent 32%),
+    radial-gradient(circle at 80% 20%, rgba(98, 34, 83, 0.18), transparent 24%),
+    #040404;
+}
+
+.ambient-layer {
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.7)),
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.05), transparent 44%);
+  pointer-events: none;
+}
+
+.studio-ambient {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.88)),
+    radial-gradient(circle at 50% 0%, rgba(57, 113, 162, 0.14), transparent 30%);
+}
+
+.landing-nav,
+.studio-header {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.4rem 2rem;
+}
+
+.studio-header {
+  z-index: 24;
+  max-width: 1460px;
+  margin: 0 auto 1rem;
+  padding: 0.72rem 0.96rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.95rem;
+  background:
+    linear-gradient(180deg, rgba(11, 14, 18, 0.88), rgba(8, 9, 11, 0.78)),
+    radial-gradient(circle at 50% 0%, rgba(53, 112, 171, 0.16), transparent 42%);
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(14px);
+}
+
+.brand-button,
+.user-pill {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0;
+}
+
+.brand-button img {
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 0.9rem;
+}
+
+.studio-brand-mark {
+  width: 18px !important;
+  height: 22px !important;
+  border-radius: 0 !important;
+  object-fit: cover;
+  object-position: center top;
+  mix-blend-mode: screen;
+}
+
+.studio-brand-mark-shell,
+.landing-brand-mark-shell {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.studio-brand-mark-shell {
+  width: 30px;
+  height: 30px;
+}
+
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+
+.brand-copy strong,
+.project-head-card h2,
+.group-card-head strong,
+.project-tile-head strong,
+.empty-state strong,
+.workspace-empty strong,
+.panel-head strong,
+.viewer-caption strong {
+  font-weight: 700;
+}
+
+.brand-copy em,
+.muted,
+.project-tile-head span,
+.project-tile-head em,
+.project-head-card p,
+.panel-head span,
+.processing-copy span,
+.group-card-head span,
+.group-note,
+.asset-body span,
+.result-body span,
+.empty-state span,
+.workspace-empty p,
+.viewer-caption span {
+  font-style: normal;
+  color: rgba(240, 244, 252, 0.62);
+}
+
+.project-head-card p,
+.processing-copy span,
+.group-note {
+  display: none;
+}
+
+.header-center {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+}
+
+.studio-header .brand-button {
+  gap: 0.8rem;
+}
+
+.studio-header .brand-copy {
+  gap: 0.05rem;
+}
+
+.studio-header .brand-copy strong {
+  font-size: 0.94rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.studio-header .brand-copy em {
+  font-size: 0.68rem;
+  color: rgba(240, 244, 252, 0.56);
+}
+
+.header-actions,
+.landing-actions,
+.modal-actions,
+.project-meta,
+.project-tile-actions,
+.review-actions,
+.group-chips,
+.processing-stats,
+.upload-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sidebar-head .solid-button {
+  flex: none;
+  white-space: nowrap;
+  min-height: 36px;
+  padding-inline: 0.78rem;
+  font-size: 0.72rem;
+}
+
+.points-pill,
+.meta-pill,
+.hero-chip,
+.metric-box,
+.global-message,
+.project-tile,
+.panel,
+.group-card,
+.sidebar-card,
+.modal-card,
+.viewer-shell,
+.hero-card,
+.upload-dropzone,
+.step-card,
+.result-card,
+.empty-state,
+.workspace-empty {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(13, 13, 15, 0.78);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(16px);
+}
+
+.points-pill,
+.meta-pill,
+.hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  padding: 0.52rem 0.9rem;
+  font-size: 0.82rem;
+}
+
+.points-pill strong,
+.metric-box strong,
+.hero-metrics strong {
+  font-size: 1rem;
+}
+
+.avatar {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.points-plus {
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  color: #09090b;
+  font-size: 0.9rem;
+  line-height: 1;
+  display: inline-grid;
+  place-items: center;
+}
+
+.billing-card {
+  width: min(720px, calc(100vw - 2rem));
+}
+
+.billing-summary-grid,
+.billing-package-grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.billing-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 1rem;
+}
+
+.billing-package-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 1rem;
+}
+
+.recharge-package-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.billing-stat-card,
+.billing-package-card,
+.billing-entry-panel {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 1rem;
+}
+
+.billing-stat-card,
+.billing-package-card {
+  padding: 0.9rem 1rem;
+}
+
+.billing-stat-card,
+.billing-package-card,
+.billing-entry-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.billing-stat-card span,
+.billing-package-card span,
+.billing-entry-row span {
+  color: rgba(240, 244, 252, 0.58);
+  font-size: 0.78rem;
+}
+
+.billing-stat-card strong,
+.billing-package-card strong,
+.billing-entry-amount {
+  font-size: 1rem;
+}
+
+.billing-package-card {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.billing-recharge-bar,
+.recharge-summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.billing-recharge-bar > div,
+.recharge-summary-card > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.recharge-card {
+  width: min(760px, calc(100vw - 2rem));
+}
+
+.recharge-tier-head {
+  margin-top: 0.25rem;
+}
+
+.recharge-custom-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: 0.7rem;
+  margin-bottom: 0.8rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.recharge-custom-panel.active {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.recharge-custom-preview {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 0.9rem;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.recharge-custom-preview strong {
+  font-size: 0.95rem;
+}
+
+.recharge-custom-preview span {
+  color: rgba(240, 244, 252, 0.58);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.recharge-offer-panel {
+  margin-bottom: 0.8rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.recharge-compact-panel {
+  margin-bottom: 0.8rem;
+}
+
+.recharge-code-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.recharge-code-field span {
+  color: rgba(240, 244, 252, 0.86);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.recharge-code-field input {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 0.95rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  padding: 0.78rem 0.9rem;
+  outline: none;
+}
+
+.recharge-inline-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.recharge-inline-preview {
+  min-width: 6.8rem;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.72rem 0.9rem;
+  border-radius: 0.95rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(240, 244, 252, 0.78);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.recharge-code-field input::placeholder {
+  color: rgba(255, 255, 255, 0.34);
+}
+
+.recharge-code-field input:focus {
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.recharge-code-hint {
+  margin: 0.7rem 0 0;
+  color: rgba(240, 244, 252, 0.56);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.recharge-code-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.recharge-code-actions .recharge-code-hint {
+  flex: 1 1 18rem;
+  margin: 0;
+}
+
+.recharge-code-actions .ghost-button.small {
+  min-height: 2.4rem;
+  padding: 0.65rem 0.95rem;
+  white-space: nowrap;
+}
+
+.recharge-coupon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.recharge-coupon-card {
+  padding: 0.9rem 0.95rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.95rem;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  text-align: left;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.recharge-coupon-card strong {
+  font-size: 1rem;
+}
+
+.recharge-coupon-card span {
+  font-size: 0.8rem;
+  color: rgba(240, 244, 252, 0.6);
+}
+
+.recharge-coupon-card.active,
+.recharge-package-card.active {
+  border-color: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.recharge-package-head {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.recharge-package-meta {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.recharge-package-meta b {
+  font-size: 0.88rem;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.recharge-package-points {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.billing-package-card em {
+  font-style: normal;
+  color: rgba(240, 244, 252, 0.72);
+  font-size: 0.82rem;
+}
+
+.billing-entry-panel {
+  padding: 1rem;
+}
+
+.panel-head.compact {
+  margin-bottom: 0.85rem;
+}
+
+.billing-entry-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.billing-entry-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.billing-entry-row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.billing-entry-row > div:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.billing-entry-amount {
+  display: grid;
+  justify-items: end;
+  gap: 0.15rem;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.billing-entry-amount strong {
+  font-size: 0.96rem;
+  line-height: 1.1;
+}
+
+.billing-entry-amount span {
+  font-size: 0.78rem;
+}
+
+.billing-entry-amount.credit {
+  color: #a7f3d0;
+}
+
+.billing-entry-amount.charge {
+  color: #fecaca;
+}
+
+.billing-empty-state {
+  min-height: 0;
+}
+
+@media (max-width: 960px) {
+  .recharge-custom-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recharge-coupon-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .recharge-package-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .billing-recharge-bar,
+  .recharge-summary-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 720px) {
+  .recharge-coupon-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recharge-inline-control {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recharge-inline-preview,
+  .recharge-code-actions .ghost-button.small {
+    width: 100%;
+  }
+}
+
+.user-pill-chevron {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.points-pill {
+  gap: 0.6rem;
+}
+
+.points-pill strong {
+  font-size: 0.88rem;
+}
+
+.user-pill {
+  gap: 0.65rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.95rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.user-pill span:not(.avatar):not(.user-pill-chevron) {
+  font-size: 0.86rem;
+}
+
+@media (max-width: 900px) {
+  .billing-summary-grid,
+  .billing-package-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.solid-button,
+.ghost-button,
+.text-link,
+.segmented button,
+.asset-delete,
+.viewer-arrow,
+.close-button {
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+}
+
+.solid-button,
+.ghost-button,
+.text-link,
+.color-editor input,
+.form-grid input,
+.asset-body select,
+.segmented,
+.color-editor,
+.close-button {
+  border-radius: 0.9rem;
+}
+
+.solid-button,
+.ghost-button,
+.text-link,
+.close-button,
+.asset-body select,
+.color-editor input {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.85rem 1.15rem;
+}
+
+.solid-button {
+  background: #ffffff;
+  color: #050505;
+  border-color: #ffffff;
+}
+
+.ghost-button,
+.text-link,
+.asset-body select,
+.color-editor input,
+.close-button {
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+}
+
+.solid-button.small,
+.ghost-button.small,
+.asset-delete,
+.close-button {
+  padding: 0.62rem 0.95rem;
+}
+
+.ghost-button.compact {
+  padding: 0.55rem 0.85rem;
+}
+
+.solid-button.large {
+  padding: 1rem 1.4rem;
+}
+
+.text-link {
+  background: transparent;
+  border-color: transparent;
+}
+
+.solid-button:hover,
+.ghost-button:hover,
+.text-link:hover,
+.segmented button:hover,
+.asset-delete:hover,
+.viewer-arrow:hover,
+.close-button:hover {
+  transform: translateY(-1px);
+}

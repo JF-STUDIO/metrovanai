@@ -1,7 +1,5 @@
 import './env.js';
-import cors from 'cors';
 import express from 'express';
-import helmet from 'helmet';
 import multer from 'multer';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -70,7 +68,10 @@ import type {
 } from './types.js';
 import { isImageExtension, isRawExtension, sanitizeSegment } from './utils.js';
 import { buildDeploymentReadiness } from './deployment-readiness.js';
-import { captureServerError, createTraceId, initServerObservability, logServerEvent } from './observability.js';
+import { createCorsMiddleware } from './middleware/cors.js';
+import { createHelmetMiddleware, createSecurityHeadersMiddleware } from './middleware/security-headers.js';
+import { traceIdMiddleware } from './middleware/trace-id.js';
+import { captureServerError, initServerObservability, logServerEvent } from './observability.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1880,53 +1881,9 @@ const upload = multer({
   })
 });
 
-function isAllowedCorsOrigin(origin: string | undefined) {
-  if (!origin) {
-    return true;
-  }
-
-  try {
-    const parsed = new URL(origin);
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-      return true;
-    }
-    return (
-      origin === 'https://metrovanai.com' ||
-      origin === 'https://www.metrovanai.com' ||
-      origin === 'https://api.metrovanai.com'
-    );
-  } catch {
-    return false;
-  }
-}
-
-app.use(
-  helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false,
-    crossOriginOpenerPolicy: false,
-    crossOriginResourcePolicy: false,
-    hsts: false,
-    originAgentCluster: false,
-    referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
-  })
-);
-app.use((req, res, next) => {
-  const traceId = createTraceId('req');
-  (req as express.Request & { traceId?: string }).traceId = traceId;
-  res.setHeader('X-Metrovan-Trace-Id', traceId);
-  next();
-});
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  if (shouldUseSecureCookies(req)) {
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
-  next();
-});
+app.use(createHelmetMiddleware());
+app.use(traceIdMiddleware);
+app.use(createSecurityHeadersMiddleware(shouldUseSecureCookies));
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   if (!isStripeConfigured() || !getStripeWebhookSecret()) {
     res.status(503).json({ error: 'Stripe webhook is not configured.' });
@@ -1994,14 +1951,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req,
     res.status(500).json({ error: 'Stripe webhook handling failed.' });
   }
 });
-app.use(
-  cors({
-    origin(origin, callback) {
-      callback(null, isAllowedCorsOrigin(origin) ? origin || true : false);
-    },
-    credentials: true
-  })
-);
+app.use(createCorsMiddleware());
 app.use(express.json({ limit: '1mb' }));
 app.post('/api/observability/client-event', (req, res) => {
   const parsed = clientEventSchema.safeParse(req.body);
@@ -4018,7 +3968,12 @@ app.post('/api/projects/:id/start', async (req, res) => {
       }
     });
 
-    const project = await processor.start(projectId);
+    const hasRetriableFailedItems = ownedProject.hdrItems.some(
+      (item) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl)
+    );
+    const project = await processor.start(projectId, {
+      retryFailed: ownedProject.status === 'failed' || hasRetriableFailedItems
+    });
     if (!project) {
       res.status(404).json({ error: 'Project not found.' });
       return;
@@ -4027,6 +3982,66 @@ app.post('/api/projects/:id/start', async (req, res) => {
   } catch (error) {
     captureServerError(error, {
       event: 'project.start.failed',
+      traceId: (req as express.Request & { traceId?: string }).traceId ?? null,
+      userKey: user.userKey,
+      projectId,
+      phase: ownedProject.job?.phase ?? ownedProject.job?.status ?? null
+    });
+    res.status(500).json({ error: getPublicErrorMessage(error) });
+  }
+});
+
+app.post('/api/projects/:id/retry-failed', async (req, res) => {
+  const user = requireAuthenticatedUser(req, res);
+  if (!user) {
+    return;
+  }
+
+  const projectId = String(req.params.id ?? '');
+  const ownedProject = store.getProjectForUser(projectId, user.userKey);
+  if (!ownedProject) {
+    res.status(404).json({ error: 'Project not found.' });
+    return;
+  }
+
+  const failedItems = ownedProject.hdrItems.filter(
+    (item) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl)
+  );
+  if (!failedItems.length) {
+    respondWithProject(res, ownedProject);
+    return;
+  }
+
+  try {
+    const reservation = store.reserveProjectProcessingCredits(projectId, POINT_PRICE_USD);
+    if (!reservation.ok) {
+      res.status(402).json({
+        error:
+          reservation.error ||
+          `Insufficient credits. Current balance ${reservation.availablePoints}, required ${reservation.requiredPoints}.`
+      });
+      return;
+    }
+
+    writeSecurityAuditLog(req, {
+      action: 'project.processing.retry_failed',
+      targetUserId: user.id,
+      targetProjectId: projectId,
+      details: {
+        failedItems: failedItems.length,
+        reservedEntryId: reservation.entry?.id ?? null
+      }
+    });
+
+    const project = await processor.start(projectId, { retryFailed: true });
+    if (!project) {
+      res.status(404).json({ error: 'Project not found.' });
+      return;
+    }
+    respondWithProject(res, project);
+  } catch (error) {
+    captureServerError(error, {
+      event: 'project.retry_failed.failed',
       traceId: (req as express.Request & { traceId?: string }).traceId ?? null,
       userKey: user.userKey,
       projectId,

@@ -8,6 +8,7 @@ tmp/
 test-results/
 coverage/
 __pycache__/
+codex-backups/
 deployment/local-server.production.json
 deployment/cloudflare-tunnel/config.yml
 *.tsbuildinfo

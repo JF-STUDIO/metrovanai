@@ -21,6 +21,7 @@ export interface TaskExecutionProviderInfo {
 
 export interface WorkflowExecutionProgress {
   hdrItemId?: string;
+  stage?: 'runpod' | 'runninghub';
   monitorState: string;
   detail: string;
   remoteProgress: number;
@@ -75,6 +76,14 @@ export interface TaskExecutionRunContext {
     onProgress?: (update: WorkflowExecutionProgress) => void,
     options?: WorkflowExecutionOptions
   ): Promise<WorkflowExecutionArtifact>;
+  recoverWorkflowTask?(
+    project: ProjectRecord,
+    hdrItem: HdrItem,
+    mergedPath: string,
+    mergedFileName: string,
+    onProgress?: (update: WorkflowExecutionProgress) => void,
+    options?: WorkflowExecutionOptions
+  ): Promise<WorkflowExecutionArtifact | null>;
   executeWorkflowBatch?(
     project: ProjectRecord,
     items: WorkflowBatchExecutionItem[],
@@ -663,6 +672,7 @@ async function executeRunningHubWorkflowFromFile(input: {
   );
 
   input.onProgress?.({
+    stage: 'runninghub',
     monitorState: 'submitted',
     detail: `task ${taskId} submitted`,
     remoteProgress: 0,
@@ -671,17 +681,37 @@ async function executeRunningHubWorkflowFromFile(input: {
     taskId
   });
 
+  return await downloadRunningHubTaskResult({
+    ...input,
+    taskId,
+    workflowName: route.workflow.name
+  });
+}
+
+async function downloadRunningHubTaskResult(input: {
+  store: LocalStore;
+  workflowConfig: ReturnType<typeof loadWorkflowConfig>;
+  runningHub: RunningHubClient;
+  project: ProjectRecord;
+  hdrItem: HdrItem;
+  taskId: string;
+  workflowName: string;
+  inputFileName: string;
+  onProgress?: (update: WorkflowExecutionProgress) => void;
+  options?: WorkflowExecutionOptions;
+}) {
   const outputs = await input.runningHub.waitTask(
     input.workflowConfig.apiKey,
-    taskId,
+    input.taskId,
     (update) => {
       input.onProgress?.({
+        stage: 'runninghub',
         monitorState: update.monitorState,
         detail: update.detail,
         remoteProgress: update.remoteProgress,
         queuePosition: update.queuePosition,
-        workflowName: route.workflow.name,
-        taskId
+        workflowName: input.workflowName,
+        taskId: input.taskId
       });
     },
     3600
@@ -695,7 +725,7 @@ async function executeRunningHubWorkflowFromFile(input: {
   const tempDownloadPath = path.join(
     process.env.TEMP ?? process.cwd(),
     'metrovan_downloads',
-    `${taskId}${path.extname(outputUrl.split('?')[0] ?? '.png') || '.png'}`
+    `${input.taskId}${path.extname(outputUrl.split('?')[0] ?? '.png') || '.png'}`
   );
   await input.runningHub.downloadFile(outputUrl, tempDownloadPath);
 
@@ -722,6 +752,46 @@ async function executeRunningHubWorkflowFromFile(input: {
     resultFileName: path.basename(resultPath),
     resultStorageKey: mirrored?.storageKey ?? null
   };
+}
+
+async function recoverRunningHubWorkflowTask(input: {
+  store: LocalStore;
+  workflowConfig: ReturnType<typeof loadWorkflowConfig>;
+  runningHub: RunningHubClient;
+  project: ProjectRecord;
+  hdrItem: HdrItem;
+  inputFileName: string;
+  onProgress?: (update: WorkflowExecutionProgress) => void;
+  options?: WorkflowExecutionOptions;
+}) {
+  const taskId = input.hdrItem.workflow?.runningHubTaskId?.trim();
+  if (!taskId) {
+    return null;
+  }
+
+  const workflowName = input.hdrItem.workflow?.runningHubWorkflowName || input.workflowConfig.active || 'runninghub';
+  input.onProgress?.({
+    stage: 'runninghub',
+    monitorState: 'recovering',
+    detail: `recovering task ${taskId}`,
+    remoteProgress: 0,
+    queuePosition: 0,
+    workflowName,
+    taskId
+  });
+
+  return await downloadRunningHubTaskResult({
+    store: input.store,
+    workflowConfig: input.workflowConfig,
+    runningHub: input.runningHub,
+    project: input.project,
+    hdrItem: input.hdrItem,
+    taskId,
+    workflowName,
+    inputFileName: input.inputFileName,
+    onProgress: input.onProgress,
+    options: input.options
+  });
 }
 
 class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
@@ -771,7 +841,18 @@ class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
         return Math.max(1, Math.min(workflowConfig.settings.workflowMaxInFlight || 90, totalPendingItems));
       },
       ensureMergedHdrItem: localMerge.ensureMergedHdrItem,
-      executeWorkflowTask
+      executeWorkflowTask,
+      recoverWorkflowTask: async (project, hdrItem, _mergedPath, mergedFileName, onProgress, options) =>
+        await recoverRunningHubWorkflowTask({
+          store: this.store,
+          workflowConfig,
+          runningHub,
+          project,
+          hdrItem,
+          inputFileName: mergedFileName,
+          onProgress,
+          options
+        })
     };
   }
 }
@@ -1284,6 +1365,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       }
 
       onProgress?.({
+        stage: 'runpod',
         monitorState: created.status ?? 'submitted',
         detail: `cloud job ${jobId} submitted`,
         remoteProgress: 0,
@@ -1307,6 +1389,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         const status = statusPayload.status ?? 'processing';
 
         onProgress?.({
+          stage: 'runpod',
           monitorState: status,
           detail: `cloud job ${jobId} ${status}`,
           remoteProgress,
@@ -1406,6 +1489,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       } catch (error) {
         if (shouldFallbackToIndividualRunpodJobs(error)) {
           onProgress?.({
+            stage: 'runpod',
             monitorState: 'fallback',
             detail: 'Cloud batch worker is updating. Retrying photos individually.',
             remoteProgress: 0,
@@ -1537,6 +1621,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       }
 
       onProgress?.({
+        stage: 'runpod',
         monitorState: created.status ?? 'submitted',
         detail: `cloud batch ${jobId} submitted (${batch.length} groups)`,
         remoteProgress: 0,
@@ -1561,6 +1646,7 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
         const status = statusPayload.status ?? 'processing';
 
         onProgress?.({
+          stage: 'runpod',
           monitorState: status,
           detail: `cloud batch ${jobId} ${status}`,
           remoteProgress,
@@ -1665,7 +1751,23 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       },
       ensureMergedHdrItem: manifestContext.ensureMergedHdrItem,
       executeWorkflowTask: executeWorkflowTaskWithRunpodLimit,
-      executeWorkflowBatch
+      executeWorkflowBatch,
+      recoverWorkflowTask: async (project, hdrItem, _mergedPath, mergedFileName, onProgress, options) => {
+        if (!postWorkflowEnabled || !workflowConfig || !runningHub) {
+          return null;
+        }
+
+        return await recoverRunningHubWorkflowTask({
+          store: this.store,
+          workflowConfig,
+          runningHub,
+          project,
+          hdrItem,
+          inputFileName: mergedFileName,
+          onProgress,
+          options
+        });
+      }
     };
   }
 }

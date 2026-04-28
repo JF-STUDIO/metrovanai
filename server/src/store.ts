@@ -8,6 +8,7 @@ import type {
   ColorMode,
   EmailVerificationTokenRecord,
   HdrItem,
+  HdrItemWorkflowState,
   PaymentOrderRecord,
   PasswordResetTokenRecord,
   ProjectGroup,
@@ -150,6 +151,37 @@ function createEmptyRegenerationState() {
     completedAt: null,
     errorMessage: null
   };
+}
+
+function createEmptyWorkflowState(): HdrItemWorkflowState {
+  return {
+    stage: 'idle',
+    runpodJobId: null,
+    runpodBatchJobId: null,
+    runningHubTaskId: null,
+    runningHubWorkflowName: null,
+    lastTaskId: null,
+    lastTaskProvider: null,
+    submittedAt: null,
+    updatedAt: null,
+    completedAt: null,
+    errorMessage: null
+  };
+}
+
+function normalizeWorkflowState(workflow: Partial<HdrItemWorkflowState> | null | undefined): HdrItemWorkflowState {
+  const normalized = {
+    ...createEmptyWorkflowState(),
+    ...(workflow ?? {})
+  };
+  normalized.stage = ['idle', 'runpod', 'runninghub', 'completed', 'failed'].includes(normalized.stage)
+    ? normalized.stage
+    : 'idle';
+  normalized.lastTaskProvider =
+    normalized.lastTaskProvider === 'runpod' || normalized.lastTaskProvider === 'runninghub'
+      ? normalized.lastTaskProvider
+      : null;
+  return normalized;
 }
 
 function normalizeProjectRegenerationUsage(
@@ -1673,6 +1705,7 @@ export class LocalStore {
       ...item,
       index: index + 1,
       title: item.title || `HDR ${index + 1}`,
+      workflow: normalizeWorkflowState(item.workflow),
       regeneration: {
         ...createEmptyRegenerationState(),
         ...(item.regeneration ?? {})

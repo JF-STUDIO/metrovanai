@@ -722,6 +722,13 @@ export async function startProcessing(projectId: string) {
   });
 }
 
+export async function retryFailedProcessing(projectId: string) {
+  return await jsonRequest<{ project: ProjectRecord }>(`/api/projects/${projectId}/retry-failed`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  });
+}
+
 export async function downloadProjectArchive(projectId: string, input: DownloadRequestPayload) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/download`, {
     method: 'POST',

@@ -1,0 +1,491 @@
+/* ============================================================ */
+/* Showcase Before / After — 单图 AI 渲染动效                    */
+/* 原片打底 → 扫描线缓缓划过 → 每条垂直像素被"AI 修好"             */
+/* ============================================================ */
+
+.showcase-sci-render {
+  position: relative;
+  margin: 0;
+  min-height: 460px;
+  border-radius: 1.18rem;
+  overflow: hidden;
+  border: 1px solid rgba(124, 232, 255, 0.34);
+  background: #05080c;
+  box-shadow:
+    0 36px 90px -36px rgba(71, 198, 255, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  isolation: isolate;
+}
+
+.showcase-sci-render-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.showcase-sci-render-layer img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 原片：稍微去糖、降亮，让"渲染前"更朴素 */
+.showcase-sci-render-before img {
+  filter: brightness(0.78) contrast(0.95) saturate(0.88) sepia(0.22);
+}
+
+/* AI 成片：由 clip-path 从左向右慢慢揭开 */
+.showcase-sci-render-after {
+  z-index: 2;
+  clip-path: inset(0 100% 0 0);
+  will-change: clip-path;
+  animation: showcaseSciReveal 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+@keyframes showcaseSciReveal {
+  0%   { clip-path: inset(0 100% 0 0); }
+  62%  { clip-path: inset(0 0 0 0); }
+  86%  { clip-path: inset(0 0 0 0); }
+  100% { clip-path: inset(0 100% 0 0); }
+}
+
+/* 扫描线（跟着 clip-path 边缘走） */
+.showcase-sci-render-scanline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  z-index: 3;
+  pointer-events: none;
+  animation: showcaseSciScanPos 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+.showcase-sci-render-scanline-core {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 2px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(124, 232, 255, 0.7) 18%,
+    #eaffff 48%,
+    rgba(124, 232, 255, 0.7) 82%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 14px rgba(124, 232, 255, 0.9),
+    0 0 32px rgba(124, 232, 255, 0.55),
+    0 0 64px rgba(124, 232, 255, 0.3);
+  animation: showcaseSciScanFade 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+.showcase-sci-render-scanline-halo {
+  position: absolute;
+  top: -6%;
+  bottom: -6%;
+  right: -34px;
+  width: 68px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(124, 232, 255, 0.22) 45%,
+    rgba(198, 246, 255, 0.35) 62%,
+    rgba(124, 232, 255, 0.18) 72%,
+    transparent 100%
+  );
+  filter: blur(4px);
+  opacity: 0.85;
+  animation: showcaseSciScanFade 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+@keyframes showcaseSciScanPos {
+  0%   { left: 0%; }
+  62%  { left: 100%; }
+  86%  { left: 100%; }
+  100% { left: 0%; }
+}
+
+@keyframes showcaseSciScanFade {
+  0%        { opacity: 0; }
+  3%        { opacity: 1; }
+  60%       { opacity: 1; }
+  66%       { opacity: 0; }
+  100%      { opacity: 0; }
+}
+
+/* 渲染网格：贴在已扫过的区域边缘，像素慢慢"合成" */
+.showcase-sci-render-tiles {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 120px;
+  z-index: 3;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(124, 232, 255, 0.32) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 232, 255, 0.32) 1px, transparent 1px);
+  background-size: 20px 20px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 38%, #000 62%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 38%, #000 62%, transparent 100%);
+  mix-blend-mode: screen;
+  opacity: 0.75;
+  transform: translateX(-60px);
+  animation:
+    showcaseSciTilesPos 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite,
+    showcaseSciScanFade 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+@keyframes showcaseSciTilesPos {
+  0%   { transform: translateX(-60px); }
+  62%  { transform: translateX(calc(100vw + 60px)); }
+  86%  { transform: translateX(calc(100vw + 60px)); }
+  100% { transform: translateX(-60px); }
+}
+
+/* 扫描噪点，增加"渲染中"颗粒感 */
+.showcase-sci-render-noise {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.025) 0 1px,
+      transparent 1px 3px
+    );
+  mix-blend-mode: overlay;
+  opacity: 0.5;
+}
+
+/* 顶部状态条 —— "AI Rendering" + 进度条 */
+.showcase-sci-render-status {
+  position: absolute;
+  left: 50%;
+  top: 0.9rem;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.58rem;
+  padding: 0.4rem 0.82rem;
+  background: rgba(8, 14, 22, 0.82);
+  border: 1px solid rgba(124, 232, 255, 0.32);
+  border-radius: 999px;
+  color: #d8f8ff;
+  font-family: var(--hp-mono, 'JetBrains Mono', monospace);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 10px 28px -14px rgba(71, 198, 255, 0.6);
+  white-space: nowrap;
+}
+
+.showcase-sci-render-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #7ce8ff;
+  box-shadow: 0 0 10px #7ce8ff, 0 0 18px rgba(124, 232, 255, 0.7);
+  animation: showcaseSciRenderDot 1.2s ease-in-out infinite;
+}
+
+@keyframes showcaseSciRenderDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.78); }
+}
+
+.showcase-sci-render-status-bar {
+  display: inline-block;
+  width: 72px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(124, 232, 255, 0.14);
+  overflow: hidden;
+  position: relative;
+}
+
+.showcase-sci-render-status-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  background: linear-gradient(90deg, rgba(124, 232, 255, 0.5), #eaffff);
+  box-shadow: 0 0 10px rgba(124, 232, 255, 0.75);
+  animation: showcaseSciRenderBar 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+@keyframes showcaseSciRenderBar {
+  0%   { width: 0%; }
+  62%  { width: 100%; }
+  86%  { width: 100%; }
+  100% { width: 0%; }
+}
+
+/* 角标 Before / After：未扫到时 Before 高亮，扫完后 After 高亮 */
+.showcase-sci-render-tag {
+  position: absolute;
+  top: 0.92rem;
+  z-index: 5;
+  padding: 0.5rem 0.88rem;
+  border-radius: 0.78rem;
+  background: rgba(8, 14, 22, 0.82);
+  color: #fff;
+  font-family: var(--hp-mono, 'JetBrains Mono', monospace);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+}
+
+.showcase-sci-render-tag-before {
+  left: 0.92rem;
+  animation: showcaseSciTagBefore 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+.showcase-sci-render-tag-after {
+  right: 0.92rem;
+  animation: showcaseSciTagAfter 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+@keyframes showcaseSciTagBefore {
+  0%, 8% {
+    color: #fff;
+    border-color: rgba(112, 225, 255, 0.55);
+    box-shadow: 0 0 18px rgba(124, 232, 255, 0.35);
+  }
+  55%, 100% {
+    color: rgba(255, 255, 255, 0.55);
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: none;
+  }
+}
+
+@keyframes showcaseSciTagAfter {
+  0%, 40% {
+    color: rgba(255, 255, 255, 0.55);
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: none;
+  }
+  64%, 100% {
+    color: #d8f8ff;
+    border-color: rgba(112, 225, 255, 0.55);
+    box-shadow: 0 0 22px rgba(124, 232, 255, 0.45);
+  }
+}
+
+/* 像瞄准镜 / 渲染焦点的十字光环，贴在扫描线顶端附近 */
+.showcase-sci-render-reticle {
+  position: absolute;
+  left: 0;
+  top: 32%;
+  width: 0;
+  z-index: 5;
+  pointer-events: none;
+  animation: showcaseSciScanPos 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+.showcase-sci-render-reticle-ring {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translate(50%, -50%);
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 232, 255, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(124, 232, 255, 0.15) inset,
+    0 0 20px rgba(124, 232, 255, 0.35);
+  animation: showcaseSciReticleSpin 6s linear infinite,
+             showcaseSciScanFade 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+.showcase-sci-render-reticle-ring::before,
+.showcase-sci-render-reticle-ring::after {
+  content: '';
+  position: absolute;
+  inset: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(198, 246, 255, 0.85);
+  border-radius: 999px;
+}
+
+.showcase-sci-render-reticle-ring::after {
+  width: 68px;
+  height: 68px;
+  border-style: dashed;
+  border-color: rgba(124, 232, 255, 0.22);
+}
+
+.showcase-sci-render-reticle-cross {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 90px;
+  height: 90px;
+  transform: translate(50%, -50%);
+  background:
+    linear-gradient(90deg, transparent 48%, rgba(124, 232, 255, 0.6) 49% 51%, transparent 52%),
+    linear-gradient(180deg, transparent 48%, rgba(124, 232, 255, 0.6) 49% 51%, transparent 52%);
+  -webkit-mask-image: radial-gradient(circle, transparent 18%, #000 20%, #000 48%, transparent 50%);
+  mask-image: radial-gradient(circle, transparent 18%, #000 20%, #000 48%, transparent 50%);
+  animation: showcaseSciScanFade 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+@keyframes showcaseSciReticleSpin {
+  0%   { transform: translate(50%, -50%) rotate(0deg); }
+  100% { transform: translate(50%, -50%) rotate(360deg); }
+}
+
+/* 底部 Raw Capture / AI Enhanced 双栏说明 */
+.showcase-sci-render-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.4rem;
+  padding: 1.4rem 1.2rem 1rem;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.72) 46%,
+    rgba(0, 0, 0, 0.96) 100%
+  );
+  pointer-events: none;
+}
+
+.showcase-sci-render-caption-side strong {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.01em;
+}
+
+.showcase-sci-render-caption-side small {
+  display: block;
+  margin-top: 0.22rem;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.showcase-sci-render-caption-side.is-before {
+  animation: showcaseSciTagBefore 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+.showcase-sci-render-caption-side.is-after {
+  text-align: right;
+  animation: showcaseSciTagAfter 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
+}
+
+.showcase-sci-render-caption-side.is-after strong {
+  background: linear-gradient(135deg, #ffffff, #d8f8ff 60%, #7ce8ff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 让老版并排布局相关的响应式规则不再挤压新单图容器 */
+@media (max-width: 1200px) {
+  .showcase-sci-render {
+    min-height: 420px;
+  }
+}
+
+@media (max-width: 720px) {
+  .showcase-sci-render {
+    min-height: 320px;
+    border-radius: 0.95rem;
+  }
+
+  .showcase-sci-render-tiles {
+    width: 80px;
+  }
+
+  .showcase-sci-render-reticle-ring {
+    width: 36px;
+    height: 36px;
+  }
+
+  .showcase-sci-render-reticle-cross {
+    width: 70px;
+    height: 70px;
+  }
+
+  .showcase-sci-render-caption {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+    padding: 1rem 0.95rem 0.82rem;
+  }
+
+  .showcase-sci-render-caption-side.is-after {
+    text-align: left;
+  }
+
+  .showcase-sci-render-caption-side small {
+    font-size: 0.7rem;
+  }
+
+  .showcase-sci-render-status {
+    top: 0.7rem;
+    padding: 0.32rem 0.7rem;
+    font-size: 0.58rem;
+    gap: 0.45rem;
+  }
+
+  .showcase-sci-render-status-bar {
+    width: 48px;
+  }
+
+  .showcase-sci-render-tag {
+    font-size: 0.62rem;
+    padding: 0.4rem 0.7rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .showcase-sci-render-after {
+    clip-path: inset(0 0 0 0) !important;
+    animation: none !important;
+  }
+  .showcase-sci-render-scanline,
+  .showcase-sci-render-scanline-core,
+  .showcase-sci-render-scanline-halo,
+  .showcase-sci-render-tiles,
+  .showcase-sci-render-reticle,
+  .showcase-sci-render-reticle-ring,
+  .showcase-sci-render-reticle-cross,
+  .showcase-sci-render-status-bar-fill,
+  .showcase-sci-render-status-dot,
+  .showcase-sci-render-tag-before,
+  .showcase-sci-render-tag-after,
+  .showcase-sci-render-caption-side.is-before,
+  .showcase-sci-render-caption-side.is-after {
+    animation: none !important;
+  }
+  .showcase-sci-render-scanline,
+  .showcase-sci-render-tiles,
+  .showcase-sci-render-reticle {
+    opacity: 0 !important;
+  }
+}

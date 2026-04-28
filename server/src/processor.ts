@@ -98,6 +98,7 @@ interface MergeQueueItem {
 
 interface StartOptions {
   recovery?: boolean;
+  retryFailed?: boolean;
 }
 
 function createProcessingText(status: HdrItem['status']) {
@@ -105,6 +106,22 @@ function createProcessingText(status: HdrItem['status']) {
   if (status === 'error') return '处理失败';
   if (status === 'review') return '待确认';
   return '处理中';
+}
+
+function createEmptyWorkflowState() {
+  return {
+    stage: 'idle' as const,
+    runpodJobId: null,
+    runpodBatchJobId: null,
+    runningHubTaskId: null,
+    runningHubWorkflowName: null,
+    lastTaskId: null,
+    lastTaskProvider: null,
+    submittedAt: null,
+    updatedAt: null,
+    completedAt: null,
+    errorMessage: null
+  };
 }
 
 export class ProjectProcessor {
@@ -129,6 +146,10 @@ export class ProjectProcessor {
   async start(projectId: string, options: StartOptions = {}) {
     if (this.activeJobs.has(projectId)) {
       return this.store.getProject(projectId);
+    }
+
+    if (options.retryFailed) {
+      this.resetFailedItemsForRetry(projectId);
     }
 
     const project = this.store.getProject(projectId);
@@ -536,6 +557,10 @@ export class ProjectProcessor {
     );
   }
 
+  private hasRecoverableRunningHubTask(item: HdrItem) {
+    return Boolean(item.workflow?.runningHubTaskId?.trim());
+  }
+
   private isHdrItemCompleted(item: HdrItem) {
     return Boolean(item.resultUrl && item.resultFileName && (item.resultKey || item.resultPath));
   }
@@ -545,12 +570,65 @@ export class ProjectProcessor {
   }
 
   private isHdrItemReadyForProcessing(item: HdrItem) {
+    if (this.hasRecoverableRunningHubTask(item)) {
+      return true;
+    }
+
     return (
       item.exposures.length > 0 &&
       item.exposures.every(
         (exposure) => Boolean(exposure.storageKey) || Boolean(exposure.storagePath && fs.existsSync(exposure.storagePath))
       )
     );
+  }
+
+  private resetFailedItemsForRetry(projectId: string) {
+    this.store.updateProject(projectId, (project) => {
+      let resetCount = 0;
+      project.hdrItems = project.hdrItems.map((item) => {
+        if (this.isHdrItemCompleted(item) || item.status !== 'error') {
+          return item;
+        }
+
+        resetCount += 1;
+        const hasRunningHubTask = this.hasRecoverableRunningHubTask(item);
+        return {
+          ...item,
+          status: hasRunningHubTask ? 'workflow-running' : 'review',
+          statusText: createProcessingText(hasRunningHubTask ? 'workflow-running' : 'review'),
+          errorMessage: null,
+          workflow: {
+            ...createEmptyWorkflowState(),
+            ...(item.workflow ?? {}),
+            stage: hasRunningHubTask ? 'runninghub' : 'idle',
+            errorMessage: null,
+            completedAt: null,
+            updatedAt: new Date().toISOString()
+          }
+        };
+      });
+
+      if (resetCount > 0) {
+        project.status = 'processing';
+        project.currentStep = 3;
+        if (project.job) {
+          project.job = {
+            ...project.job,
+            status: 'queued',
+            phase: 'queued',
+            completedAt: null,
+            detail: `Retrying ${resetCount} failed item${resetCount === 1 ? '' : 's'}.`,
+            workflowRealtime: {
+              ...project.job.workflowRealtime,
+              failed: 0,
+              active: 0
+            }
+          };
+        }
+      }
+
+      return project;
+    });
   }
 
   private calculateBaselinePercent(project: ProjectRecord, completedCount: number) {
@@ -718,6 +796,12 @@ export class ProjectProcessor {
         continue;
       }
 
+      const recovered = await this.tryRecoverWorkflowItem(projectId, currentProject, hdrItem, taskExecution, hdrDir);
+      if (recovered) {
+        mergeProgress.completed += 1;
+        continue;
+      }
+
       this.store.setHdrItemState(projectId, hdrItem.id, (item) => ({
         ...item,
         status: 'hdr-processing',
@@ -791,6 +875,64 @@ export class ProjectProcessor {
     }
   }
 
+  private resolveMergedFileName(hdrItem: HdrItem) {
+    const selectedExposure =
+      hdrItem.exposures.find((exposure) => exposure.id === hdrItem.selectedExposureId) ?? hdrItem.exposures[0];
+    const sourceName = selectedExposure?.originalName ?? selectedExposure?.fileName ?? hdrItem.title;
+    const baseName = sanitizeSegment(path.basename(sourceName, path.extname(sourceName))) || sanitizeSegment(hdrItem.id) || 'hdr';
+    return `${baseName}.jpg`;
+  }
+
+  private async tryRecoverWorkflowItem(
+    projectId: string,
+    project: ProjectRecord,
+    hdrItem: HdrItem,
+    taskExecution: TaskExecutionRunContext,
+    hdrDir: string
+  ) {
+    if (!taskExecution.recoverWorkflowTask || !this.hasRecoverableRunningHubTask(hdrItem)) {
+      return false;
+    }
+
+    const mergedFileName = this.resolveMergedFileName(hdrItem);
+    const mergedPath = hdrItem.mergedPath || path.join(hdrDir, `${path.basename(mergedFileName, '.jpg')}_recover.json`);
+    const executionItem: WorkflowBatchExecutionItem = {
+      hdrItem,
+      mergedPath,
+      mergedFileName
+    };
+
+    try {
+      const artifact = await taskExecution.recoverWorkflowTask(
+        project,
+        hdrItem,
+        mergedPath,
+        mergedFileName,
+        (update) => this.markWorkflowBatchProgress(projectId, [executionItem], update)
+      );
+      if (!artifact) {
+        return false;
+      }
+
+      await this.completeWorkflowItem(projectId, hdrItem, artifact);
+      return true;
+    } catch (error) {
+      logServerEvent({
+        level: 'warning',
+        event: 'project.workflow_recovery.failed',
+        projectId,
+        taskId: hdrItem.id,
+        phase: 'workflow_running',
+        details: {
+          hdrItemId: hdrItem.id,
+          runningHubTaskId: hdrItem.workflow?.runningHubTaskId ?? null,
+          message: error instanceof Error ? error.message : String(error)
+        }
+      });
+      return false;
+    }
+  }
+
   private async collectWorkflowBatch(
     firstItem: WorkflowQueueItem,
     queue: AsyncQueue<WorkflowQueueItem>,
@@ -853,11 +995,20 @@ export class ProjectProcessor {
   }
 
   private markWorkflowBatchUploading(projectId: string, executionItems: WorkflowBatchExecutionItem[]) {
+    const now = new Date().toISOString();
     for (const executionItem of executionItems) {
       this.store.setHdrItemState(projectId, executionItem.hdrItem.id, (entry) => ({
         ...entry,
         status: 'workflow-upload',
-        statusText: createProcessingText('workflow-upload')
+        statusText: createProcessingText('workflow-upload'),
+        workflow: {
+          ...createEmptyWorkflowState(),
+          ...(entry.workflow ?? {}),
+          stage: 'runpod',
+          updatedAt: now,
+          completedAt: null,
+          errorMessage: null
+        }
       }));
     }
 
@@ -884,12 +1035,38 @@ export class ProjectProcessor {
       ? executionItems.filter((executionItem) => executionItem.hdrItem.id === update.hdrItemId)
       : executionItems;
     const currentHdrItemId = targetItems[0]?.hdrItem.id ?? executionItems[0]?.hdrItem.id ?? null;
+    const now = new Date().toISOString();
 
     for (const executionItem of targetItems) {
       this.store.setHdrItemState(projectId, executionItem.hdrItem.id, (entry) => ({
         ...entry,
         status: 'workflow-running',
-        statusText: createProcessingText('workflow-running')
+        statusText: createProcessingText('workflow-running'),
+        workflow: {
+          ...createEmptyWorkflowState(),
+          ...(entry.workflow ?? {}),
+          stage: update.stage ?? entry.workflow?.stage ?? 'runninghub',
+          runpodJobId:
+            update.stage === 'runpod' && targetItems.length === 1
+              ? update.taskId
+              : entry.workflow?.runpodJobId ?? null,
+          runpodBatchJobId:
+            update.stage === 'runpod' && targetItems.length > 1
+              ? update.taskId
+              : entry.workflow?.runpodBatchJobId ?? null,
+          runningHubTaskId:
+            update.stage === 'runninghub' ? update.taskId : entry.workflow?.runningHubTaskId ?? null,
+          runningHubWorkflowName:
+            update.stage === 'runninghub'
+              ? update.workflowName
+              : entry.workflow?.runningHubWorkflowName ?? null,
+          lastTaskId: update.taskId,
+          lastTaskProvider: update.stage ?? entry.workflow?.lastTaskProvider ?? null,
+          submittedAt: entry.workflow?.submittedAt ?? now,
+          updatedAt: now,
+          completedAt: null,
+          errorMessage: null
+        }
       }));
     }
 
@@ -989,6 +1166,7 @@ export class ProjectProcessor {
 
   private async completeWorkflowItem(projectId: string, hdrItem: HdrItem, result: WorkflowExecutionArtifact) {
     const resultStorageKey = result.resultStorageKey ?? this.store.toStorageKey(result.resultPath);
+    const now = new Date().toISOString();
     this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
       ...entry,
       mergedKey: result.mergedStorageKey ?? entry.mergedKey,
@@ -1004,7 +1182,15 @@ export class ProjectProcessor {
       resultFileName: result.resultFileName,
       status: 'completed',
       statusText: createProcessingText('completed'),
-      errorMessage: null
+      errorMessage: null,
+      workflow: {
+        ...createEmptyWorkflowState(),
+        ...(entry.workflow ?? {}),
+        stage: 'completed',
+        updatedAt: now,
+        completedAt: now,
+        errorMessage: null
+      }
     }));
     this.store.setJobState(projectId, (job) => ({
       ...job,
@@ -1046,7 +1232,14 @@ export class ProjectProcessor {
       ...entry,
       status: 'error',
       statusText: createProcessingText('error'),
-      errorMessage: message
+      errorMessage: message,
+      workflow: {
+        ...createEmptyWorkflowState(),
+        ...(entry.workflow ?? {}),
+        stage: 'failed',
+        updatedAt: new Date().toISOString(),
+        errorMessage: message
+      }
     }));
     this.store.setJobState(projectId, (job) => ({
       ...job,

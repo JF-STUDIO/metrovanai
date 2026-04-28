@@ -61,8 +61,25 @@ export interface HdrItem {
   resultPath: string | null;
   resultUrl: string | null;
   resultFileName: string | null;
+  workflow?: HdrItemWorkflowState;
   regeneration?: ResultRegenerationState;
   exposures: ExposureFile[];
+}
+
+export type HdrItemWorkflowStage = 'idle' | 'runpod' | 'runninghub' | 'completed' | 'failed';
+
+export interface HdrItemWorkflowState {
+  stage: HdrItemWorkflowStage;
+  runpodJobId: string | null;
+  runpodBatchJobId: string | null;
+  runningHubTaskId: string | null;
+  runningHubWorkflowName: string | null;
+  lastTaskId: string | null;
+  lastTaskProvider: 'runpod' | 'runninghub' | null;
+  submittedAt: string | null;
+  updatedAt: string | null;
+  completedAt: string | null;
+  errorMessage: string | null;
 }
 
 export type ResultRegenerationStatus = 'idle' | 'running' | 'completed' | 'failed';

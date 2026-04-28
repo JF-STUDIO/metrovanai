@@ -1,0 +1,15 @@
+/*
+ * Metrovan AI style entry.
+ *
+ * Keep this import order stable. The original App.css depended on source order,
+ * so each split file is loaded in the same cascade order to preserve the UI.
+ */
+@import './00-foundation.css';
+@import './10-studio-workspace.css';
+@import './20-landing-core.css';
+@import './30-studio-polish.css';
+@import './40-homepage-polish.css';
+@import './50-plans.css';
+@import './60-showcase-render.css';
+@import './70-polish-layer.css';
+@import './80-mobile.css';

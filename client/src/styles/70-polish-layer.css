@@ -1,0 +1,625 @@
+/* ============================================================ */
+/* Metrovan AI Polish Layer — scoped typography, accent, radius  */
+/* ============================================================ */
+
+.landing-shell {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01', 'cv11', 'liga', 'kern';
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.landing-shell .showcase-sci-kicker,
+.landing-shell .pricing-eyebrow,
+.landing-shell .plans-hero-pill,
+.landing-shell .plans-tier-tag,
+.landing-shell .plans-scene-tag,
+.landing-shell .plans-lock-pill,
+.landing-shell .showcase-sci-render-status,
+.landing-shell .showcase-sci-render-tag {
+  font-family: var(--hp-mono);
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+}
+
+.landing-shell [class*='-amount'],
+.landing-shell [class*='-points'],
+.landing-shell [class*='-price'],
+.landing-shell [class*='-num'],
+.landing-shell .plans-tier-amount,
+.landing-shell .plans-tier-bonus,
+.landing-shell .plans-hero-meta,
+.landing-shell .pricing-amount,
+.landing-shell .showcase-sci-status-row strong,
+.landing-shell .showcase-sci-render-status {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+.landing-shell p {
+  line-height: var(--lh-body);
+}
+
+.landing-shell .plans-hero-sub,
+.landing-shell .quote-copy {
+  line-height: 1.55;
+}
+
+.landing-shell .plans-tier-card.is-featured,
+.landing-shell .showcase-sci-shot-after,
+.landing-shell .showcase-sci-render {
+  --card-accent: var(--accent);
+  --card-accent-line: rgba(var(--accent-rgb), 0.34);
+  --card-accent-glow: rgba(var(--accent-rgb), 0.22);
+}
+
+.landing-shell .showcase-sci-render,
+.landing-shell .plans-tier-card,
+.landing-shell .plans-benefit-card,
+.landing-shell .plans-scene-card {
+  border-radius: var(--r-lg);
+}
+
+.landing-shell .restored-hero .hero-copy p {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.recharge-card {
+  border-radius: var(--r-lg) !important;
+  border: 1px solid rgba(var(--accent-rgb), 0.18);
+  background:
+    linear-gradient(180deg, rgba(14, 18, 24, 0.98), rgba(8, 10, 14, 0.97)),
+    radial-gradient(80% 60% at 50% -10%, rgba(var(--accent-rgb), 0.16), transparent 60%);
+  box-shadow:
+    0 36px 90px -36px rgba(var(--accent-rgb), 0.32),
+    0 18px 48px -28px rgba(0, 0, 0, 0.7);
+}
+
+.recharge-card .modal-head strong,
+.recharge-card .recharge-custom-preview strong,
+.recharge-card .recharge-summary-card strong,
+.recharge-card .recharge-package-head span {
+  font-family: var(--hp-display);
+  letter-spacing: var(--ls-section);
+}
+
+.recharge-card .modal-head .muted,
+.recharge-card .panel-head .muted,
+.recharge-card .recharge-code-hint {
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.recharge-card .recharge-offer-panel > .panel-head strong,
+.recharge-card .recharge-tier-head strong,
+.recharge-card .recharge-package-head em,
+.recharge-card .recharge-package-meta span {
+  font-family: var(--hp-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  color: rgba(var(--accent-rgb), 0.92);
+}
+
+.recharge-card .recharge-code-field input,
+.recharge-card .recharge-custom-preview span,
+.recharge-card .recharge-package-card > strong,
+.recharge-card .recharge-package-meta b,
+.recharge-card .recharge-coupon-card span,
+.recharge-card .recharge-summary-card span {
+  font-family: var(--hp-mono);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.recharge-card .recharge-code-field input,
+.recharge-card .recharge-offer-panel,
+.recharge-card .recharge-custom-panel,
+.recharge-card .recharge-custom-preview,
+.recharge-card .recharge-package-card,
+.recharge-card .recharge-coupon-card,
+.recharge-card .recharge-summary-card {
+  border-radius: var(--r-md);
+}
+
+.recharge-card .recharge-code-field input {
+  background: rgba(255, 255, 255, 0.03);
+  letter-spacing: 0.04em;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.recharge-card .recharge-code-field input:focus {
+  border-color: rgba(var(--accent-rgb), 0.6);
+  background: rgba(var(--accent-rgb), 0.04);
+  box-shadow:
+    0 0 0 3px rgba(var(--accent-rgb), 0.14),
+    0 12px 28px -16px rgba(var(--accent-rgb), 0.45);
+}
+
+.recharge-card .recharge-custom-panel.active,
+.recharge-card .recharge-package-card.active,
+.recharge-card .recharge-coupon-card.active {
+  border-color: rgba(var(--accent-rgb), 0.55) !important;
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.1), rgba(var(--accent-rgb), 0.025)) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--accent-rgb), 0.24),
+    0 22px 44px -22px rgba(var(--accent-rgb), 0.45) !important;
+}
+
+.recharge-card .recharge-package-card {
+  position: relative;
+  min-height: 6.4rem;
+  padding: 0.9rem 1rem;
+  gap: 0.65rem;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.recharge-card .recharge-package-grid {
+  gap: 0.7rem;
+  margin-bottom: 0.8rem;
+}
+
+.recharge-card .recharge-package-head {
+  align-items: center;
+}
+
+.recharge-card .recharge-package-head span {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.recharge-card .recharge-package-head em {
+  padding: 0.22rem 0.48rem;
+  border-radius: var(--r-pill);
+  background: rgba(var(--accent-rgb), 0.11);
+  color: rgba(var(--accent-rgb), 0.98);
+  white-space: nowrap;
+}
+
+.recharge-card .recharge-package-points {
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.recharge-card .recharge-compact-summary {
+  margin-bottom: 0;
+  padding: 0.85rem 1rem;
+}
+
+.recharge-card .recharge-compact-summary .solid-button {
+  min-width: 8rem;
+}
+
+.recharge-card .recharge-package-card:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.32);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 32px -22px rgba(var(--accent-rgb), 0.4);
+}
+
+.recharge-card .recharge-package-card.active::after {
+  content: '';
+  position: absolute;
+  top: 0.62rem;
+  right: 0.62rem;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent), 0 0 4px #fff;
+}
+
+.recharge-card .close-button,
+.auth-card .close-button {
+  border-radius: var(--r-pill);
+  transition: all 0.18s ease;
+}
+
+.recharge-card .close-button:hover,
+.auth-card .close-button:hover {
+  border-color: rgba(var(--accent-rgb), 0.42);
+  color: rgba(var(--accent-rgb), 1);
+}
+
+@media (max-width: 720px) {
+  .modal-backdrop:has(.recharge-card) {
+    place-items: start center;
+    height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding:
+      max(0.8rem, env(safe-area-inset-top))
+      0.72rem
+      calc(6.4rem + env(safe-area-inset-bottom));
+  }
+
+  .recharge-card {
+    width: min(100%, 30rem) !important;
+    max-height: none;
+    padding: 0.95rem !important;
+    margin: 0 auto;
+  }
+
+  .recharge-card .modal-head {
+    position: sticky;
+    top: -0.95rem;
+    z-index: 5;
+    margin: -0.95rem -0.95rem 0.75rem;
+    padding: 0.95rem;
+    border-radius: var(--r-lg) var(--r-lg) var(--r-md) var(--r-md);
+    background:
+      linear-gradient(180deg, rgba(14, 18, 24, 0.98), rgba(14, 18, 24, 0.9)),
+      radial-gradient(80% 70% at 50% -20%, rgba(var(--accent-rgb), 0.18), transparent 62%);
+    backdrop-filter: blur(18px);
+  }
+
+  .recharge-card .modal-head > div {
+    min-width: 0;
+  }
+
+  .recharge-card .modal-head strong {
+    display: block;
+    font-size: clamp(1.12rem, 5vw, 1.45rem);
+    line-height: 1.15;
+  }
+
+  .recharge-card .modal-head .muted {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  .recharge-card .close-button {
+    flex: 0 0 auto;
+  }
+
+  .recharge-card .recharge-offer-panel,
+  .recharge-card .recharge-custom-panel {
+    padding: 0.9rem;
+  }
+
+  .recharge-card .recharge-package-card {
+    min-height: 5.35rem;
+  }
+
+  .recharge-card .recharge-compact-summary {
+    position: sticky;
+    bottom: calc(0.9rem + env(safe-area-inset-bottom));
+    z-index: 6;
+    margin-top: 0.85rem;
+    border-color: rgba(var(--accent-rgb), 0.38);
+    background:
+      linear-gradient(180deg, rgba(21, 27, 34, 0.96), rgba(11, 13, 17, 0.98)),
+      radial-gradient(90% 120% at 100% 0%, rgba(var(--accent-rgb), 0.18), transparent 58%);
+    box-shadow:
+      0 -18px 36px -28px rgba(0, 0, 0, 0.9),
+      0 18px 44px -28px rgba(var(--accent-rgb), 0.45);
+  }
+
+  .recharge-card .recharge-compact-summary .solid-button {
+    width: 100%;
+    min-height: 3.35rem;
+  }
+}
+
+.auth-card {
+  border-radius: var(--r-lg) !important;
+  border: 1px solid rgba(var(--accent-rgb), 0.18) !important;
+  background:
+    linear-gradient(180deg, rgba(14, 18, 24, 0.98), rgba(8, 10, 14, 0.97)),
+    radial-gradient(70% 50% at 50% -10%, rgba(var(--accent-rgb), 0.16), transparent 60%) !important;
+  box-shadow:
+    0 32px 80px -32px rgba(var(--accent-rgb), 0.32),
+    0 18px 44px -22px rgba(0, 0, 0, 0.72) !important;
+}
+
+.auth-card .modal-head strong,
+.auth-card .auth-copy strong,
+.auth-card h2 {
+  font-family: var(--hp-display);
+  font-weight: 600;
+  letter-spacing: var(--ls-section);
+}
+
+.auth-card .auth-tabs,
+.auth-card .form-grid input,
+.auth-card .form-grid select,
+.auth-card .auth-feedback {
+  border-radius: var(--r-md);
+}
+
+.auth-card .auth-tab,
+.auth-card .form-grid label,
+.auth-card .auth-submit,
+.auth-card .auth-divider,
+.auth-card .auth-inline-link,
+.auth-card .auth-chip {
+  font-family: var(--hp-mono);
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+}
+
+.auth-card .auth-tab.active {
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.92), rgba(var(--accent-rgb), 0.72));
+  color: #06080c;
+  box-shadow:
+    0 12px 24px -12px rgba(var(--accent-rgb), 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.auth-card .form-grid input,
+.auth-card .form-grid select {
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.auth-card .form-grid input[type='email'],
+.auth-card .form-grid input[autocomplete='one-time-code'],
+.auth-card .form-grid input[name*='code' i],
+.auth-card .form-grid input[name*='token' i] {
+  font-family: var(--hp-mono);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.auth-card .form-grid input:focus,
+.auth-card .form-grid select:focus {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.6);
+  background: rgba(var(--accent-rgb), 0.04);
+  box-shadow:
+    0 0 0 3px rgba(var(--accent-rgb), 0.14),
+    0 12px 28px -16px rgba(var(--accent-rgb), 0.4);
+}
+
+.auth-card .auth-submit,
+.studio-shell .solid-button,
+.studio-shell .primary-button,
+.studio-shell button.is-primary {
+  font-family: var(--hp-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 1), #b6f4ff);
+  color: #06080c;
+  border: 1px solid rgba(var(--accent-rgb), 0.7);
+  box-shadow:
+    0 18px 36px -18px rgba(var(--accent-rgb), 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+}
+
+.auth-card .auth-submit:hover:not(:disabled),
+.studio-shell .solid-button:hover:not(:disabled),
+.studio-shell .primary-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+
+.auth-card .provider-button {
+  border-radius: var(--r-pill);
+  font-family: var(--hp-body);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  background: rgba(255, 255, 255, 0.04);
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.auth-card .provider-button:hover {
+  border-color: rgba(var(--accent-rgb), 0.42);
+  background: rgba(var(--accent-rgb), 0.04);
+}
+
+.studio-shell {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01', 'cv11', 'liga', 'kern';
+  color: rgba(255, 255, 255, 0.94);
+  font-family: var(--hp-body);
+}
+
+.studio-shell [class*='-points'],
+.studio-shell [class*='-amount'],
+.studio-shell [class*='-count'],
+.studio-shell [class*='-num'],
+.studio-shell [class*='-size'],
+.studio-shell [class*='-progress'],
+.studio-shell [class*='-balance'],
+.studio-shell [class*='-price'],
+.studio-shell .billing-entry-amount,
+.studio-shell .studio-balance,
+.studio-shell .studio-points-pill,
+.studio-shell .pill-count,
+.studio-shell time {
+  font-family: var(--hp-mono);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+.studio-shell .studio-header h1,
+.studio-shell .studio-header strong,
+.studio-shell .project-title,
+.studio-shell .panel-head strong {
+  font-family: var(--hp-display);
+  font-weight: 600;
+  letter-spacing: var(--ls-section);
+}
+
+.studio-shell .panel-head .muted,
+.studio-shell .studio-tab,
+.studio-shell .studio-pill,
+.studio-shell .step-label,
+.studio-shell [class*='-eyebrow'],
+.studio-shell [class*='-kicker'],
+.studio-shell [class*='-chip'],
+.studio-shell .badge,
+.studio-shell .tag {
+  font-family: var(--hp-mono);
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  font-size: 0.66rem;
+}
+
+.studio-shell input:focus,
+.studio-shell select:focus,
+.studio-shell textarea:focus {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.55);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
+}
+
+.studio-shell .is-active,
+.studio-shell .is-selected,
+.studio-shell .step-row.active,
+.studio-shell .project-row.active,
+.studio-shell .billing-package-card.active,
+.studio-shell .group-card.active {
+  border-color: rgba(var(--accent-rgb), 0.55) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--accent-rgb), 0.18),
+    0 18px 38px -22px rgba(var(--accent-rgb), 0.3) !important;
+}
+
+.studio-shell .project-card,
+.studio-shell .group-card,
+.studio-shell .review-card,
+.studio-shell .billing-stat-card,
+.studio-shell .billing-package-card,
+.studio-shell .billing-entry-panel {
+  border-radius: var(--r-md);
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.studio-shell .project-card:hover,
+.studio-shell .group-card:hover {
+  border-color: rgba(var(--accent-rgb), 0.32);
+  box-shadow: 0 14px 32px -22px rgba(var(--accent-rgb), 0.35);
+}
+
+.studio-shell .is-processing,
+.studio-shell .is-uploading {
+  border-color: rgba(var(--accent-rgb), 0.45) !important;
+  animation: studioPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes studioPulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(var(--accent-rgb), 0.18),
+      0 0 0 0 rgba(var(--accent-rgb), 0.18);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px rgba(var(--accent-rgb), 0.42),
+      0 0 18px rgba(var(--accent-rgb), 0.28);
+  }
+}
+
+.studio-shell [class*='-progress-bar'] [class*='-fill'],
+.studio-shell .progress-fill,
+.studio-shell .upload-progress span {
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.6), var(--accent));
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.55);
+}
+
+.studio-shell .status-dot,
+.studio-shell [class*='-status-dot'] {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.4);
+  display: inline-block;
+}
+
+.studio-shell [class*='completed'] [class*='-status-dot'],
+.studio-shell .status-dot.completed,
+.studio-shell [class*='processing'] [class*='-status-dot'],
+.studio-shell .status-dot.processing {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.studio-shell [class*='processing'] [class*='-status-dot'],
+.studio-shell .status-dot.processing {
+  animation: studioDotPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes studioDotPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--accent); }
+  50% { opacity: 0.4; box-shadow: 0 0 4px var(--accent); }
+}
+
+.studio-shell .sidebar-link.active,
+.studio-shell .studio-nav-item.active,
+.studio-shell [aria-current='page'] {
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: rgba(var(--accent-rgb), 0.06);
+}
+
+.studio-shell .muted {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.studio-shell .sidebar-card,
+.studio-shell .workspace,
+.studio-shell .panel,
+.studio-shell .group-card,
+.studio-shell .project-tile,
+.studio-shell .project-head-card,
+.studio-shell .processing-panel,
+.studio-shell .review-panel,
+.studio-shell .steps-panel {
+  border-radius: var(--r-lg);
+}
+
+.studio-shell .step-card,
+.studio-shell .metric-box,
+.studio-shell .user-menu-popover,
+.studio-shell .user-menu-item,
+.studio-shell .empty-state,
+.studio-shell .ghost-button,
+.studio-shell .ghost-button.compact,
+.studio-shell .solid-button,
+.studio-shell .solid-button.small,
+.studio-shell .primary-button,
+.studio-shell button.is-primary,
+.studio-shell .upload-cta,
+.studio-shell .studio-cta {
+  border-radius: var(--r-md);
+}
+
+.studio-shell input,
+.studio-shell select,
+.studio-shell textarea {
+  border-radius: var(--r-sm);
+}
+
+.studio-shell .points-pill,
+.studio-shell .user-pill,
+.studio-shell .meta-pill,
+.studio-shell .studio-points-pill,
+.studio-shell .pill-count,
+.studio-shell .badge,
+.studio-shell .tag,
+.studio-shell .points-plus,
+.studio-shell .avatar {
+  border-radius: var(--r-pill);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-shell .is-processing,
+  .studio-shell .is-uploading,
+  .studio-shell .status-dot.processing,
+  .studio-shell [class*='processing'] [class*='-status-dot'] {
+    animation: none !important;
+  }
+}
