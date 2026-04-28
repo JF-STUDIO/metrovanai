@@ -4315,17 +4315,13 @@ function App() {
     setSettingsOpen(true);
   }
 
-  function getFeatureProjectName(feature: StudioFeatureDefinition) {
-    return `${feature.defaultName[locale]} · ${new Date().toISOString().slice(0, 10)}`;
-  }
-
   function openFeatureProjectDialog(feature: StudioFeatureDefinition) {
     if (feature.status === 'locked') {
       return;
     }
 
     setSelectedFeatureId(feature.id);
-    setNewProjectName(getFeatureProjectName(feature));
+    setNewProjectName('');
     setNewProjectAddress('');
     setCreateDialogFiles([]);
     setCreateDialogDragActive(false);
