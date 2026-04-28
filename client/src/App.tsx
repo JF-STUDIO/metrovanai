@@ -4276,6 +4276,19 @@ function App() {
   async function handleOpenBilling(mode: 'topup' | 'billing' = 'billing') {
     setUserMenuOpen(false);
     setHistoryMenuOpen(false);
+    if (mode === 'topup') {
+      setBillingOpen(false);
+      openRecharge();
+      if (isDemoMode || !session) {
+        return;
+      }
+      try {
+        await refreshBilling();
+      } catch (error) {
+        setMessage(getUserFacingErrorMessage(error, copy.loadBillingFailed, locale));
+      }
+      return;
+    }
     setBillingModalMode(mode);
     setBillingOpen(true);
     if (isDemoMode || !session) {
