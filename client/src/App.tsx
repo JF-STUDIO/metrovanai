@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import { AuthModal } from './components/AuthModal';
 import { LandingPage } from './pages/LandingPage';
 import logoFull from './assets/metrovan-logo-full.png';
@@ -5781,6 +5781,85 @@ function App() {
   }
 
   if (activeRoute === 'admin') {
+    const adminNavIcon = (page: AdminConsolePage) => {
+      const paths: Record<AdminConsolePage, ReactNode> = {
+        dashboard: (
+          <>
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+          </>
+        ),
+        users: (
+          <>
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21c0-4 4-7 8-7s8 3 8 7" />
+          </>
+        ),
+        works: (
+          <>
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="9" cy="9" r="2" />
+            <path d="m21 15-5-5L5 21" />
+          </>
+        ),
+        orders: (
+          <>
+            <path d="M3 7h18l-2 12H5z" />
+            <path d="M8 7V5a4 4 0 0 1 8 0v2" />
+          </>
+        ),
+        plans: (
+          <>
+            <path d="M12 2 4 7v10l8 5 8-5V7z" />
+            <path d="M12 12 4 7" />
+            <path d="m12 12 8-5" />
+            <path d="M12 12v10" />
+          </>
+        ),
+        codes: (
+          <>
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+            <path d="M14 3h7v7" />
+            <path d="M3 21l11-11" />
+          </>
+        ),
+        engine: (
+          <>
+            <rect x="7" y="7" width="10" height="10" rx="2" />
+            <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" />
+          </>
+        ),
+        prompts: <path d="m12 3 1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8L12 3Z" />,
+        content: (
+          <>
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="3" y1="9" x2="21" y2="9" />
+          </>
+        ),
+        logs: (
+          <>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+            <line x1="9" y1="13" x2="15" y2="13" />
+            <line x1="9" y1="17" x2="13" y2="17" />
+          </>
+        ),
+        settings: (
+          <>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+          </>
+        )
+      };
+      return (
+        <svg className="admin-console-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+          {paths[page]}
+        </svg>
+      );
+    };
     const navButton = (page: AdminConsolePage, label: string, badge?: string) => (
       <button
         key={page}
@@ -5788,7 +5867,7 @@ function App() {
         type="button"
         onClick={() => setAdminConsolePage(page)}
       >
-        <span className="admin-console-nav-ico">{label.slice(0, 1)}</span>
+        {adminNavIcon(page)}
         <span>{label}</span>
         {badge ? <em>{badge}</em> : null}
       </button>
@@ -5802,7 +5881,7 @@ function App() {
 
     return (
       <>
-        <main className="admin-shell">
+        <main className="admin-shell admin-prototype">
           <div className="ambient-layer studio-ambient" />
           <aside className="admin-console-sidebar">
             <button className="admin-console-brand" type="button" onClick={() => navigateToRoute('studio')}>
@@ -5867,11 +5946,16 @@ function App() {
           </header>
 
           <div className="admin-console-topbar">
-            <div>
+            <div className="admin-console-breadcrumb">
               <span>Console /</span>
               <strong>{ADMIN_CONSOLE_PAGE_LABELS[adminConsolePage]}</strong>
             </div>
-            <div className="admin-console-search">搜索用户、订单、项目</div>
+            <div className="admin-console-search">搜索用户、订单、作品… <kbd>⌘K</kbd></div>
+            <div className="admin-console-topbar-icon">
+              <span className="admin-console-dot" />
+            </div>
+            <div className="admin-console-topbar-icon">?</div>
+            <div className="admin-console-topbar-avatar">{getAdminInitials(session?.displayName ?? session?.email ?? 'Admin')}</div>
           </div>
 
           <section className="admin-hero-card" hidden={adminConsolePage !== 'dashboard'}>
@@ -6014,13 +6098,7 @@ function App() {
                       <button
                         className="ghost-button compact"
                         type="button"
-                        onClick={() => {
-                          setAdminDetailProjects((current) =>
-                            current.some((item) => item.id === project.id) ? current : [project, ...current]
-                          );
-                          setAdminSelectedProjectId(project.id);
-                          setAdminConsolePage('users');
-                        }}
+                        onClick={() => void handleAdminSelectProject(project.id)}
                       >
                         查看项目
                       </button>
@@ -6034,6 +6112,56 @@ function App() {
                 <span>这里会显示所有用户的修图项目、状态、照片数量和结果图。</span>
               </div>
             )}
+            {adminSelectedProject ? (
+              <div className="admin-project-live admin-console-project-live">
+                <div className="admin-live-summary">
+                  <div>
+                    <span className="admin-kicker">Selected Work</span>
+                    <h3>{adminSelectedProject.name}</h3>
+                    <small>
+                      {getProjectStatusLabel(adminSelectedProject, locale)} · {adminSelectedProject.photoCount} 张照片 ·{' '}
+                      {adminSelectedProject.resultAssets.length} 张结果
+                    </small>
+                  </div>
+                  <div className="admin-live-stats">
+                    <span>失败 {adminSelectedProjectFailedItems.length}</span>
+                    <span>处理中 {adminSelectedProjectProcessingItems.length}</span>
+                    <span>结果 {adminSelectedProjectResults.length}</span>
+                  </div>
+                </div>
+                {adminSelectedProjectResults.length ? (
+                  <div className="admin-live-section">
+                    <strong>处理结果</strong>
+                    <div className="admin-live-grid">
+                      {adminSelectedProjectResults.slice(0, 12).map((asset) => (
+                        <a key={asset.id} className="admin-live-tile" href={resolveMediaUrl(asset.storageUrl)} target="_blank" rel="noreferrer">
+                          <img src={resolveMediaUrl(asset.previewUrl ?? asset.storageUrl)} alt={asset.fileName} loading="lazy" decoding="async" />
+                          <span>{asset.fileName}</span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {adminSelectedProjectFailedItems.length ? (
+                  <div className="admin-live-section">
+                    <strong>失败照片</strong>
+                    <div className="admin-live-grid">
+                      {adminSelectedProjectFailedItems.slice(0, 12).map((item) => (
+                        <article key={item.id} className="admin-live-tile failed">
+                          {item.previewUrl ? (
+                            <img src={resolveMediaUrl(item.previewUrl)} alt={item.title} loading="lazy" decoding="async" />
+                          ) : (
+                            <div className="admin-live-placeholder">无预览</div>
+                          )}
+                          <span>{item.title}</span>
+                          <small>{item.errorMessage ?? getHdrItemStatusLabel(item, locale)}</small>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </section>
 
           <section className="admin-panel" hidden={adminConsolePage !== 'orders'}>
