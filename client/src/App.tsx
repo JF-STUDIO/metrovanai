@@ -5878,6 +5878,897 @@ function App() {
       ['importing', 'uploading', 'processing', 'failed'].includes(project.status)
     ).length;
     const planPackages = adminActivationPackages.length ? adminActivationPackages : billingPackages;
+    const totalProjectPhotos = adminProjects.reduce((sum, project) => sum + project.photoCount, 0) || adminTotals.photos;
+    const totalProjectResults = adminProjects.reduce((sum, project) => sum + project.resultAssets.length, 0);
+    const workflowItems = adminWorkflowSummary?.items ?? [];
+    const enabledWorkflowCount = workflowItems.length;
+    const paidOrderRevenue = paidOrders.reduce((sum, order) => sum + order.amountUsd, 0);
+    const availableCodeCount = adminActivationCodes.filter((item) => item.available).length;
+    const usedCodeCount = adminActivationCodes.reduce((sum, item) => sum + item.redemptionCount, 0);
+    const codeCapacity = adminActivationCodes.reduce((sum, item) => sum + (item.maxRedemptions ?? 0), 0);
+    const codeUsageRate = codeCapacity ? Math.round((usedCodeCount / codeCapacity) * 1000) / 10 : 0;
+    const dashboardActivities = [
+      ...adminOrders.slice(0, 3).map((order) => ({
+        id: `order-${order.id}`,
+        tone: order.status === 'paid' ? 'default' : order.status === 'failed' ? 'danger' : 'warn',
+        title: `${order.email} · ${formatPaymentOrderStatus(order.status)}`,
+        meta: `${order.packageName} · $${order.amountUsd.toFixed(2)} · ${formatAdminShortDate(order.createdAt)}`
+      })),
+      ...adminProjects.slice(0, 4).map((project) => ({
+        id: `project-${project.id}`,
+        tone: project.status === 'failed' ? 'danger' : project.status === 'processing' ? 'warn' : 'default',
+        title: `${project.name} · ${getProjectStatusLabel(project, locale)}`,
+        meta: `${project.photoCount} 张 · ${project.resultAssets.length} 结果 · ${formatAdminShortDate(project.updatedAt)}`
+      })),
+      ...adminAuditLogs.slice(0, 3).map((entry) => ({
+        id: `audit-${entry.id}`,
+        tone: 'default',
+        title: entry.action,
+        meta: `${entry.actorEmail ?? entry.actorType} · ${formatAdminShortDate(entry.createdAt)}`
+      }))
+    ].slice(0, 6);
+
+    const adminPageTitle = (title: string, subtitle: ReactNode, actions?: ReactNode) => (
+      <div className="page-title-row">
+        <div>
+          <div className="page-title">{title}</div>
+          <div className="page-sub">{subtitle}</div>
+        </div>
+        {actions ? <div className="admin-page-actions">{actions}</div> : null}
+      </div>
+    );
+    const kpi = (label: string, value: ReactNode, trend?: ReactNode, tone: 'up' | 'down' = 'up') => (
+      <div className="kpi">
+        <div className="kpi-label">{label}</div>
+        <div className="kpi-value">{value}</div>
+        {trend ? <div className={`kpi-trend ${tone}`}>{trend}</div> : null}
+      </div>
+    );
+    const tagClassForStatus = (status: string) => {
+      if (['paid', 'active', 'completed', 'ready', 'published'].includes(status)) {
+        return 'tag tag-green';
+      }
+      if (['failed', 'disabled', 'cancelled'].includes(status)) {
+        return 'tag tag-red';
+      }
+      if (['processing', 'uploading', 'checkout_created', 'pending'].includes(status)) {
+        return 'tag tag-orange';
+      }
+      return 'tag tag-gray';
+    };
+    const planToneClass = (index: number) => ['tag-gray', 'tag-cyan', 'tag-purple', 'tag-orange'][index % 4];
+    const projectToneClass = (index: number) => `work-thumb work-thumb-${(index % 8) + 1}`;
+    const userAvatarStyle = (index: number): CSSProperties => {
+      const gradients = [
+        'linear-gradient(135deg,#c69aff,#7ce8ff)',
+        'linear-gradient(135deg,#7ce8ff,#5ce3a5)',
+        'linear-gradient(135deg,#ffc36b,#ff7a8a)',
+        'linear-gradient(135deg,#5ce3a5,#7ce8ff)',
+        'linear-gradient(135deg,#ff7a8a,#c69aff)'
+      ];
+      return { background: gradients[index % gradients.length] };
+    };
+    const targetNavButton = (page: AdminConsolePage, label: string, badge?: string) => (
+      <button
+        key={page}
+        className={`nav-item${adminConsolePage === page ? ' active' : ''}`}
+        type="button"
+        onClick={() => setAdminConsolePage(page)}
+      >
+        {adminNavIcon(page)}
+        <span>{label}</span>
+        {badge ? <span className="badge">{badge}</span> : null}
+      </button>
+    );
+    const renderAdminOrdersTable = (orders: PaymentOrderRecord[], compact = false) => (
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>订单号</th>
+              <th>用户</th>
+              <th>套餐</th>
+              <th>金额</th>
+              <th>渠道</th>
+              <th>状态</th>
+              <th>{compact ? '时间' : '支付时间'}</th>
+              {!compact ? <th></th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((order, index) => (
+              <tr key={order.id}>
+                <td className="cell-id">#{order.id}</td>
+                <td>
+                  <div className="user-cell">
+                    <div className="user-avatar" style={userAvatarStyle(index)}>
+                      {getAdminInitials(order.email)}
+                    </div>
+                    <div>
+                      <div className="name">{order.email.split('@')[0]}</div>
+                      <div className="email">{order.email}</div>
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <span className={`tag ${planToneClass(index)}`}>{order.packageName}</span>
+                </td>
+                <td className="mono">${order.amountUsd.toFixed(2)}</td>
+                <td>{order.stripeCheckoutSessionId ? 'Stripe' : 'Manual'}</td>
+                <td>
+                  <span className={tagClassForStatus(order.status)}>{formatPaymentOrderStatus(order.status)}</span>
+                </td>
+                <td className="cell-id">{compact ? formatAdminShortDate(order.createdAt) : formatAdminDate(order.paidAt ?? order.createdAt)}</td>
+                {!compact ? <td><div className="tbl-icon">⋯</div></td> : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+
+    const renderDashboardPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '仪表盘',
+          <>
+            今天 · 2026 年 4 月 28 日 · <span className="status-dot live" /> 系统运行中
+          </>,
+          <>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadOrders()}>
+              导出报表
+            </button>
+            <button className="btn btn-primary" type="button" onClick={() => setAdminConsolePage('users')}>
+              + 快速操作
+            </button>
+          </>
+        )}
+        <div className="kpi-grid">
+          {kpi('注册用户', <>{adminTotals.users.toLocaleString()}<span className="unit">人</span></>, <><span>▲ 实时</span><span className="vs">后台用户</span></>)}
+          {kpi('已支付营收', <>${paidOrderRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</>, <><span>▲ {paidOrders.length}</span><span className="vs">笔订单</span></>)}
+          {kpi('AI 修图调用', <>{totalProjectPhotos.toLocaleString()}<span className="unit">次</span></>, <><span>▲ {totalProjectResults}</span><span className="vs">结果图</span></>)}
+          {kpi('待处理作品', <>{pendingProjectCount}<span className="unit">项</span></>, <><span>▲ 队列</span><span className="vs">实时</span></>, pendingProjectCount ? 'down' : 'up')}
+        </div>
+        <div className="dashboard-grid">
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>营收 & 调用趋势</h3>
+                <div className="card-sub">最近 30 天</div>
+              </div>
+              <div className="chart-tabs">
+                <span className="chart-tab">7 天</span>
+                <span className="chart-tab active">30 天</span>
+                <span className="chart-tab">90 天</span>
+              </div>
+            </div>
+            <div className="card-body">
+              <div className="chart-area" aria-hidden="true">
+                <svg className="chart-svg" viewBox="0 0 600 240" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="adminGradRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#7ce8ff" stopOpacity="0.4" />
+                      <stop offset="100%" stopColor="#7ce8ff" stopOpacity="0" />
+                    </linearGradient>
+                    <linearGradient id="adminGradCalls" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#c69aff" stopOpacity="0.3" />
+                      <stop offset="100%" stopColor="#c69aff" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  <line x1="0" y1="60" x2="600" y2="60" stroke="rgba(124,232,255,0.06)" strokeDasharray="2,4" />
+                  <line x1="0" y1="120" x2="600" y2="120" stroke="rgba(124,232,255,0.06)" strokeDasharray="2,4" />
+                  <line x1="0" y1="180" x2="600" y2="180" stroke="rgba(124,232,255,0.06)" strokeDasharray="2,4" />
+                  <path d="M 0 180 L 30 165 L 60 170 L 90 145 L 120 135 L 150 150 L 180 110 L 210 95 L 240 105 L 270 80 L 300 85 L 330 65 L 360 75 L 390 50 L 420 60 L 450 45 L 480 55 L 510 40 L 540 35 L 570 50 L 600 30 L 600 240 L 0 240 Z" fill="url(#adminGradRevenue)" />
+                  <path d="M 0 180 L 30 165 L 60 170 L 90 145 L 120 135 L 150 150 L 180 110 L 210 95 L 240 105 L 270 80 L 300 85 L 330 65 L 360 75 L 390 50 L 420 60 L 450 45 L 480 55 L 510 40 L 540 35 L 570 50 L 600 30" fill="none" stroke="#7ce8ff" strokeWidth="2" />
+                  <path d="M 0 200 L 30 195 L 60 190 L 90 175 L 120 180 L 150 170 L 180 155 L 210 145 L 240 150 L 270 130 L 300 135 L 330 115 L 360 125 L 390 100 L 420 110 L 450 95 L 480 105 L 510 90 L 540 85 L 570 100 L 600 80 L 600 240 L 0 240 Z" fill="url(#adminGradCalls)" opacity="0.6" />
+                  <path d="M 0 200 L 30 195 L 60 190 L 90 175 L 120 180 L 150 170 L 180 155 L 210 145 L 240 150 L 270 130 L 300 135 L 330 115 L 360 125 L 390 100 L 420 110 L 450 95 L 480 105 L 510 90 L 540 85 L 570 100 L 600 80" fill="none" stroke="#c69aff" strokeWidth="2" />
+                  <circle cx="540" cy="35" r="5" fill="#7ce8ff" />
+                  <circle cx="540" cy="35" r="10" fill="#7ce8ff" opacity="0.2" />
+                </svg>
+              </div>
+              <div className="chart-legend">
+                <span><i />营收 ($)</span>
+                <span><i className="purple" />AI 调用次数</span>
+              </div>
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-header">
+              <h3>实时动态</h3>
+              <span className="live-label"><span className="status-dot live" />LIVE</span>
+            </div>
+            <div className="card-body activity-list">
+              {dashboardActivities.length ? (
+                dashboardActivities.map((item) => (
+                  <div key={item.id} className="activity-item">
+                    <div className={`activity-dot ${item.tone}`} />
+                    <div className="activity-content">
+                      <div className="activity-title">{item.title}</div>
+                      <div className="activity-time">{item.meta}</div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-tip">{adminOrdersBusy || adminProjectsBusy ? '正在读取实时动态...' : '暂无动态'}</div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-header">
+            <h3>近期订单</h3>
+            <button className="btn btn-ghost" type="button" onClick={() => setAdminConsolePage('orders')}>
+              查看全部 →
+            </button>
+          </div>
+          {adminOrders.length ? renderAdminOrdersTable(adminOrders.slice(0, 5), true) : <div className="empty-tip">暂无订单数据</div>}
+        </div>
+      </div>
+    );
+
+    const renderUsersPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '用户管理',
+          <>共 <span className="mono accent-text">{(adminTotalUsers || adminUsers.length).toLocaleString()}</span> 位注册用户 · 当前页 <span className="mono success-text">{adminUsers.length}</span> 位</>,
+          <>
+            <button className="btn btn-ghost" type="button">导出 CSV</button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadUsers()}>
+              {adminBusy ? '刷新中...' : '+ 邀请用户'}
+            </button>
+          </>
+        )}
+        <div className="card">
+          <div className="toolbar">
+            <input
+              value={adminSearch}
+              onChange={(event) => {
+                setAdminSearch(event.target.value);
+                setAdminPage(1);
+                setAdminLoaded(false);
+              }}
+              placeholder="搜索 邮箱 / 手机 / ID"
+            />
+            <select
+              value={adminRoleFilter}
+              onChange={(event) => {
+                setAdminRoleFilter(event.target.value as AdminUserListQuery['role']);
+                setAdminPage(1);
+                setAdminLoaded(false);
+              }}
+            >
+              <option value="all">全部套餐</option>
+              <option value="admin">管理员</option>
+              <option value="user">用户</option>
+            </select>
+            <select
+              value={adminStatusFilter}
+              onChange={(event) => {
+                setAdminStatusFilter(event.target.value as AdminUserListQuery['accountStatus']);
+                setAdminPage(1);
+                setAdminLoaded(false);
+              }}
+            >
+              <option value="all">所有状态</option>
+              <option value="active">正常</option>
+              <option value="disabled">已封禁</option>
+            </select>
+            <div className="filter-pills">
+              <span className="pill active">全部</span>
+              <span className="pill">付费</span>
+              <span className="pill">免费</span>
+              <span className="pill">企业</span>
+            </div>
+          </div>
+          {adminUsers.length ? (
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>用户</th>
+                      <th>套餐</th>
+                      <th>积分余额</th>
+                      <th>累计消费</th>
+                      <th>修图次数</th>
+                      <th>注册时间</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminUsers.map((user, index) => (
+                      <tr key={user.id}>
+                        <td>
+                          <div className="user-cell">
+                            <div className="user-avatar" style={userAvatarStyle(index)}>{getAdminInitials(user.displayName || user.email)}</div>
+                            <div>
+                              <div className="name">{user.displayName}</div>
+                              <div className="email">{user.email}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td><span className={`tag ${user.role === 'admin' ? 'tag-purple' : 'tag-gray'}`}>{user.role === 'admin' ? 'Admin' : 'User'}</span></td>
+                        <td className="mono">{user.billingSummary.availablePoints.toLocaleString()}</td>
+                        <td className="mono">${user.billingSummary.totalTopUpUsd.toFixed(0)}</td>
+                        <td className="mono">{user.photoCount.toLocaleString()}</td>
+                        <td className="cell-id">{formatAdminDate(user.createdAt)}</td>
+                        <td><span className={tagClassForStatus(user.accountStatus)}>{user.accountStatus === 'active' ? '正常' : '已封禁'}</span></td>
+                        <td>
+                          <div className="tbl-actions">
+                            <button className="tbl-icon" type="button" onClick={() => void handleAdminSelectUser(user.id)} title="查看">⌕</button>
+                            <button
+                              className="tbl-icon"
+                              type="button"
+                              onClick={() =>
+                                void handleAdminUpdateUser(user.id, {
+                                  accountStatus: user.accountStatus === 'active' ? 'disabled' : 'active'
+                                })
+                              }
+                              title={user.accountStatus === 'active' ? '封禁' : '启用'}
+                            >
+                              ✎
+                            </button>
+                            <button className="tbl-icon" type="button" onClick={() => void handleAdminSelectUser(user.id)} title="更多">⋯</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pagination">
+                <span>显示 1 - {adminUsers.length}，共 {(adminTotalUsers || adminUsers.length).toLocaleString()} 条</span>
+                <div className="page-btns">
+                  <button className="page-btn" type="button" onClick={() => setAdminPage(Math.max(1, adminPage - 1))}>‹</button>
+                  <span className="page-btn active">{adminPage}</span>
+                  <button className="page-btn" type="button" onClick={() => setAdminPage(adminPage + 1)}>›</button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="empty-tip">{adminBusy ? '正在读取用户...' : '暂无用户数据'}</div>
+          )}
+        </div>
+        {adminSelectedUser ? (
+          <div className="card admin-detail-card">
+            <div className="card-header">
+              <h3>{adminSelectedUser.displayName} · 积分与项目</h3>
+              <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSelectUser(adminSelectedUser.id)} disabled={adminDetailBusy}>刷新详情</button>
+            </div>
+            <div className="admin-detail-grid">
+              <div className="settings-row">
+                <div className="label-side">
+                  <div className="name">手动调整积分</div>
+                  <div className="desc">正数增加，负数扣减，会写入账单流水。</div>
+                </div>
+                <div className="admin-inline-form">
+                  <select
+                    value={adminAdjustment.type}
+                    onChange={(event) => setAdminAdjustment((current) => ({ ...current, type: event.target.value as 'credit' | 'charge' }))}
+                  >
+                    <option value="credit">补积分</option>
+                    <option value="charge">扣积分</option>
+                  </select>
+                  <input value={adminAdjustment.points} onChange={(event) => setAdminAdjustment((current) => ({ ...current, points: event.target.value }))} placeholder="积分" />
+                  <input value={adminAdjustment.note} onChange={(event) => setAdminAdjustment((current) => ({ ...current, note: event.target.value }))} placeholder="备注" />
+                  <button className="btn btn-primary" type="button" onClick={() => void handleAdminAdjustBilling(adminSelectedUser.id)} disabled={adminActionBusy}>提交</button>
+                </div>
+              </div>
+              <div className="admin-mini-table">
+                <div className="admin-mini-head"><strong>最近项目</strong><span>{adminDetailProjects.length} 个</span></div>
+                {adminDetailProjects.slice(0, 6).map((project) => (
+                  <button key={project.id} className="admin-project-row" type="button" onClick={() => void handleAdminSelectProject(project.id)}>
+                    <span>{project.name}</span>
+                    <small>{getProjectStatusLabel(project, locale)} · {project.photoCount} 张 · {formatAdminDate(project.updatedAt)}</small>
+                  </button>
+                ))}
+                {!adminDetailProjects.length && <p>暂无项目。</p>}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+
+    const renderWorksPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '修图作品',
+          <>所有用户的 AI 修图作品 · 当前载入 <span className="mono accent-text">{adminProjects.length.toLocaleString()}</span> 项</>,
+          <>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadProjects()} disabled={adminProjectsBusy}>
+              批量审核
+            </button>
+            <button className="btn btn-primary" type="button" onClick={() => setAdminConsolePage('content')}>+ 添加精选</button>
+          </>
+        )}
+        <div className="card">
+          <div className="toolbar">
+            <input placeholder="搜索 作品ID / 用户" />
+            <select><option>所有场景</option><option>HDR</option><option>室内</option><option>室外</option></select>
+            <div className="filter-pills">
+              <span className="pill active">全部 ({adminProjects.length})</span>
+              <span className="pill">待审核 {pendingProjectCount}</span>
+              <span className="pill">已审核</span>
+              <span className="pill">已驳回</span>
+              <span className="pill">精选</span>
+            </div>
+          </div>
+          {adminProjects.length ? (
+            <div className="works-grid">
+              {adminProjects.slice(0, 16).map((project, index) => {
+                const preview = project.resultAssets[0]?.previewUrl ?? project.resultAssets[0]?.storageUrl ?? project.hdrItems[0]?.previewUrl ?? null;
+                return (
+                  <button key={project.id} className="work-card" type="button" onClick={() => void handleAdminSelectProject(project.id)}>
+                    <div className={projectToneClass(index)}>
+                      {preview ? <img src={resolveMediaUrl(preview)} alt={project.name} loading="lazy" decoding="async" /> : null}
+                      <div className="badge-row">
+                        <span className="ai-badge">{project.studioFeatureTitle ?? project.workflowId ?? 'HDR ENHANCE'}</span>
+                        <span className="check">{project.status === 'completed' ? '✓' : project.status === 'failed' ? '⚠' : '⋯'}</span>
+                      </div>
+                    </div>
+                    <div className="work-meta">
+                      <div className="name">{project.name}</div>
+                      <div className="by"><span>{project.userDisplayName || project.userKey}</span><span>{formatAdminShortDate(project.updatedAt)}</span></div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty-tip">{adminProjectsBusy ? '正在读取作品...' : '暂无作品'}</div>
+          )}
+        </div>
+        {adminSelectedProject ? (
+          <div className="card admin-detail-card">
+            <div className="card-header">
+              <h3>{adminSelectedProject.name}</h3>
+              <span className={tagClassForStatus(adminSelectedProject.status)}>{getProjectStatusLabel(adminSelectedProject, locale)}</span>
+            </div>
+            <div className="admin-project-live">
+              <div className="admin-live-stats">
+                <span>失败 {adminSelectedProjectFailedItems.length}</span>
+                <span>处理中 {adminSelectedProjectProcessingItems.length}</span>
+                <span>结果 {adminSelectedProjectResults.length}</span>
+              </div>
+              {adminSelectedProjectResults.length ? (
+                <div className="admin-live-grid">
+                  {adminSelectedProjectResults.slice(0, 12).map((asset) => (
+                    <a key={asset.id} className="admin-live-tile" href={resolveMediaUrl(asset.storageUrl)} target="_blank" rel="noreferrer">
+                      <img src={resolveMediaUrl(asset.previewUrl ?? asset.storageUrl)} alt={asset.fileName} loading="lazy" decoding="async" />
+                      <span>{asset.fileName}</span>
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+
+    const renderOrdersPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '订单管理',
+          <>本月营收 <span className="mono accent-text">${paidOrderRevenue.toFixed(2)}</span> · 退款 <span className="mono danger-text">{adminOrders.filter((order) => order.status === 'cancelled').length}</span></>,
+          <>
+            <button className="btn btn-ghost" type="button">导出账单</button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadOrders()}>+ 手动开单</button>
+          </>
+        )}
+        <div className="kpi-grid">
+          {kpi('本月订单数', adminOrders.length.toLocaleString(), <><span>▲ {paidOrders.length}</span><span className="vs">已支付</span></>)}
+          {kpi('客单价', paidOrders.length ? `$${(paidOrderRevenue / paidOrders.length).toFixed(0)}` : '$0', <><span>▲ 实时</span><span className="vs">平均</span></>)}
+          {kpi('完成率', adminOrders.length ? `${Math.round((paidOrders.length / adminOrders.length) * 100)}%` : '0%', <><span>▲</span><span className="vs">订单</span></>)}
+          {kpi('失败率', adminOrders.length ? `${Math.round((adminOrders.filter((order) => order.status === 'failed').length / adminOrders.length) * 100)}%` : '0%', <><span>▼</span><span className="vs">异常</span></>, 'down')}
+        </div>
+        <div className="card">
+          <div className="toolbar">
+            <input placeholder="搜索 订单号 / 用户" />
+            <select><option>所有套餐</option></select>
+            <select><option>所有渠道</option></select>
+            <div className="filter-pills">
+              <span className="pill active">全部</span>
+              <span className="pill">已支付</span>
+              <span className="pill">处理中</span>
+              <span className="pill">已退款</span>
+              <span className="pill">失败</span>
+            </div>
+          </div>
+          {adminOrders.length ? renderAdminOrdersTable(adminOrders) : <div className="empty-tip">{adminOrdersBusy ? '正在读取订单...' : '暂无订单'}</div>}
+        </div>
+      </div>
+    );
+
+    const renderPlansPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '套餐配置',
+          <>编辑前台 Plans 页展示的 <span className="mono accent-text">{planPackages.length}</span> 档套餐 · 改动会即时生效</>,
+          <>
+            <button className="btn btn-ghost" type="button">预览前台</button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadActivationCodes()}>+ 新增套餐</button>
+          </>
+        )}
+        <div className="plans-grid">
+          {planPackages.map((plan, index) => (
+            <div key={plan.id} className={`plan-card${index === 1 ? ' featured' : ''}`}>
+              <div className="plan-tag">Tier {String(index + 1).padStart(2, '0')}{index === 1 ? ' · Best Value' : ''}</div>
+              <div className="plan-name">{plan.name}</div>
+              <div className="plan-price">${plan.amountUsd.toFixed(0)}<span className="small">/次</span></div>
+              <div className="plan-credits">{plan.points} 积分 · 优惠 {plan.discountPercent}%</div>
+              <ul className="plan-features">
+                <li>{plan.points} 张约可处理照片</li>
+                <li>Stripe 充值订单</li>
+                <li>激活码折扣可叠加</li>
+                <li>自动到账积分</li>
+              </ul>
+              <button className="plan-edit-btn" type="button" onClick={() => setAdminConsolePage('codes')}>编辑套餐</button>
+            </div>
+          ))}
+          {!planPackages.length && <div className="empty-tip">暂无套餐数据</div>}
+        </div>
+        <div className="card">
+          <div className="card-header">
+            <h3>套餐转化漏斗</h3>
+            <div className="chart-tabs"><span className="chart-tab">7 天</span><span className="chart-tab active">30 天</span></div>
+          </div>
+          <div className="admin-console-metrics card-body">
+            <div><span>访问 Plans</span><strong>{(adminTotals.users * 2 || 0).toLocaleString()}</strong></div>
+            <div><span>点击购买</span><strong>{adminOrders.length.toLocaleString()}</strong></div>
+            <div><span>完成支付</span><strong>{paidOrders.length.toLocaleString()}</strong></div>
+          </div>
+        </div>
+      </div>
+    );
+
+    const renderCodesPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '兑换码',
+          '生成与管理积分兑换码、活动促销码、合作伙伴码',
+          <>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadActivationCodes()}>批量生成</button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminCreateActivationCode()}>+ 新建兑换码</button>
+          </>
+        )}
+        <div className="code-grid">
+          <div className="code-stat"><div className="label">已生成 / 可用</div><div className="value">{adminActivationCodes.length.toLocaleString()} / {availableCodeCount}</div></div>
+          <div className="code-stat"><div className="label">已使用</div><div className="value accent-text">{usedCodeCount.toLocaleString()}</div></div>
+          <div className="code-stat"><div className="label">使用率</div><div className="value success-text">{codeUsageRate}%</div></div>
+        </div>
+        <div className="card">
+          <div className="toolbar">
+            <input
+              value={adminActivationDraft.code}
+              onChange={(event) => setAdminActivationDraft((current) => ({ ...current, code: event.target.value.toUpperCase() }))}
+              placeholder="搜索或输入兑换码"
+            />
+            <select value={adminActivationDraft.packageId} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, packageId: event.target.value }))}>
+              <option value="">所有类型</option>
+              {adminActivationPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+            <input value={adminActivationDraft.bonusPoints} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, bonusPoints: event.target.value }))} placeholder="积分面值" />
+            <div className="filter-pills">
+              <span className="pill active">全部</span>
+              <span className="pill">未使用</span>
+              <span className="pill">已使用</span>
+              <span className="pill">已过期</span>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>兑换码</th><th>类型</th><th>面值</th><th>剩余 / 总量</th><th>有效期</th><th>使用情况</th><th>状态</th><th></th></tr></thead>
+              <tbody>
+                {adminActivationCodes.map((item) => (
+                  <tr key={item.id}>
+                    <td className="mono code-text">{item.code}</td>
+                    <td><span className={`tag ${item.packageName ? 'tag-purple' : 'tag-cyan'}`}>{item.packageName ? '套餐优惠' : '积分'}</span></td>
+                    <td className="mono">{item.discountPercentOverride !== null ? `${item.discountPercentOverride} 折` : item.bonusPoints ? `+${item.bonusPoints} 积分` : '默认'}</td>
+                    <td className="mono">{item.maxRedemptions ? `${Math.max(0, item.maxRedemptions - item.redemptionCount)} / ${item.maxRedemptions}` : '无限'}</td>
+                    <td className="cell-id">{item.expiresAt ? formatAdminDate(item.expiresAt) : '永久'}</td>
+                    <td className="mono">{item.redemptionCount}{item.maxRedemptions ? ` / ${item.maxRedemptions}` : ' 次'}</td>
+                    <td><span className={item.available ? 'tag tag-green' : item.active ? 'tag tag-orange' : 'tag tag-gray'}>{item.available ? '活跃' : item.active ? '不可用' : '已停用'}</span></td>
+                    <td><button className="tbl-icon" type="button" onClick={() => void handleAdminToggleActivationCode(item)}>⋯</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!adminActivationCodes.length && <div className="empty-tip">{adminActivationBusy ? '正在读取兑换码...' : '暂无兑换码'}</div>}
+        </div>
+      </div>
+    );
+
+    const renderEnginePage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          'AI 引擎',
+          '管理所有 AI 修图引擎 · 监控调用量、成本、错误率',
+          <>
+            <button className="btn btn-ghost" type="button">成本报表</button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadWorkflows()}>+ 新增引擎</button>
+          </>
+        )}
+        <div className="kpi-grid">
+          {kpi('总引擎数', <>{enabledWorkflowCount}<span className="unit">/ {Math.max(enabledWorkflowCount, 1)}</span></>, <span className="vs">{adminWorkflowSummary?.active ?? '未加载'}</span>)}
+          {kpi('本月调用', totalProjectPhotos.toLocaleString(), <span>▲ 实时项目</span>)}
+          {kpi('本月成本', `$${(totalProjectPhotos * 0.04).toFixed(0)}`, <span>▲ 估算</span>, 'down')}
+          {kpi('平均响应', <>{adminSystemSettings?.runpodHdrBatchSize ?? adminWorkflowSummary?.settings.workflowMaxInFlight ?? 0}<span className="unit">组/批</span></>, <span>▼ 批量设置</span>)}
+        </div>
+        <div className="engine-grid">
+          {workflowItems.length ? workflowItems.map((item, index) => (
+            <div key={`${item.name}-${item.workflowId ?? index}`} className="engine-card live">
+              <div className="engine-head">
+                <div className="engine-icon">{['✨', '☁️', '🛋️', '🌿', '🧹', '🌅'][index % 6]}</div>
+                <div>
+                  <div className="engine-title">{item.name}</div>
+                  <div className="engine-sub">workflow: {item.workflowId ?? '未配置'} · type: {item.type}</div>
+                </div>
+                <div className="engine-toggle" />
+              </div>
+              <div className="engine-stats">
+                <div className="engine-stat"><div className="label">输入节点</div><div className="value">{item.inputCount}</div></div>
+                <div className="engine-stat"><div className="label">输出节点</div><div className="value">{item.outputCount}</div></div>
+                <div className="engine-stat"><div className="label">Prompt</div><div className="value success-text">{item.promptNodeId ?? '—'}</div></div>
+              </div>
+            </div>
+          )) : (
+            <div className="empty-tip">{adminWorkflowBusy ? '正在读取 AI 引擎...' : '暂无工作流数据'}</div>
+          )}
+        </div>
+      </div>
+    );
+
+    const renderPromptsPage = () => (
+      <div className="page-content active">
+        {adminPageTitle('Prompt 模板', '每个 AI 引擎背后的提示词配置 · 改动需重新评测', <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadWorkflows()}>+ 新建模板</button>)}
+        <div className="card">
+          <div className="card-body prompt-grid">
+            {workflowItems.length ? workflowItems.map((item) => (
+              <article key={`${item.name}-prompt`} className="prompt-card">
+                <span className="tag tag-purple">{item.type}</span>
+                <h3>{item.name}</h3>
+                <p>Prompt Node: <span className="mono">{item.promptNodeId ?? '未配置'}</span></p>
+                <p>Workflow ID: <span className="mono">{item.workflowId ?? '未配置'}</span></p>
+              </article>
+            )) : <div className="empty-tip">暂无 Prompt 模板数据</div>}
+          </div>
+        </div>
+      </div>
+    );
+
+    const renderContentPage = () => (
+      <div className="page-content active">
+        {adminPageTitle('内容运营', '前台功能卡片、对比图、输入输出节点、每张积分', <button className="btn btn-primary" type="button" onClick={handleAddAdminFeatureCard}>+ 添加功能卡片</button>)}
+        <div className="card">
+          <div className="card-header">
+            <h3>功能卡片配置</h3>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminFeatureDrafts.length}>保存全部</button>
+          </div>
+          <div className="card-body feature-admin-grid">
+            {adminFeatureDrafts.map((feature, index) => (
+              <details key={feature.id} className="feature-admin-card">
+                <summary>
+                  <span className={`tag ${planToneClass(index)}`}>{feature.status}</span>
+                  <strong>{feature.titleZh}</strong>
+                  <small>Workflow: {feature.workflowId || '未配置'} · 输入 {feature.inputNodeId || '—'} · 输出 {feature.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
+                </summary>
+                <div className="feature-admin-form">
+                  <input value={feature.titleZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { titleZh: event.target.value })} placeholder="中文功能名称" />
+                  <input value={feature.titleEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { titleEn: event.target.value })} placeholder="英文功能名称" />
+                  <textarea value={feature.descriptionZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionZh: event.target.value })} placeholder="中文描述" />
+                  <input value={feature.workflowId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })} placeholder="Workflow ID" />
+                  <input value={feature.inputNodeId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { inputNodeId: event.target.value })} placeholder="输入节点" />
+                  <input value={feature.outputNodeId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { outputNodeId: event.target.value })} placeholder="输出节点" />
+                  <input value={feature.pointsPerPhoto} onChange={(event) => updateAdminFeatureDraft(feature.id, { pointsPerPhoto: Number(event.target.value) || 0 })} inputMode="numeric" placeholder="每张积分" />
+                  <div className="feature-upload-row">
+                    <span>对比图 Before</span>
+                    <input value={feature.beforeImageUrl} onChange={(event) => updateAdminFeatureDraft(feature.id, { beforeImageUrl: event.target.value })} placeholder="Before URL" />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) {
+                          void handleAdminFeatureImageUpload(feature.id, 'beforeImageUrl', file);
+                        }
+                        event.currentTarget.value = '';
+                      }}
+                    />
+                  </div>
+                  <div className="feature-upload-row">
+                    <span>对比图 After</span>
+                    <input value={feature.afterImageUrl} onChange={(event) => updateAdminFeatureDraft(feature.id, { afterImageUrl: event.target.value })} placeholder="After URL" />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) {
+                          void handleAdminFeatureImageUpload(feature.id, 'afterImageUrl', file);
+                        }
+                        event.currentTarget.value = '';
+                      }}
+                    />
+                  </div>
+                </div>
+              </details>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+
+    const renderLogsPage = () => (
+      <div className="page-content active">
+        {adminPageTitle('操作日志', '所有管理员操作 · 不可编辑、不可删除', <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadAuditLogs()}>导出日志</button>)}
+        <div className="card">
+          <div className="toolbar">
+            <input placeholder="搜索 操作员 / 操作类型" />
+            <select><option>所有操作员</option></select>
+            <select><option>所有模块</option></select>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>操作员</th><th>模块</th><th>操作</th><th>对象</th><th>IP</th></tr></thead>
+              <tbody>
+                {adminAuditLogs.map((entry, index) => (
+                  <tr key={entry.id}>
+                    <td className="cell-id">{formatAdminDate(entry.createdAt)}</td>
+                    <td><div className="user-cell"><div className="user-avatar" style={userAvatarStyle(index)}>{getAdminInitials(entry.actorEmail ?? entry.actorType)}</div><div><div className="name">{entry.actorEmail ?? entry.actorType}</div></div></div></td>
+                    <td><span className="tag tag-cyan">{entry.action.split('.')[0] || '系统'}</span></td>
+                    <td>{entry.action}</td>
+                    <td className="mono">{entry.targetUserId ?? entry.targetProjectId ?? '—'}</td>
+                    <td className="cell-id">{entry.ipAddress}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!adminAuditLogs.length && <div className="empty-tip">暂无日志</div>}
+        </div>
+      </div>
+    );
+
+    const renderSettingsPage = () => (
+      <div className="page-content active">
+        {adminPageTitle('系统设置', '站点配置、API 密钥、管理员、通知', null)}
+        <div className="settings-tabs">
+          <div className="settings-tab active">基础</div>
+          <div className="settings-tab">API 密钥</div>
+          <div className="settings-tab">管理员</div>
+          <div className="settings-tab">通知</div>
+          <div className="settings-tab">备份</div>
+        </div>
+        <div className="card">
+          <div className="card-body">
+            <div className="settings-row">
+              <div className="label-side"><div className="name">云处理 HDR 批量</div><div className="desc">新启动的处理任务会使用最新设置</div></div>
+              <div className="admin-inline-form">
+                <input value={adminSystemDraft.runpodHdrBatchSize} onChange={(event) => setAdminSystemDraft({ runpodHdrBatchSize: event.target.value })} inputMode="numeric" min={MIN_RUNPOD_HDR_BATCH_SIZE} max={MAX_RUNPOD_HDR_BATCH_SIZE} />
+                <button className="btn btn-primary" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy}>保存设置</button>
+              </div>
+            </div>
+            <div className="settings-row">
+              <div className="label-side"><div className="name">当前管理员</div><div className="desc">当前登录后台账号</div></div>
+              <div><input readOnly value={session?.email ?? ''} /></div>
+            </div>
+            <div className="settings-row">
+              <div className="label-side"><div className="name">API 状态</div><div className="desc">工作流与 Runpod 配置</div></div>
+              <div><span className={adminWorkflowSummary?.apiKeyConfigured ? 'tag tag-green' : 'tag tag-orange'}>{adminWorkflowSummary?.apiKeyConfigured ? 'API 已配置' : 'API 未配置'}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+
+    const renderActiveAdminPage = () => {
+      switch (adminConsolePage) {
+        case 'users':
+          return renderUsersPage();
+        case 'works':
+          return renderWorksPage();
+        case 'orders':
+          return renderOrdersPage();
+        case 'plans':
+          return renderPlansPage();
+        case 'codes':
+          return renderCodesPage();
+        case 'engine':
+          return renderEnginePage();
+        case 'prompts':
+          return renderPromptsPage();
+        case 'content':
+          return renderContentPage();
+        case 'logs':
+          return renderLogsPage();
+        case 'settings':
+          return renderSettingsPage();
+        case 'dashboard':
+        default:
+          return renderDashboardPage();
+      }
+    };
+
+    if (adminConsolePage) {
+      return (
+        <>
+          <main className="admin-prototype app">
+            <aside className="sidebar">
+              <button className="brand" type="button" onClick={() => navigateToRoute('studio')}>
+                <div className="brand-mark">M</div>
+                <div className="brand-text">
+                  <strong>Metrovan AI</strong>
+                  <small>Admin</small>
+                </div>
+              </button>
+              <div className="nav-section">
+                <div className="nav-section-label">概览</div>
+                {targetNavButton('dashboard', '仪表盘')}
+              </div>
+              <div className="nav-section">
+                <div className="nav-section-label">业务</div>
+                {targetNavButton('users', '用户管理')}
+                {targetNavButton('works', '修图作品', pendingProjectCount ? String(pendingProjectCount) : undefined)}
+                {targetNavButton('orders', '订单管理')}
+                {targetNavButton('plans', '套餐配置')}
+                {targetNavButton('codes', '兑换码')}
+              </div>
+              <div className="nav-section">
+                <div className="nav-section-label">AI</div>
+                {targetNavButton('engine', 'AI 引擎')}
+                {targetNavButton('prompts', 'Prompt 模板')}
+              </div>
+              <div className="nav-section">
+                <div className="nav-section-label">运营 & 系统</div>
+                {targetNavButton('content', '内容运营')}
+                {targetNavButton('logs', '操作日志')}
+                {targetNavButton('settings', '系统设置')}
+              </div>
+              <button className="sidebar-footer" type="button" onClick={() => setAdminConsolePage('settings')}>
+                <div className="avatar">{getAdminInitials(session?.displayName ?? session?.email ?? 'Admin')}</div>
+                <div className="info">
+                  <div className="name">{session?.displayName ?? 'Jin Zhou'}</div>
+                  <div className="role">{session?.role === 'admin' ? '超级管理员' : '未授权'}</div>
+                </div>
+                <span className="logout" onClick={(event) => { event.stopPropagation(); void signOut(); }}>⏻</span>
+              </button>
+            </aside>
+            <section className="main">
+              <header className="topbar">
+                <div className="breadcrumb">
+                  <span>Console</span>
+                  <span className="sep">/</span>
+                  <span className="current">{ADMIN_CONSOLE_PAGE_LABELS[adminConsolePage]}</span>
+                </div>
+                <div className="search-box">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="m21 21-4.3-4.3" />
+                  </svg>
+                  <span>搜索用户、订单、作品…</span>
+                  <span className="kbd">⌘K</span>
+                </div>
+                <div className="topbar-icon" title="通知">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                  </svg>
+                  <span className="dot" />
+                </div>
+                <div className="topbar-icon" title="帮助">?</div>
+                <div className="topbar-avatar">{getAdminInitials(session?.displayName ?? session?.email ?? 'Admin')}</div>
+              </header>
+              {adminMessage ? <div className="global-message admin-message">{adminMessage}</div> : null}
+              {renderActiveAdminPage()}
+            </section>
+          </main>
+        </>
+      );
+    }
 
     return (
       <>
