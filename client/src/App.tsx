@@ -6405,7 +6405,6 @@ function App() {
               <section className="feature-launch-panel">
                 <div className="feature-launch-head">
                   <div>
-                    <h1>新建项目</h1>
                     <p>选择最贴合您拍摄场景的修图功能。每张功能卡片对应一条经过调校的处理流程，所需积分实时显示。</p>
                   </div>
                 </div>
