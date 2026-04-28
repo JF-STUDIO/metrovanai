@@ -1350,18 +1350,6 @@ function getStudioGuideStorageKey(session: SessionState) {
   return `${STUDIO_GUIDE_DISMISSED_PREFIX}:${session.userKey || session.email || session.id}`;
 }
 
-function isStudioGuideDismissed(session: SessionState) {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  try {
-    return window.localStorage.getItem(getStudioGuideStorageKey(session)) === '1';
-  } catch {
-    return false;
-  }
-}
-
 function markStudioGuideDismissed(session: SessionState) {
   if (typeof window === 'undefined') {
     return;
@@ -2528,7 +2516,6 @@ function App() {
   const [resultRegenerateBusy, setResultRegenerateBusy] = useState<Record<string, boolean>>({});
   const [studioGuideOpen, setStudioGuideOpen] = useState(false);
   const [studioGuideStep, setStudioGuideStep] = useState(0);
-  const [studioGuideAutoOpenedFor, setStudioGuideAutoOpenedFor] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const createFileInputRef = useRef<HTMLInputElement | null>(null);
   const resultCardRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -2871,25 +2858,6 @@ function App() {
 
     return () => window.clearTimeout(timer);
   }, [activeRoute, session, sessionReady]);
-
-  useEffect(() => {
-    if (activeRoute !== 'studio' || !session || !sessionReady) {
-      return;
-    }
-
-    const storageKey = getStudioGuideStorageKey(session);
-    if (studioGuideAutoOpenedFor === storageKey || isStudioGuideDismissed(session)) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      setStudioGuideStep(0);
-      setStudioGuideOpen(true);
-      setStudioGuideAutoOpenedFor(storageKey);
-    }, 450);
-
-    return () => window.clearTimeout(timer);
-  }, [activeRoute, session, sessionReady, studioGuideAutoOpenedFor]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || !hasAdminSession || adminLoaded) {
@@ -4315,13 +4283,6 @@ function App() {
     }
   }
 
-  function openStudioGuide() {
-    setUserMenuOpen(false);
-    setHistoryMenuOpen(false);
-    setStudioGuideStep(0);
-    setStudioGuideOpen(true);
-  }
-
   function closeStudioGuide() {
     setStudioGuideOpen(false);
   }
@@ -4329,7 +4290,6 @@ function App() {
   function dismissStudioGuide() {
     if (session) {
       markStudioGuideDismissed(session);
-      setStudioGuideAutoOpenedFor(getStudioGuideStorageKey(session));
     }
     setStudioGuideOpen(false);
   }
@@ -6547,9 +6507,6 @@ function App() {
                 {copy.newProject}
               </button>
             )}
-            <button className="studio-guide-trigger" type="button" onClick={openStudioGuide}>
-              {copy.studioGuideOpen}
-            </button>
             <div className="points-pill">
               <span className="points-pill-label">{copy.points}</span>
               <strong className="points-pill-value">{isDemoMode ? '42.5' : billingSummary?.availablePoints ?? 0}</strong>
