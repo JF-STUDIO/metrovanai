@@ -12,16 +12,15 @@ RUN apt-get update \
     hugin \
     hugin-tools \
     imagemagick \
+    libgomp1 \
     libimage-exiftool-perl \
     liblensfun-bin \
     liblensfun-data-v1 \
-    rawtherapee \
   && rm -rf /var/lib/apt/lists/*
 
 RUN lensfun-update-data || true \
   && command -v align_image_stack \
   && command -v enfuse \
-  && command -v rawtherapee-cli \
   && command -v exiftool
 
 COPY requirements.txt /app/requirements.txt

@@ -13,6 +13,21 @@ import numpy as np
 import requests
 from PIL import Image
 
+try:
+    import cv2
+except ImportError:  # pragma: no cover - checked at runtime in worker images
+    cv2 = None
+
+try:
+    import lensfunpy
+except ImportError:  # pragma: no cover - checked at runtime in worker images
+    lensfunpy = None
+
+try:
+    import rawpy
+except ImportError:  # pragma: no cover - checked at runtime in worker images
+    rawpy = None
+
 
 RAW_EXTENSIONS = {
     ".arw",
@@ -37,6 +52,11 @@ JPEG_EXTENSIONS = {".jpg", ".jpeg"}
 HDR_LONG_EDGE = 3000
 RAW_WB_SEARCH_LONG_EDGE = 900
 RAW_PREVIEW_FALLBACK_ENV = "METROVAN_ALLOW_RAW_PREVIEW_FALLBACK"
+RAW_WB_GAIN_MIN = 0.7
+RAW_WB_GAIN_MAX = 1.5
+RAWPY_BRIGHT_ENV = "METROVAN_RAWPY_BRIGHT"
+RAWPY_HDR_BRIGHT_ENV = "METROVAN_RAWPY_HDR_BRIGHT"
+RAWPY_AUTO_WB_BLEND_ENV = "METROVAN_RAWPY_AUTO_WB_BLEND"
 
 
 def env(name: str, default: str = "") -> str:
@@ -47,16 +67,23 @@ def env_enabled(name: str, default: str = "false") -> bool:
     return env(name, default).lower() in {"1", "true", "yes", "on"}
 
 
+def env_float(name: str, default: float, min_value: float, max_value: float) -> float:
+    try:
+        value = float(env(name, str(default)))
+    except ValueError:
+        value = default
+    if not np.isfinite(value):
+        value = default
+    return max(min_value, min(max_value, value))
+
+
 ACR_LCP_CACHE_DIR = Path(env("METROVAN_ACR_LCP_CACHE_DIR", "/tmp/metrovan-acr-lcp"))
 ACR_LCP_ZIP_MARKER = ACR_LCP_CACHE_DIR / ".ready"
 _LCP_PROFILE_CACHE: list[dict[str, Any]] | None = None
+_LENSFUN_DB: Any | None = None
 
 
 COMMON_TOOL_PATHS = {
-    "METROVAN_RAWTHERAPEE_CLI": [
-        "C:/Program Files/RawTherapee/5.12/rawtherapee-cli.exe",
-        "C:/Program Files/RawTherapee/5.11/rawtherapee-cli.exe",
-    ],
     "METROVAN_ALIGN_IMAGE_STACK": [
         "C:/Program Files/Hugin/bin/align_image_stack.exe",
         "C:/Program Files (x86)/Hugin/bin/align_image_stack.exe",
@@ -87,7 +114,6 @@ TOOLS = {
     "magick": find_tool("METROVAN_MAGICK", ["magick", "convert"]),
     "align": find_tool("METROVAN_ALIGN_IMAGE_STACK", ["align_image_stack"]),
     "enfuse": find_tool("METROVAN_ENFUSE", ["enfuse"]),
-    "rawtherapee": find_tool("METROVAN_RAWTHERAPEE_CLI", ["rawtherapee-cli"]),
 }
 
 
@@ -170,7 +196,7 @@ def ensure_acr_lcp_zip() -> Path | None:
     url = env("METROVAN_ACR_LCP_ZIP_URL")
     s3_config = get_acr_lcp_s3_config()
     if not url and not s3_config:
-        print("ACR lens profiles not configured; falling back to RawTherapee/Lensfun auto correction.", flush=True)
+        print("ACR lens profiles not configured; continuing without external lens profile package.", flush=True)
         return None
     if ACR_LCP_ZIP_MARKER.exists():
         return ACR_LCP_CACHE_DIR
@@ -284,7 +310,6 @@ def get_acr_lcp_roots() -> list[Path]:
         [
             Path("/opt/metrovan/lcp-profiles"),
             Path("/opt/metrovan/acr-lcp"),
-            Path("/usr/share/rawtherapee/lensprofiles"),
             Path("/usr/share/lensprofiles"),
             Path("C:/ProgramData/Adobe/CameraRaw/LensProfiles/1.0"),
         ]
@@ -396,6 +421,168 @@ def find_acr_lcp_profile(source: Path) -> Path | None:
     return None
 
 
+def get_lensfun_db() -> Any | None:
+    global _LENSFUN_DB
+    if lensfunpy is None:
+        return None
+    if _LENSFUN_DB is None:
+        _LENSFUN_DB = lensfunpy.Database()
+    return _LENSFUN_DB
+
+
+def lens_text_variants(value: Any, make: str = "") -> list[str]:
+    text = " ".join(str(value or "").replace("/", " ").split())
+    if not text:
+        return []
+
+    variants: list[str] = []
+
+    def add(candidate: str) -> None:
+        candidate = " ".join(candidate.split())
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+
+    add(text)
+    add(re.sub(r"\b(RF|EF|EF-S|EF-M)(?=\d)", r"\1 ", text))
+    add(text.replace(" F4 L", " F4L").replace(" F2.8 L", " F2.8L"))
+    add(re.sub(r"\bf/(\d+(?:\.\d+)?)\b", r"F\1", text, flags=re.IGNORECASE))
+
+    if make and not text.lower().startswith(make.lower()):
+        for candidate in list(variants):
+            add(f"{make} {candidate}")
+
+    return variants
+
+
+def lensfun_lens_score(lens: Any, query: str, focal: float | None, make: str) -> float:
+    lens_model = str(getattr(lens, "model", ""))
+    lens_make = str(getattr(lens, "maker", ""))
+    score = float(getattr(lens, "score", 0) or 0) * 0.1
+    lens_tokens = text_tokens(lens_model)
+    query_tokens = text_tokens(query)
+    score += len(lens_tokens.intersection(query_tokens)) * 8.0
+    if normalize_lens_text(query) == normalize_lens_text(lens_model):
+        score += 80.0
+    if make and normalize_lens_text(make) in normalize_lens_text(lens_make):
+        score += 15.0
+    if focal is not None:
+        min_focal = getattr(lens, "min_focal", None)
+        max_focal = getattr(lens, "max_focal", None)
+        if min_focal and max_focal and float(min_focal) - 0.25 <= focal <= float(max_focal) + 0.25:
+            score += 25.0
+    return score
+
+
+def find_lensfun_camera_and_lens(metadata: dict[str, Any]) -> tuple[Any, Any, float, float] | None:
+    db = get_lensfun_db()
+    if db is None:
+        print("Lens correction skipped: lensfunpy is not available.", flush=True)
+        return None
+
+    make = str(metadata.get("Make") or "").strip()
+    model = str(metadata.get("Model") or "").strip()
+    focal = parse_number(metadata.get("FocalLength"))
+    aperture = parse_number(metadata.get("FNumber")) or 8.0
+    if not make or not model or focal is None:
+        return None
+
+    cameras = db.find_cameras(make, model, loose_search=False) or db.find_cameras(make, model, loose_search=True)
+    if not cameras:
+        print(f"Lens correction skipped: no Lensfun camera match for {make} {model}.", flush=True)
+        return None
+
+    camera = cameras[0]
+    queries: list[str] = []
+    for key in ("LensID", "LensModel", "LensInfo"):
+        for variant in lens_text_variants(metadata.get(key), make):
+            if variant not in queries:
+                queries.append(variant)
+
+    best_lens: Any | None = None
+    best_score = 0.0
+    best_query = ""
+    for query in queries:
+        candidates = db.find_lenses(camera, lens=query, loose_search=False) or db.find_lenses(camera, lens=query, loose_search=True)
+        for lens in candidates:
+            score = lensfun_lens_score(lens, query, focal, make)
+            if score > best_score:
+                best_lens = lens
+                best_score = score
+                best_query = query
+
+    if best_lens is None:
+        lens_text = " / ".join(str(metadata.get(key) or "") for key in ("LensID", "LensModel", "LensInfo"))
+        print(f"Lens correction skipped: no Lensfun lens match for {lens_text}.", flush=True)
+        return None
+
+    print(
+        "Lensfun correction matched "
+        f"{getattr(camera, 'maker', make)} {getattr(camera, 'model', model)} + {getattr(best_lens, 'model', best_query)} "
+        f"at {focal:g}mm f/{aperture:g}",
+        flush=True,
+    )
+    return camera, best_lens, float(focal), float(aperture)
+
+
+def apply_lensfun_correction(image: Image.Image, source: Path) -> Image.Image:
+    if lensfunpy is None or cv2 is None:
+        print("Lens correction skipped: lensfunpy/opencv is not available.", flush=True)
+        return image
+
+    metadata = read_raw_lens_metadata(source)
+    match = find_lensfun_camera_and_lens(metadata)
+    if match is None:
+        return image
+
+    camera, lens, focal, aperture = match
+    width, height = image.size
+    modifier = lensfunpy.Modifier(lens, float(getattr(camera, "crop_factor", 1.0) or 1.0), width, height)
+    modifier.initialize(
+        focal,
+        aperture,
+        distance=1000.0,
+        pixel_format=np.float32,
+        flags=lensfunpy.ModifyFlags.ALL,
+    )
+
+    array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+    color_changed = bool(modifier.apply_color_modification(array))
+
+    coords = modifier.apply_subpixel_geometry_distortion()
+    geometry_changed = coords is not None
+    if coords is not None:
+        channels = []
+        for channel_index in range(3):
+            channel_coords = coords[:, :, channel_index, :]
+            channels.append(
+                cv2.remap(
+                    array[:, :, channel_index],
+                    channel_coords[:, :, 0].astype(np.float32),
+                    channel_coords[:, :, 1].astype(np.float32),
+                    interpolation=cv2.INTER_LANCZOS4,
+                    borderMode=cv2.BORDER_REPLICATE,
+                )
+            )
+        array = np.stack(channels, axis=2)
+    else:
+        coords = modifier.apply_geometry_distortion()
+        geometry_changed = coords is not None
+        if coords is not None:
+            array = cv2.remap(
+                array,
+                coords[:, :, 0].astype(np.float32),
+                coords[:, :, 1].astype(np.float32),
+                interpolation=cv2.INTER_LANCZOS4,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
+
+    if not geometry_changed and not color_changed:
+        print(f"Lens correction skipped: profile has no usable correction data for {source.name}.", flush=True)
+        return image
+
+    return Image.fromarray(np.clip(array * 255.0, 0, 255).astype(np.uint8), mode="RGB")
+
+
 def download_url(url: str, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with requests.get(url, stream=True, timeout=180) as response:
@@ -429,130 +616,130 @@ def download_source(source: dict[str, Any], index: int, target_dir: Path) -> Pat
     return target
 
 
-def parse_rawtherapee_wb_mode(mode: str) -> tuple[str, int, float]:
-    normalized = (mode or "camera").strip()
-    if normalized.lower().startswith("custom:"):
-        parts = normalized.split(":")
-        if len(parts) >= 3:
-            try:
-                temperature = int(round(float(parts[1])))
-                green = float(parts[2])
-                return "Custom", max(2500, min(9000, temperature)), max(0.75, min(1.35, green))
-            except ValueError:
-                pass
-        return "Custom", 5000, 1.0
-    return ("Camera" if normalized == "camera" else normalized), 5000, 1.0
+def require_rawpy() -> None:
+    if rawpy is None:
+        raise RuntimeError("rawpy/libraw is required for RAW-stage white balance rendering.")
 
 
-def custom_raw_wb_mode(temperature: int, green: float) -> str:
-    return f"custom:{int(round(temperature))}:{green:.4f}"
+def normalize_raw_user_wb(values: Any) -> list[float]:
+    array = np.asarray(values, dtype=np.float32).reshape(-1)
+    if array.size < 4 or not np.all(np.isfinite(array[:4])) or np.min(array[:4]) <= 0:
+        array = np.asarray([1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+    else:
+        array = array[:4]
+    green = float((array[1] + array[3]) / 2.0) if array[3] > 0 else float(array[1])
+    if not np.isfinite(green) or green <= 0:
+        green = 1.0
+    normalized = np.clip(array / green, 0.2, 8.0)
+    return [float(value) for value in normalized]
 
 
-def build_rawtherapee_profile(mode: str, resize_long_edge: int = HDR_LONG_EDGE, lcp_profile: Path | None = None) -> str:
-    setting, temperature, green = parse_rawtherapee_wb_mode(mode)
-    lens_profile_lines = [
-        "[LensProfile]",
-        "LcMode=lcp" if lcp_profile else "LcMode=lfauto",
-    ]
-    if lcp_profile:
-        lens_profile_lines.append(f"LCPFile={lcp_profile.as_posix()}")
-    lens_profile_lines.extend(
+def resize_rgb_array(rgb: np.ndarray, long_edge: int | None = None) -> Image.Image:
+    image = Image.fromarray(np.asarray(rgb, dtype=np.uint8), mode="RGB")
+    if long_edge and max(image.size) > long_edge:
+        scale = long_edge / float(max(image.size))
+        size = (max(1, round(image.size[0] * scale)), max(1, round(image.size[1] * scale)))
+        image = image.resize(size, Image.Resampling.LANCZOS)
+    return image
+
+
+def postprocess_raw_to_rgb(
+    source: Path,
+    raw_user_wb: list[float] | None = None,
+    half_size: bool = False,
+    auto_wb: bool = False,
+    bright: float | None = None,
+) -> np.ndarray:
+    require_rawpy()
+    with rawpy.imread(str(source)) as raw:
+        options: dict[str, Any] = {
+            "output_color": rawpy.ColorSpace.sRGB,
+            "output_bps": 8,
+            "no_auto_bright": True,
+            "bright": bright if bright is not None else env_float(RAWPY_BRIGHT_ENV, 16.0, 1.0, 32.0),
+            "gamma": (2.222, 4.5),
+            "highlight_mode": rawpy.HighlightMode.Blend,
+            "use_auto_wb": auto_wb,
+            "use_camera_wb": raw_user_wb is None and not auto_wb,
+            "half_size": half_size,
+        }
+        if raw_user_wb is not None:
+            options["user_wb"] = raw_user_wb
+        return raw.postprocess(**options)
+
+
+def get_camera_user_wb(source: Path) -> list[float]:
+    require_rawpy()
+    with rawpy.imread(str(source)) as raw:
+        return normalize_raw_user_wb(raw.camera_whitebalance)
+
+
+def rawpy_decode_bright(hdr_input: bool = False) -> float:
+    if hdr_input:
+        return env_float(RAWPY_HDR_BRIGHT_ENV, 6.0, 1.0, 32.0)
+    return env_float(RAWPY_BRIGHT_ENV, 16.0, 1.0, 32.0)
+
+
+def estimate_raw_rgb_grey_user_wb(source: Path, hdr_input: bool = False) -> list[float] | None:
+    bright = rawpy_decode_bright(hdr_input)
+    camera_preview = postprocess_raw_to_rgb(source, None, half_size=True, bright=bright)
+    preview_image = resize_rgb_array(camera_preview, RAW_WB_SEARCH_LONG_EDGE)
+    preview = np.asarray(preview_image, dtype=np.float32) / 255.0
+    auto_preview = postprocess_raw_to_rgb(source, None, half_size=True, auto_wb=True, bright=bright)
+    auto_image = resize_rgb_array(auto_preview, RAW_WB_SEARCH_LONG_EDGE)
+    auto = np.asarray(auto_image, dtype=np.float32) / 255.0
+
+    auto_gains = estimate_rgb_gains_from_arrays(preview, auto, blend_with_white=False)
+    white_gains = compute_white_priority_gains(preview)
+    if not auto_gains and not white_gains:
+        print(f"RAW RGB grey WB kept camera white balance for {source.name}: no neutral sample.", flush=True)
+        return None
+    if auto_gains and white_gains:
+        auto_blend = env_float(RAWPY_AUTO_WB_BLEND_ENV, 0.65, 0.0, 1.0)
+        gains = {
+            "r": max(RAW_WB_GAIN_MIN, min(RAW_WB_GAIN_MAX, white_gains["r"] * (1.0 - auto_blend) + auto_gains["r"] * auto_blend)),
+            "g": 1.0,
+            "b": max(RAW_WB_GAIN_MIN, min(RAW_WB_GAIN_MAX, white_gains["b"] * (1.0 - auto_blend) + auto_gains["b"] * auto_blend)),
+        }
+    else:
+        gains = auto_gains or white_gains
+
+    camera_wb = get_camera_user_wb(source)
+    user_wb = normalize_raw_user_wb(
         [
-            "UseDistortion=true",
-            "UseVignette=true",
-            "UseCA=true",
-            "",
+            camera_wb[0] * gains.get("r", 1.0),
+            camera_wb[1] * gains.get("g", 1.0),
+            camera_wb[2] * gains.get("b", 1.0),
+            camera_wb[3] * gains.get("g", 1.0),
         ]
     )
-    return "\n".join(
-        [
-            "[Exposure]",
-            "Auto=false",
-            "HistogramMatching=true",
-            "",
-            "[HLRecovery]",
-            "Enabled=true",
-            "Method=Coloropp",
-            "",
-            *lens_profile_lines,
-            "[RAW]",
-            "CA=true",
-            "",
-            "[White Balance]",
-            "Enabled=true",
-            f"Setting={setting}",
-            f"Temperature={temperature}",
-            f"Green={green}",
-            "Equal=1",
-            "TemperatureBias=0",
-            "StandardObserver=TWO_DEGREES",
-            "Itcwb_green=0",
-            "Itcwb_rangegreen=1",
-            "Itcwb_nopurple=false",
-            "Itcwb_alg=false",
-            "Itcwb_prim=beta",
-            "Itcwb_sampling=false",
-            "CompatibilityVersion=2",
-            "",
-            "[Color Management]",
-            "InputProfile=(cameraICC)",
-            "ToneCurve=true",
-            "ApplyLookTable=true",
-            "ApplyBaselineExposureOffset=true",
-            "ApplyHueSatMap=true",
-            "DCPIlluminant=0",
-            "WorkingProfile=ProPhoto",
-            "OutputProfile=RT_sRGB",
-            "OutputProfileIntent=Relative",
-            "OutputBPC=true",
-            "",
-            "[RAW Preprocess WB]",
-            "Mode=1",
-            "",
-            "[Resize]",
-            "Enabled=true",
-            "Scale=1",
-            "AppliesTo=Cropped area",
-            "Method=Lanczos",
-            "DataSpecified=3",
-            f"Width={resize_long_edge}",
-            f"Height={resize_long_edge}",
-            "AllowUpscaling=false",
-            "",
-        ]
+    print(
+        "RAW-stage RGB grey WB selected for "
+        f"{source.name}: gains R={gains.get('r', 1.0):.4f} B={gains.get('b', 1.0):.4f} "
+        f"user_wb=[{user_wb[0]:.4f}, {user_wb[1]:.4f}, {user_wb[2]:.4f}, {user_wb[3]:.4f}]",
+        flush=True,
     )
+    return user_wb
 
 
-def render_raw_to_jpeg(source: Path, destination: Path, quality: int, mode: str, resize_long_edge: int = HDR_LONG_EDGE) -> None:
-    rawtherapee = TOOLS["rawtherapee"]
-    rawtherapee_error = "rawtherapee-cli is not available in the worker image."
-    allow_preview_fallback = env_enabled(RAW_PREVIEW_FALLBACK_ENV)
+def render_raw_to_jpeg(
+    source: Path,
+    destination: Path,
+    quality: int,
+    raw_user_wb: list[float] | None = None,
+    resize_long_edge: int = HDR_LONG_EDGE,
+    hdr_input: bool = False,
+) -> None:
+    if isinstance(raw_user_wb, str):
+        if raw_user_wb != "camera":
+            raise RuntimeError("Legacy RAW white-balance profile modes are no longer supported.")
+        raw_user_wb = None
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if rawtherapee:
-        with tempfile.TemporaryDirectory(prefix="metrovan-rt-") as temp_root:
-            temp_dir = Path(temp_root)
-            profile = temp_dir / "render.pp3"
-            rendered = temp_dir / "rendered.jpg"
-            lcp_profile = find_acr_lcp_profile(source) if is_raw(source) else None
-            if lcp_profile:
-                print(f"Using ACR lens profile: {lcp_profile.name}", flush=True)
-            profile.write_text(build_rawtherapee_profile(mode, resize_long_edge, lcp_profile), encoding="utf-8")
-            result = run_process(
-                rawtherapee,
-                ["-q", "-Y", "-d", "-p", str(profile), "-o", str(rendered), f"-j{quality}", "-c", str(source)],
-                temp_dir,
-                timeout=420,
-            )
-            if result.returncode == 0 and rendered.exists():
-                shutil.copyfile(rendered, destination)
-                return
-            rawtherapee_error = f"rawtherapee conversion failed: {trim_error(result.stderr or result.stdout)}"
-
-    if allow_preview_fallback and extract_raw_preview_to_jpeg(source, destination, quality, resize_long_edge):
-        return
-
-    raise RuntimeError(rawtherapee_error)
+    rgb = postprocess_raw_to_rgb(source, raw_user_wb, half_size=False, bright=rawpy_decode_bright(hdr_input))
+    image = resize_rgb_array(rgb, resize_long_edge)
+    image = apply_lensfun_correction(image, source)
+    image.save(destination, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
 
 
 def extract_raw_preview_to_jpeg(source: Path, destination: Path, quality: int, resize_long_edge: int | None = None) -> bool:
@@ -590,7 +777,8 @@ def resize_with_pillow(source: Path, destination: Path, quality: int, long_edge:
 
 def convert_to_jpeg(source: Path, destination: Path, quality: int, long_edge: int | None = None) -> None:
     if is_raw(source):
-        render_raw_to_jpeg(source, destination, quality, "camera", long_edge or HDR_LONG_EDGE)
+        raw_user_wb = estimate_raw_rgb_grey_user_wb(source)
+        render_raw_to_jpeg(source, destination, quality, raw_user_wb, long_edge or HDR_LONG_EDGE)
         return
     resize_with_pillow(source, destination, quality, long_edge)
 
@@ -668,9 +856,11 @@ def compute_white_priority_gains(camera: np.ndarray) -> dict[str, float] | None:
     }
 
 
-def estimate_rgb_gains(camera_path: Path, auto_path: Path) -> dict[str, float] | None:
-    camera = load_rgb(camera_path)
-    auto = load_rgb(auto_path)
+def estimate_rgb_gains_from_arrays(
+    camera: np.ndarray,
+    auto: np.ndarray,
+    blend_with_white: bool = True,
+) -> dict[str, float] | None:
     if camera.shape != auto.shape:
         auto_image = Image.fromarray(np.clip(auto * 255.0, 0, 255).astype(np.uint8), mode="RGB")
         auto_image = auto_image.resize((camera.shape[1], camera.shape[0]), Image.Resampling.BILINEAR)
@@ -706,13 +896,17 @@ def estimate_rgb_gains(camera_path: Path, auto_path: Path) -> dict[str, float] |
         "b": max(0.7, min(1.5, b_ratio / g_ratio)),
     }
     white_gains = compute_white_priority_gains(camera)
-    if not white_gains:
+    if not white_gains or not blend_with_white:
         return auto_gains
     return {
         "r": max(0.7, min(1.5, white_gains["r"] * 0.72 + auto_gains["r"] * 0.28)),
         "g": 1.0,
         "b": max(0.7, min(1.5, white_gains["b"] * 0.72 + auto_gains["b"] * 0.28)),
     }
+
+
+def estimate_rgb_gains(camera_path: Path, auto_path: Path) -> dict[str, float] | None:
+    return estimate_rgb_gains_from_arrays(load_rgb(camera_path), load_rgb(auto_path))
 
 
 def estimate_tone_adjustments(source_path: Path, target_path: Path, gains: dict[str, float] | None = None) -> dict[str, float] | None:
@@ -794,83 +988,27 @@ def apply_image_adjustments(
     output.save(destination_path, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
 
 
-def score_rgb_grey_target(target_path: Path, candidate_path: Path) -> float:
-    target = load_rgb(target_path)
-    candidate = load_rgb(candidate_path)
-    if candidate.shape != target.shape:
-        candidate_image = Image.fromarray(np.clip(candidate * 255.0, 0, 255).astype(np.uint8), mode="RGB")
-        candidate_image = candidate_image.resize((target.shape[1], target.shape[0]), Image.Resampling.BILINEAR)
-        candidate = np.asarray(candidate_image, dtype=np.float32) / 255.0
-
-    target_luma = luminance(target)
-    target_max = target.max(axis=2)
-    mask = (target_luma > 0.08) & (target_luma < 0.76) & (target_max < 0.94)
-    if np.count_nonzero(mask) < 500:
-        mask = (target_luma > 0.05) & (target_luma < 0.9)
-    if np.count_nonzero(mask) == 0:
-        mask = np.ones(target.shape[:2], dtype=bool)
-
-    return float(np.mean(np.abs(candidate[mask] - target[mask])))
-
-
-def evaluate_raw_wb_candidates(
-    source: Path,
-    target_path: Path,
-    candidates: list[tuple[int, float]],
-    search_dir: Path,
-    scores: dict[tuple[int, float], tuple[float, Path]],
-) -> tuple[int, float, float]:
-    best: tuple[int, float, float] | None = None
-    for temperature, green in candidates:
-        key = (int(round(temperature)), round(float(green), 4))
-        if key not in scores:
-            candidate_path = search_dir / f"custom-{key[0]}k-g{key[1]:.4f}.jpg"
-            render_raw_to_jpeg(source, candidate_path, 90, custom_raw_wb_mode(key[0], key[1]), RAW_WB_SEARCH_LONG_EDGE)
-            scores[key] = (score_rgb_grey_target(target_path, candidate_path), candidate_path)
-        score = scores[key][0]
-        if best is None or score < best[2]:
-            best = (key[0], key[1], score)
-    if best is None:
-        raise RuntimeError("No RAW white-balance candidates were evaluated.")
-    return best
-
-
-def estimate_raw_rgb_grey_wb_mode(source: Path, work_dir: Path) -> str:
-    search_dir = work_dir / f"raw-wb-{source.stem}"
-    search_dir.mkdir(parents=True, exist_ok=True)
-    camera_path = search_dir / "camera.jpg"
-    auto_path = search_dir / "autold.jpg"
-    target_path = search_dir / "rgb-grey-target.jpg"
-
-    render_raw_to_jpeg(source, camera_path, 90, "camera", RAW_WB_SEARCH_LONG_EDGE)
-    render_raw_to_jpeg(source, auto_path, 90, "autold", RAW_WB_SEARCH_LONG_EDGE)
-    gains = estimate_rgb_gains(camera_path, auto_path)
-    if not gains:
-        return "camera"
-    apply_image_adjustments(camera_path, target_path, 90, gains, None)
-
-    scores: dict[tuple[int, float], tuple[float, Path]] = {}
-    coarse = [(temperature, green) for temperature in (4200, 4600, 5000, 5400, 5800) for green in (0.98, 1.03, 1.08)]
-    best_temperature, best_green, _ = evaluate_raw_wb_candidates(source, target_path, coarse, search_dir, scores)
-    refine = [
-        (max(2500, min(9000, best_temperature + delta_temperature)), max(0.75, min(1.35, best_green + delta_green)))
-        for delta_temperature in (-200, -100, 0, 100, 200)
-        for delta_green in (-0.03, 0.0, 0.03)
-    ]
-    best_temperature, best_green, best_score = evaluate_raw_wb_candidates(source, target_path, refine, search_dir, scores)
-    print(
-        "RAW RGB grey WB selected for "
-        f"{source.name}: Temperature={best_temperature} Green={best_green:.4f} score={best_score:.5f}",
-        flush=True,
-    )
-    return custom_raw_wb_mode(best_temperature, best_green)
+def apply_hdr_tone_adjustments(source_path: Path, destination_path: Path, quality: int) -> None:
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.open(source_path).convert("RGB")
+    array = np.asarray(image, dtype=np.float32) / 255.0
+    luma = luminance(array)
+    midtone = max(float(np.percentile(luma, 50)), 1e-4)
+    target_midtone = 0.35
+    gamma = 1.0
+    if midtone < target_midtone:
+        gamma = math.log(target_midtone) / math.log(midtone)
+        gamma = max(0.62, min(0.95, gamma))
+    array = np.power(np.clip(array, 0.0, 1.0), gamma)
+    output = Image.fromarray(np.clip(array * 255.0, 0, 255).astype(np.uint8), mode="RGB")
+    output.save(destination_path, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
 
 
 def prepare_inputs(
     exposures: list[dict[str, Any]],
     source_paths: dict[str, Path],
     work_dir: Path,
-    raw_wb_mode: str = "camera",
+    raw_user_wb: list[float] | None = None,
 ) -> tuple[list[Path], dict[str, Any], Path | None]:
     inputs_dir = work_dir / "prepared"
     inputs_dir.mkdir(parents=True, exist_ok=True)
@@ -882,7 +1020,7 @@ def prepare_inputs(
         source = source_paths[str(exposure.get("id"))]
         prepared_path = inputs_dir / f"{index:04d}_{source.stem}.jpg"
         if is_raw(source):
-            render_raw_to_jpeg(source, prepared_path, 95, raw_wb_mode, HDR_LONG_EDGE)
+            render_raw_to_jpeg(source, prepared_path, 95, raw_user_wb, HDR_LONG_EDGE, hdr_input=True)
         else:
             convert_to_jpeg(source, prepared_path, 95, HDR_LONG_EDGE)
         if exposure is reference:
@@ -890,26 +1028,6 @@ def prepare_inputs(
         prepared.append(prepared_path)
 
     return prepared, reference, reference_prepared
-
-
-def estimate_group_gains(reference: dict[str, Any], source_paths: dict[str, Path], reference_prepared: Path, work_dir: Path) -> dict[str, float] | None:
-    source = source_paths[str(reference.get("id"))]
-    if not is_raw(source):
-        return None
-    auto_path = work_dir / "reference-auto.jpg"
-    render_raw_to_jpeg(source, auto_path, 95, "autold", HDR_LONG_EDGE)
-    return estimate_rgb_gains(reference_prepared, auto_path)
-
-
-def apply_group_gains(prepared: list[Path], gains: dict[str, float], work_dir: Path) -> list[Path]:
-    adjusted_dir = work_dir / "wb-prepared"
-    adjusted_dir.mkdir(parents=True, exist_ok=True)
-    adjusted: list[Path] = []
-    for index, source in enumerate(prepared, start=1):
-        target = adjusted_dir / f"{index:04d}_wb.jpg"
-        apply_image_adjustments(source, target, 95, gains, None)
-        adjusted.append(target)
-    return adjusted
 
 
 def align_and_fuse(prepared: list[Path], output_path: Path, work_dir: Path) -> None:
@@ -934,11 +1052,25 @@ def align_and_fuse(prepared: list[Path], output_path: Path, work_dir: Path) -> N
         raise RuntimeError("align_image_stack did not output enough aligned TIFF files.")
 
     fused_tif = work_dir / "fused.tif"
-    result = run_process(enfuse_tool, ["-o", str(fused_tif), *[str(path) for path in aligned]], work_dir, timeout=240)
+    result = run_process(
+        enfuse_tool,
+        [
+            "-o",
+            str(fused_tif),
+            "--exposure-weight=1",
+            "--saturation-weight=0",
+            "--contrast-weight=0",
+            "--exposure-optimum=0.30",
+            "--exposure-width=0.18",
+            *[str(path) for path in aligned],
+        ],
+        work_dir,
+        timeout=240,
+    )
     if result.returncode != 0 or not fused_tif.exists():
         raise RuntimeError(f"enfuse failed: {trim_error(result.stderr or result.stdout)}")
 
-    apply_image_adjustments(fused_tif, output_path, 96, None, None)
+    apply_hdr_tone_adjustments(fused_tif, output_path, 96)
 
 
 def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
@@ -967,16 +1099,16 @@ def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
             exposure = normalized_exposures[0]
             source = source_paths[str(exposure.get("id"))]
             if is_raw(source):
-                raw_wb_mode = estimate_raw_rgb_grey_wb_mode(source, work_dir)
-                render_raw_to_jpeg(source, output_path, 95, raw_wb_mode, HDR_LONG_EDGE)
+                raw_user_wb = estimate_raw_rgb_grey_user_wb(source)
+                render_raw_to_jpeg(source, output_path, 95, raw_user_wb, HDR_LONG_EDGE)
             else:
                 convert_to_jpeg(source, output_path, 95, HDR_LONG_EDGE)
             return
 
         reference = pick_reference(normalized_exposures)
         reference_source = source_paths[str(reference.get("id"))]
-        raw_wb_mode = estimate_raw_rgb_grey_wb_mode(reference_source, work_dir) if is_raw(reference_source) else "camera"
-        prepared, _, _ = prepare_inputs(normalized_exposures, source_paths, work_dir, raw_wb_mode)
+        raw_user_wb = estimate_raw_rgb_grey_user_wb(reference_source, hdr_input=True) if is_raw(reference_source) else None
+        prepared, _, _ = prepare_inputs(normalized_exposures, source_paths, work_dir, raw_user_wb)
         align_and_fuse(prepared, output_path, work_dir)
 
 
