@@ -2584,6 +2584,29 @@ function App() {
           : authMode === 'reset-confirm'
             ? copy.authModeResetConfirm
             : copy.authModeVerifyEmail;
+
+  useEffect(() => {
+    const isImageTarget = (target: EventTarget | null) =>
+      target instanceof Element && Boolean(target.closest('img'));
+    const blockImageContextMenu = (event: MouseEvent) => {
+      if (isImageTarget(event.target)) {
+        event.preventDefault();
+      }
+    };
+    const blockImageDrag = (event: DragEvent) => {
+      if (isImageTarget(event.target)) {
+        event.preventDefault();
+      }
+    };
+
+    document.addEventListener('contextmenu', blockImageContextMenu);
+    document.addEventListener('dragstart', blockImageDrag);
+    return () => {
+      document.removeEventListener('contextmenu', blockImageContextMenu);
+      document.removeEventListener('dragstart', blockImageDrag);
+    };
+  }, []);
+
   const currentProject = useMemo(
     () => (currentProjectId ? visibleProjects.find((project) => project.id === currentProjectId) ?? null : null),
     [visibleProjects, currentProjectId]
