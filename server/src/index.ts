@@ -40,6 +40,7 @@ import {
   createDirectObjectUploadTarget,
   deleteObjectsFromStorage,
   deleteProjectIncomingObjects,
+  deleteProjectPersistentObjects,
   downloadDirectObjectToFile,
   getDirectObjectUploadCapabilities,
   getObjectStorageMetadata,
@@ -1292,18 +1293,22 @@ function collectProjectObjectStorageKeys(project: ProjectRecord) {
 }
 
 async function deleteProjectObjectStorage(project: ProjectRecord) {
-  const [cleanup, incomingCleanup] = await Promise.all([
+  const [cleanup, incomingCleanup, persistentCleanup] = await Promise.all([
     deleteObjectsFromStorage(collectProjectObjectStorageKeys(project)),
     deleteProjectIncomingObjects({
       userKey: project.userKey,
       projectId: project.id,
       userDisplayName: project.userDisplayName,
       projectName: project.name
+    }),
+    deleteProjectPersistentObjects({
+      userKey: project.userKey,
+      projectId: project.id
     })
   ]);
   const combined = {
-    deleted: cleanup.deleted + incomingCleanup.deleted,
-    failed: [...cleanup.failed, ...incomingCleanup.failed]
+    deleted: cleanup.deleted + incomingCleanup.deleted + persistentCleanup.deleted,
+    failed: [...cleanup.failed, ...incomingCleanup.failed, ...persistentCleanup.failed]
   };
   if (combined.failed.length) {
     console.warn(`R2 cleanup skipped ${combined.failed.length} objects for project ${project.id}`, combined.failed);

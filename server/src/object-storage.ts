@@ -374,14 +374,27 @@ function hasNormalizedIncomingProjectIdentity(
   config: ObjectStorageConfig,
   input: { userKey: string; projectId: string; storageKey: string }
 ) {
+  return hasNormalizedProjectIdentity(config.incomingPrefix, input);
+}
+
+function hasNormalizedPersistentProjectIdentity(
+  config: ObjectStorageConfig,
+  input: { userKey: string; projectId: string; storageKey: string }
+) {
+  return hasNormalizedProjectIdentity(config.persistentPrefix, input);
+}
+
+function hasNormalizedProjectIdentity(
+  rootPrefix: string,
+  input: { userKey: string; projectId: string; storageKey: string }
+) {
   const parts = normalizeStorageKey(input.storageKey).split('/').filter(Boolean);
   const userKey = sanitizeSegment(input.userKey) || 'user';
   const projectId = sanitizeSegment(input.projectId) || 'project';
   return (
-    parts[0] === config.incomingPrefix &&
+    parts[0] === rootPrefix &&
     (parts[1] === userKey || parts[1]?.endsWith(`-${userKey}`)) &&
-    (parts[2] === projectId || parts[2]?.endsWith(`-${projectId}`)) &&
-    parts[3] === PERSISTENT_CATEGORY_FOLDERS.originals
+    (parts[2] === projectId || parts[2]?.endsWith(`-${projectId}`))
   );
 }
 
@@ -643,6 +656,51 @@ export async function deleteProjectIncomingObjects(input: {
         error: error instanceof Error ? error.message : String(error)
       });
     }
+  }
+
+  try {
+    for (const key of await listObjectStorageKeysByPrefix(`${config.incomingPrefix}/`)) {
+      if (hasNormalizedIncomingProjectIdentity(config, { ...input, storageKey: key })) {
+        storageKeys.add(key);
+      }
+    }
+  } catch (error) {
+    failed.push({
+      storageKey: `${config.incomingPrefix}/`,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  const cleanup = await deleteObjectsFromStorage(storageKeys);
+  return {
+    deleted: cleanup.deleted,
+    failed: [...failed, ...cleanup.failed]
+  };
+}
+
+export async function deleteProjectPersistentObjects(input: {
+  userKey: string;
+  projectId: string;
+}) {
+  const config = getObjectStorageConfig();
+  if (!config) {
+    return { deleted: 0, failed: [] as Array<{ storageKey: string; error: string }> };
+  }
+
+  const storageKeys = new Set<string>();
+  const failed: Array<{ storageKey: string; error: string }> = [];
+
+  try {
+    for (const key of await listObjectStorageKeysByPrefix(`${config.persistentPrefix}/`)) {
+      if (hasNormalizedPersistentProjectIdentity(config, { ...input, storageKey: key })) {
+        storageKeys.add(key);
+      }
+    }
+  } catch (error) {
+    failed.push({
+      storageKey: `${config.persistentPrefix}/`,
+      error: error instanceof Error ? error.message : String(error)
+    });
   }
 
   const cleanup = await deleteObjectsFromStorage(storageKeys);
