@@ -8,6 +8,7 @@ import type {
   ProjectGroup,
   SceneType
 } from './types';
+import type { UploadedObjectReference } from './api';
 
 const RAW_EXTENSIONS = new Set([
   '.arw',
@@ -127,6 +128,8 @@ export interface LocalImportDraft {
   hdrItems: LocalHdrItemDraft[];
   groups: ProjectGroup[];
   objectUrls: string[];
+  uploadedObjects?: UploadedObjectReference[];
+  uploadStatus?: 'idle' | 'uploading' | 'paused' | 'completed';
   diagnostics: {
     totalFiles: number;
     previewReadyCount: number;

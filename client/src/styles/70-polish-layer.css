@@ -695,6 +695,25 @@
   display: none;
 }
 
+.feature-create-modal .feature-create-dropzone,
+.feature-create-modal .feature-create-selected-files {
+  display: none;
+}
+
+.feature-create-actions .solid-button {
+  color: transparent;
+  position: relative;
+}
+
+.feature-create-actions .solid-button::after {
+  content: "创建项目";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #09090b;
+}
+
 .studio-shell .sidebar-card,
 .studio-shell .workspace,
 .studio-shell .panel,

@@ -2512,6 +2512,7 @@ function App() {
   const resultCanvasRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
+  const uploadAbortControllerRef = useRef<AbortController | null>(null);
   const emailVerificationHandledRef = useRef(false);
   const checkoutHandledRef = useRef(false);
 
@@ -2665,6 +2666,7 @@ function App() {
   const showAdvancedGroupingControls = false;
   const showProcessingStepContent = currentWorkspaceStep === 3;
   const showProcessingUploadProgress = showProcessingStepContent && uploadActive && uploadMode === 'originals';
+  const showResumeUploadAction = Boolean(activeLocalDraft && !uploadActive && currentProject?.status === 'uploading');
   const hasActiveProcessingItems = workspaceHdrItems.some((item) => isHdrItemProcessing(item.status));
   const jobActivelyProcessing = isProjectJobActivelyProcessing(currentProject?.job);
   const jobFailedWhileItemsActive = Boolean(currentProject?.job?.status === 'failed' && (hasActiveProcessingItems || jobActivelyProcessing));
@@ -3089,7 +3091,7 @@ function App() {
     return buildHdrLayoutPayload({ ...draft, hdrItems: [hdrItem] }, uploadedObjects);
   }
 
-  function buildHdrLayoutPayload(draft: LocalImportDraft, uploadedObjects: UploadedObjectReference[] = []) {
+  function buildHdrLayoutPayload(draft: LocalImportDraft, uploadedObjects: UploadedObjectReference[] = draft.uploadedObjects ?? []) {
     const uploadsByIdentity = new Map<string, UploadedObjectReference[]>();
     for (const uploaded of uploadedObjects) {
       const key = normalizeFileIdentity(uploaded.originalName);
@@ -3134,6 +3136,31 @@ function App() {
           exposures
         };
       });
+  }
+
+  function getUploadReferenceIdentity(input: { originalName: string; size: number }) {
+    return `${normalizeFileIdentity(input.originalName)}:${input.size}`;
+  }
+
+  function mergeUploadedObjectReferences(
+    current: UploadedObjectReference[] | undefined,
+    additions: UploadedObjectReference[]
+  ) {
+    const byIdentity = new Map<string, UploadedObjectReference>();
+    for (const uploaded of current ?? []) {
+      byIdentity.set(getUploadReferenceIdentity(uploaded), uploaded);
+    }
+    for (const uploaded of additions) {
+      byIdentity.set(getUploadReferenceIdentity(uploaded), uploaded);
+    }
+    return Array.from(byIdentity.values());
+  }
+
+  function getUploadedObjectsForFiles(uploadedObjects: UploadedObjectReference[], files: File[]) {
+    const byIdentity = new Map(uploadedObjects.map((uploaded) => [getUploadReferenceIdentity(uploaded), uploaded]));
+    return files
+      .map((file) => byIdentity.get(getUploadReferenceIdentity({ originalName: file.name, size: file.size })))
+      .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
   }
 
   async function refreshBilling() {
@@ -4388,13 +4415,12 @@ function App() {
     }
   }
 
-  async function handleCreateProject(startUploadAfterCreate = false) {
+  async function handleCreateProject() {
     if (!session || !newProjectName.trim()) {
       setMessage(copy.createProjectNameRequired);
       return;
     }
 
-    const filesToUpload = startUploadAfterCreate ? [...createDialogFiles] : [];
     setBusy(true);
     try {
       const response = await createProject({
@@ -4408,11 +4434,6 @@ function App() {
       setCreateDialogFiles([]);
       setCreateDialogDragActive(false);
       setMessage('');
-      if (filesToUpload.length) {
-        window.setTimeout(() => {
-          void handleUploadForProject(response.project, filesToUpload);
-        }, 0);
-      }
     } catch (error) {
       setMessage(getUserFacingErrorMessage(error, copy.createProjectFailed, locale));
     } finally {
@@ -4507,6 +4528,10 @@ function App() {
   async function handleUpload(files: FileList | File[] | null) {
     if (!currentProject) return;
     await handleUploadForProject(currentProject, files);
+  }
+
+  function handleCancelUpload() {
+    uploadAbortControllerRef.current?.abort();
   }
 
   function triggerFilePicker() {
@@ -4821,7 +4846,10 @@ function App() {
         const projectId = currentProject.id;
         const draftFiles = collectLocalDraftFiles(activeLocalDraft);
         const uploadTotalFiles = Math.max(1, draftFiles.length);
-        const completedFileIdentities = new Set<string>();
+        let uploadedObjects = [...(activeLocalDraft.uploadedObjects ?? [])];
+        const completedFileIdentities = new Set(
+          uploadedObjects.map((uploaded) => getUploadReferenceIdentity(uploaded))
+        );
         const inFlightGroupProgress = new Map<string, number>();
         const updateAggregateUploadProgress = (stage: UploadProgressSnapshot['stage'] = 'uploading') => {
           const inFlightFiles = Array.from(inFlightGroupProgress.values()).reduce((sum, value) => sum + value, 0);
@@ -4837,6 +4865,18 @@ function App() {
             uploadedFiles,
             totalFiles: uploadTotalFiles
           });
+        };
+        const uploadAbortController = new AbortController();
+        uploadAbortControllerRef.current = uploadAbortController;
+        const rememberUploadedObject = (uploaded: UploadedObjectReference) => {
+          uploadedObjects = mergeUploadedObjectReferences(uploadedObjects, [uploaded]);
+          completedFileIdentities.add(getUploadReferenceIdentity(uploaded));
+          updateLocalImportDraft(projectId, (draft) => ({
+            ...draft,
+            uploadStatus: 'uploading',
+            uploadedObjects: mergeUploadedObjectReferences(draft.uploadedObjects, [uploaded])
+          }));
+          updateAggregateUploadProgress('uploading');
         };
         setUploadActive(true);
         setUploadMode('originals');
@@ -4854,25 +4894,20 @@ function App() {
           upsertProject(uploadStep.project);
         }
 
-        const initialLayoutResponse = await applyHdrLayout(projectId, buildHdrLayoutPayload(activeLocalDraft, []), {
+        updateLocalImportDraft(projectId, (draft) => ({ ...draft, uploadStatus: 'uploading' }));
+
+        const initialLayoutResponse = await applyHdrLayout(projectId, buildHdrLayoutPayload(activeLocalDraft, uploadedObjects), {
           mode: 'replace',
           inputComplete: false
         });
         upsertProject(initialLayoutResponse.project);
 
-        let processingStartPromise: Promise<void> | null = null;
-        const startProcessingOnce = async () => {
-          if (!processingStartPromise) {
-            processingStartPromise = startProcessing(projectId).then((response) => {
-              upsertProject(response.project);
-            });
-          }
-          await processingStartPromise;
-        };
-
         let nextHdrItemIndex = 0;
         const uploadGroupWorker = async () => {
           while (nextHdrItemIndex < activeLocalDraft.hdrItems.length) {
+            if (uploadAbortController.signal.aborted) {
+              throw new DOMException('Upload cancelled.', 'AbortError');
+            }
             const hdrItemIndex = nextHdrItemIndex;
             nextHdrItemIndex += 1;
             const hdrItem = activeLocalDraft.hdrItems[hdrItemIndex];
@@ -4885,6 +4920,9 @@ function App() {
               continue;
             }
 
+            const existingGroupUploads = getUploadedObjectsForFiles(uploadedObjects, groupFiles);
+            let groupUploads = existingGroupUploads;
+            if (existingGroupUploads.length < groupFiles.length) {
             const uploadResponse = await uploadFiles(projectId, groupFiles, (_percent, snapshot) => {
               const uploadedInGroup = Math.min(
                 groupFiles.length,
@@ -4892,10 +4930,17 @@ function App() {
               );
               inFlightGroupProgress.set(hdrItem.id, uploadedInGroup);
               updateAggregateUploadProgress('uploading');
+            }, {
+              signal: uploadAbortController.signal,
+              completedObjects: existingGroupUploads,
+              onFileUploaded: rememberUploadedObject
             });
             inFlightGroupProgress.delete(hdrItem.id);
+            groupUploads = 'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : getUploadedObjectsForFiles(uploadedObjects, groupFiles);
+            uploadedObjects = mergeUploadedObjectReferences(uploadedObjects, groupUploads);
+            }
             for (const file of groupFiles) {
-              completedFileIdentities.add(normalizeFileIdentity(file.name));
+              completedFileIdentities.add(getUploadReferenceIdentity({ originalName: file.name, size: file.size }));
             }
             updateAggregateUploadProgress('uploading');
 
@@ -4904,12 +4949,11 @@ function App() {
               buildSingleHdrLayoutPayload(
                 activeLocalDraft,
                 hdrItem,
-                'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : []
+                groupUploads
               ),
               { mode: 'merge', inputComplete: false }
             );
             upsertProject(layoutResponse.project);
-            await startProcessingOnce();
           }
         };
 
@@ -4930,7 +4974,9 @@ function App() {
         });
         setMessage(copy.uploadOriginalsReceived);
         upsertProject(syncedProject);
-        await startProcessingOnce();
+        updateLocalImportDraft(projectId, (draft) => ({ ...draft, uploadStatus: 'completed', uploadedObjects }));
+        const processingResponse = await startProcessing(projectId);
+        upsertProject(processingResponse.project);
         setUploadActive(false);
         setUploadMode(null);
         setUploadPercent(100);
@@ -4948,6 +4994,18 @@ function App() {
       setUploadMode(null);
       setUploadPercent(0);
       setUploadSnapshot(null);
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        if (currentProject) {
+          updateLocalImportDraft(currentProject.id, (draft) => ({ ...draft, uploadStatus: 'paused' }));
+          void patchProject(currentProject.id, { currentStep: 2, status: 'review' })
+            .then((response) => upsertProject(response.project))
+            .catch(() => {
+              // The local draft still keeps uploaded R2 references; retry can continue after refresh.
+            });
+        }
+        setMessage(locale === 'en' ? 'Upload cancelled. Uploaded files were saved and can be resumed.' : '上传已取消，已上传的文件会保留记录，可继续上传。');
+        return;
+      }
       if (isInsufficientCreditsError(error)) {
         setBillingModalMode('topup');
         setBillingOpen(false);
@@ -4955,6 +5013,7 @@ function App() {
       }
       setMessage(getUserFacingErrorMessage(error, copy.startProcessingFailed, locale));
     } finally {
+      uploadAbortControllerRef.current = null;
       setBusy(false);
     }
   }
@@ -6519,6 +6578,16 @@ function App() {
                           {copy.retryProcessing}
                         </button>
                       )}
+                      {showProcessingUploadProgress && (
+                        <button className="ghost-button compact" type="button" onClick={handleCancelUpload}>
+                          {locale === 'en' ? 'Cancel upload' : '取消上传'}
+                        </button>
+                      )}
+                      {showResumeUploadAction && (
+                        <button className="solid-button small" type="button" onClick={() => void handleStartProcessing()} disabled={busy}>
+                          {locale === 'en' ? 'Resume upload' : '继续上传'}
+                        </button>
+                      )}
                     </div>
                     <div className="progress-bar">
                       <span style={{ width: `${getProjectProgress(currentProject, uploadPercent)}%` }} />
@@ -6624,6 +6693,11 @@ function App() {
                           <div className="upload-progress-bar">
                             <span style={{ width: `${Math.max(6, uploadProgressWidth)}%` }} />
                           </div>
+                          {showReviewUploadProgress && (
+                            <button className="ghost-button compact" type="button" onClick={handleCancelUpload}>
+                              {locale === 'en' ? 'Cancel upload' : '取消上传'}
+                            </button>
+                          )}
                         </div>
                       )}
 
@@ -7453,7 +7527,7 @@ function App() {
 
             <div className="feature-create-body">
               <div className="feature-create-title">
-                <h2>{copy.createProjectTitle}</h2>
+                <h2>{locale === 'en' ? 'Project name' : '设置项目名称'}</h2>
                 <p>{locale === 'en' ? 'Name this project and upload the photos that need processing.' : '为这个项目命名，并上传需要处理的照片。'}</p>
               </div>
 
@@ -7529,7 +7603,7 @@ function App() {
               <button className="ghost-button" type="button" onClick={closeCreateProjectDialog} disabled={busy}>
                 {copy.cancel}
               </button>
-              <button className="solid-button" type="button" onClick={() => void handleCreateProject(true)} disabled={busy}>
+              <button className="solid-button" type="button" onClick={() => void handleCreateProject()} disabled={busy}>
                 {busy ? copy.authWorking : locale === 'en' ? 'Create project and start' : '创建项目并开始'}
               </button>
             </div>

@@ -144,6 +144,12 @@ export interface UploadProgressSnapshot {
 
 export type UploadProgressHandler = (percent: number, snapshot?: UploadProgressSnapshot) => void;
 
+export interface UploadFilesOptions {
+  signal?: AbortSignal;
+  completedObjects?: UploadedObjectReference[];
+  onFileUploaded?: (uploaded: UploadedObjectReference) => void;
+}
+
 interface DirectUploadTarget {
   id: string;
   originalName: string;
@@ -894,26 +900,33 @@ async function createDirectUploadTargets(projectId: string, files: File[]) {
   });
 }
 
-async function completeDirectObjectUpload(projectId: string, files: File[], targets: DirectUploadTarget[]) {
+async function completeDirectObjectUploadReferences(projectId: string, files: UploadedObjectReference[]) {
   return await jsonRequest<{ project: ProjectRecord }>(`/api/projects/${projectId}/direct-upload/complete`, {
     method: 'POST',
     body: JSON.stringify({
-      files: targets.map((target, index) => {
-        const file = files[index];
-        return {
-          originalName: target.originalName || file?.name || `upload-${index + 1}`,
-          mimeType: file?.type || target.mimeType || 'application/octet-stream',
-          size: file?.size || target.size,
-          storageKey: target.storageKey
-        };
-      })
+      files
     })
   });
 }
 
-function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgress: (loadedBytes: number) => void) {
+function throwIfUploadAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw new DOMException('Upload cancelled.', 'AbortError');
+  }
+}
+
+function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgress: (loadedBytes: number) => void, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Upload cancelled.', 'AbortError'));
+      return;
+    }
     const xhr = new XMLHttpRequest();
+    const abortUpload = () => {
+      xhr.abort();
+      reject(new DOMException('Upload cancelled.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abortUpload, { once: true });
     xhr.open(target.method, target.uploadUrl);
     xhr.timeout = DIRECT_OBJECT_UPLOAD_TIMEOUT_MS;
     for (const [header, value] of Object.entries(target.headers ?? {})) {
@@ -926,15 +939,25 @@ function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgre
       onProgress(event.loaded);
     });
     xhr.addEventListener('load', () => {
+      signal?.removeEventListener('abort', abortUpload);
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {
         reject(new DirectUploadError(`Direct upload failed: ${xhr.status}`, xhr.status));
       }
     });
-    xhr.addEventListener('error', () => reject(new DirectUploadError('Direct upload failed.')));
-    xhr.addEventListener('timeout', () => reject(new DirectUploadError('Direct upload timed out.')));
-    xhr.addEventListener('abort', () => reject(new DirectUploadError('Direct upload was interrupted.')));
+    xhr.addEventListener('error', () => {
+      signal?.removeEventListener('abort', abortUpload);
+      reject(new DirectUploadError('Direct upload failed.'));
+    });
+    xhr.addEventListener('timeout', () => {
+      signal?.removeEventListener('abort', abortUpload);
+      reject(new DirectUploadError('Direct upload timed out.'));
+    });
+    xhr.addEventListener('abort', () => {
+      signal?.removeEventListener('abort', abortUpload);
+      reject(signal?.aborted ? new DOMException('Upload cancelled.', 'AbortError') : new DirectUploadError('Direct upload was interrupted.'));
+    });
     xhr.send(file);
   });
 }
@@ -946,6 +969,7 @@ async function uploadDirectObjectFileWithRetry(
   options: {
     onRetry?: (retry: { attempt: number; maxAttempts: number; error: unknown }) => void;
     refreshTarget?: () => Promise<DirectUploadTarget>;
+    signal?: AbortSignal;
   } = {}
 ) {
   let lastError: unknown = null;
@@ -953,10 +977,14 @@ async function uploadDirectObjectFileWithRetry(
 
   for (let attempt = 1; attempt <= MAX_UPLOAD_BATCH_RETRIES; attempt += 1) {
     try {
+      throwIfUploadAborted(options.signal);
       onProgress(0);
-      await uploadDirectObjectFile(activeTarget, file, onProgress);
+      await uploadDirectObjectFile(activeTarget, file, onProgress, options.signal);
       return activeTarget;
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error;
+      }
       lastError = error;
       onProgress(0);
       if (attempt >= MAX_UPLOAD_BATCH_RETRIES) {
@@ -1070,15 +1098,43 @@ function getDirectObjectUploadConcurrency(files: File[]) {
   return DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY;
 }
 
-async function uploadFilesViaDirectObject(projectId: string, files: File[], onProgress: UploadProgressHandler) {
+function getUploadObjectIdentity(file: Pick<File, 'name' | 'size'> | Pick<UploadedObjectReference, 'originalName' | 'size'>) {
+  const name = 'name' in file ? file.name : file.originalName;
+  return `${name.trim().toLowerCase()}:${file.size}`;
+}
+
+async function uploadFilesViaDirectObject(projectId: string, files: File[], onProgress: UploadProgressHandler, options: UploadFilesOptions = {}) {
+  throwIfUploadAborted(options.signal);
+  const completedByIdentity = new Map(
+    (options.completedObjects ?? []).map((uploaded) => [getUploadObjectIdentity(uploaded), uploaded])
+  );
+  const pendingFiles = files.filter((file) => !completedByIdentity.has(getUploadObjectIdentity(file)));
+  if (!pendingFiles.length) {
+    const completedObjects = Array.from(completedByIdentity.values());
+    onProgress(96, {
+      stage: 'finalizing',
+      percent: 96,
+      uploadedFiles: files.length,
+      totalFiles: files.length
+    });
+    const response = await completeDirectObjectUploadReferences(projectId, completedObjects);
+    onProgress(100, {
+      stage: 'completed',
+      percent: 100,
+      uploadedFiles: files.length,
+      totalFiles: files.length
+    });
+    return { ...response, directUploadFiles: completedObjects };
+  }
+
   onProgress(1, {
     stage: 'preparing',
     percent: 1,
-    uploadedFiles: 0,
+    uploadedFiles: files.length - pendingFiles.length,
     totalFiles: files.length
   });
-  const { targets } = await createDirectUploadTargets(projectId, files);
-  if (targets.length !== files.length) {
+  const { targets } = await createDirectUploadTargets(projectId, pendingFiles);
+  if (targets.length !== pendingFiles.length) {
     throw new Error('Direct upload target count mismatch.');
   }
 
@@ -1086,9 +1142,9 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
     1,
     files.reduce((sum, file) => sum + Math.max(1, file.size), 0)
   );
-  const loadedByFile = new Array<number>(files.length).fill(0);
-  let completedBytes = 0;
-  let uploadedFiles = 0;
+  const loadedByFile = new Array<number>(pendingFiles.length).fill(0);
+  let completedBytes = Array.from(completedByIdentity.values()).reduce((sum, uploaded) => sum + Math.max(1, uploaded.size), 0);
+  let uploadedFiles = files.length - pendingFiles.length;
   let nextFileIndex = 0;
 
   const reportProgress = (overrides: Partial<UploadProgressSnapshot> = {}) => {
@@ -1105,10 +1161,11 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
   };
 
   async function worker() {
-    while (nextFileIndex < files.length) {
+    while (nextFileIndex < pendingFiles.length) {
+      throwIfUploadAborted(options.signal);
       const fileIndex = nextFileIndex;
       nextFileIndex += 1;
-      const file = files[fileIndex];
+      const file = pendingFiles[fileIndex];
       const target = targets[fileIndex];
       if (!file || !target) {
         continue;
@@ -1135,10 +1192,19 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
           }
           targets[fileIndex] = nextTarget;
           return nextTarget;
-        }
+        },
+        signal: options.signal
       });
       targets[fileIndex] = latestTarget;
 
+      const uploadedObject = {
+        originalName: latestTarget.originalName || file.name,
+        mimeType: file.type || latestTarget.mimeType || 'application/octet-stream',
+        size: file.size || latestTarget.size,
+        storageKey: latestTarget.storageKey
+      };
+      completedByIdentity.set(getUploadObjectIdentity(uploadedObject), uploadedObject);
+      options.onFileUploaded?.(uploadedObject);
       completedBytes += Math.max(1, file.size);
       uploadedFiles += 1;
       loadedByFile[fileIndex] = 0;
@@ -1146,7 +1212,7 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
     }
   }
 
-  const workerCount = Math.min(getDirectObjectUploadConcurrency(files), files.length);
+  const workerCount = Math.min(getDirectObjectUploadConcurrency(pendingFiles), pendingFiles.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   onProgress(96, {
@@ -1155,7 +1221,10 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
     uploadedFiles: files.length,
     totalFiles: files.length
   });
-  const response = await completeDirectObjectUpload(projectId, files, targets);
+  const completedObjects = files
+    .map((file) => completedByIdentity.get(getUploadObjectIdentity(file)))
+    .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
+  const response = await completeDirectObjectUploadReferences(projectId, completedObjects);
   onProgress(100, {
     stage: 'completed',
     percent: 100,
@@ -1164,22 +1233,14 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
   });
   return {
     ...response,
-    directUploadFiles: targets.map((target, index) => {
-      const file = files[index];
-      return {
-        originalName: target.originalName || file?.name || `upload-${index + 1}`,
-        mimeType: file?.type || target.mimeType || 'application/octet-stream',
-        size: file?.size || target.size,
-        storageKey: target.storageKey
-      };
-    })
+    directUploadFiles: completedObjects
   };
 }
 
-export async function uploadFiles(projectId: string, files: File[], onProgress: UploadProgressHandler) {
+export async function uploadFiles(projectId: string, files: File[], onProgress: UploadProgressHandler, options: UploadFilesOptions = {}) {
   const capabilities = await fetchUploadCapabilities().catch(() => null);
   if (capabilities?.directObject.enabled) {
-    return await uploadFilesViaDirectObject(projectId, files, onProgress);
+    return await uploadFilesViaDirectObject(projectId, files, onProgress, options);
   }
 
   if ((capabilities?.localProxy.enabled || !capabilities) && isLocalDevelopmentOrigin()) {
