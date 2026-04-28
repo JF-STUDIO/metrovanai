@@ -18,6 +18,7 @@ export interface RgbGains {
 }
 
 const HDR_LONG_EDGE = 3000;
+const DEFAULT_ALIGN_HFOV = Math.max(20, Math.min(120, Number(process.env.METROVAN_HDR_ALIGN_HFOV || 65)));
 
 interface ToneAdjustments {
   exposure: number;
@@ -120,6 +121,50 @@ function parseFirstNumber(value: unknown) {
   }
   const parsed = Number(match[0]);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parsePositiveNumber(value: unknown) {
+  const parsed = parseFirstNumber(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function hfovFrom35mmFocalLength(focalLength35mm: number) {
+  const hfov = (2 * Math.atan(36 / (2 * focalLength35mm)) * 180) / Math.PI;
+  return Math.max(20, Math.min(120, hfov));
+}
+
+async function estimateAlignHorizontalFov(inputs: HdrSourceInput[]) {
+  const referenceInput = pickReferenceInput(inputs) ?? inputs[0] ?? null;
+  if (!referenceInput || !toolPaths.exiftool) {
+    return DEFAULT_ALIGN_HFOV;
+  }
+
+  const result = await runProcess(
+    toolPaths.exiftool,
+    ['-j', '-FocalLengthIn35mmFormat', '-FocalLength', '-ImageWidth', '-ImageHeight', referenceInput.path],
+    { cwd: path.dirname(referenceInput.path), timeoutSeconds: 60 }
+  );
+  if (result.exitCode !== 0) {
+    return DEFAULT_ALIGN_HFOV;
+  }
+
+  try {
+    const rows = JSON.parse(result.stdout || '[]') as Array<Record<string, unknown>>;
+    const metadata = rows[0] ?? {};
+    const focalLength35mm = parsePositiveNumber(metadata.FocalLengthIn35mmFormat);
+    if (focalLength35mm) {
+      return hfovFrom35mmFocalLength(focalLength35mm);
+    }
+
+    const focalLength = parsePositiveNumber(metadata.FocalLength);
+    if (focalLength && focalLength >= 8 && focalLength <= 300) {
+      return hfovFrom35mmFocalLength(focalLength);
+    }
+  } catch {
+    // Keep the conservative default when EXIF output is missing or malformed.
+  }
+
+  return DEFAULT_ALIGN_HFOV;
 }
 
 function getAcrLensProfileRoots() {
@@ -813,7 +858,6 @@ export async function extractPreviewOrConvertToJpeg(
     }
 
     deleteIfExists(tempPath);
-    console.warn(`RAW preview extraction failed, using fallback preview: ${path.basename(sourcePath)}`);
   }
 
   if (toolPaths.magick) {
@@ -826,7 +870,7 @@ export async function extractPreviewOrConvertToJpeg(
       }
 
       console.warn(
-        `RAW preview conversion failed, using fallback preview: ${path.basename(sourcePath)} ${
+        `RAW preview extraction and conversion failed, using fallback preview: ${path.basename(sourcePath)} ${
           error instanceof Error ? error.message : String(error)
         }`
       );
@@ -925,10 +969,6 @@ export async function fuseToJpeg(
     return;
   }
 
-  if (!toolPaths.alignImageStack || !toolPaths.enfuse) {
-    throw new Error('HDR alignment tools are missing: align_image_stack / enfuse');
-  }
-
   const workRoot = path.join(process.env.TEMP ?? process.cwd(), `metrovan_hdr_${Date.now()}_${Math.random().toString(16).slice(2)}`);
   const inputsDir = path.join(workRoot, 'inputs');
   const wbInputsDir = path.join(workRoot, 'wb-inputs');
@@ -964,35 +1004,57 @@ export async function fuseToJpeg(
       }
     }
 
-    const alignResult = await runProcess(
-      toolPaths.alignImageStack,
-      ['-a', 'aligned_', '-c', '12', '-g', '6', '-t', '2.0', '-s', '0', ...preparedForAlign],
-      {
-        cwd: alignedDir,
-        timeoutSeconds: 180
+    let aligned: string[] = [];
+    if (toolPaths.alignImageStack) {
+      const alignHfov = await estimateAlignHorizontalFov(inputs);
+      const alignResult = await runProcess(
+        toolPaths.alignImageStack,
+        ['-a', 'aligned_', '-f', alignHfov.toFixed(2), '-c', '12', '-g', '6', '-t', '2.0', '-s', '0', ...preparedForAlign],
+        {
+          cwd: alignedDir,
+          timeoutSeconds: 180
+        }
+      );
+      if (alignResult.exitCode === 0) {
+        aligned = fs
+          .readdirSync(alignedDir)
+          .filter((name) => /^aligned_.*\.tif$/i.test(name))
+          .map((name) => path.join(alignedDir, name))
+          .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
       }
-    );
-    if (alignResult.exitCode !== 0) {
-      throw new Error(`align_image_stack failed: ${trimError(alignResult.stderr || alignResult.stdout)}`);
+
+      if (alignResult.exitCode !== 0 || aligned.length < 2) {
+        console.warn(
+          '[hdr] alignment unavailable; falling back to direct exposure fusion:',
+          trimError(alignResult.stderr || alignResult.stdout || 'not enough aligned files')
+        );
+        aligned = [];
+      }
+    } else {
+      console.warn('[hdr] align_image_stack unavailable; falling back to direct exposure fusion.');
     }
 
-    const aligned = fs
-      .readdirSync(alignedDir)
-      .filter((name) => /^aligned_.*\.tif$/i.test(name))
-      .map((name) => path.join(alignedDir, name))
-      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
-
-    if (aligned.length < 2) {
-      throw new Error('align_image_stack did not output enough aligned TIFF files.');
-    }
-
+    const fuseInputs = aligned.length >= 2 ? aligned : preparedForAlign;
     const fusedTif = path.join(workRoot, 'fused.tif');
-    const enfuseResult = await runProcess(toolPaths.enfuse, ['-o', fusedTif, ...aligned], {
-      cwd: workRoot,
-      timeoutSeconds: 180
-    });
-    if (enfuseResult.exitCode !== 0 || !fs.existsSync(fusedTif)) {
-      throw new Error(`enfuse failed: ${trimError(enfuseResult.stderr || enfuseResult.stdout)}`);
+    let enfuseResult: Awaited<ReturnType<typeof runProcess>> | null = null;
+    if (toolPaths.enfuse && fuseInputs.length >= 2) {
+      enfuseResult = await runProcess(toolPaths.enfuse, ['-o', fusedTif, ...fuseInputs], {
+        cwd: workRoot,
+        timeoutSeconds: 180
+      });
+    }
+
+    if (!toolPaths.enfuse || !enfuseResult || enfuseResult.exitCode !== 0 || !fs.existsSync(fusedTif)) {
+      console.warn(
+        '[hdr] exposure fusion unavailable; falling back to reference exposure:',
+        toolPaths.enfuse ? trimError(enfuseResult?.stderr || enfuseResult?.stdout || '') : 'enfuse is missing'
+      );
+      const fallbackSource = referencePreparedPath ?? prepared[Math.floor(prepared.length / 2)] ?? prepared[0];
+      if (!fallbackSource) {
+        throw new Error('No fallback exposure available for HDR output.');
+      }
+      await applyImageAdjustments(fallbackSource, outputPath, quality, groupGains, null);
+      return;
     }
 
     let toneAdjustments: ToneAdjustments | null = null;

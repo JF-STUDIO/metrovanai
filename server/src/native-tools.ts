@@ -98,10 +98,14 @@ export async function runProcess(
     const stderrChunks: Buffer[] = [];
     let timedOut = false;
     let stdoutStream: fs.WriteStream | null = null;
+    let stdoutStreamFinished = false;
 
     if (options.stdoutPath) {
       ensureDir(path.dirname(options.stdoutPath));
       stdoutStream = fs.createWriteStream(options.stdoutPath);
+      stdoutStream.on('finish', () => {
+        stdoutStreamFinished = true;
+      });
       child.stdout.pipe(stdoutStream);
     } else {
       child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
@@ -120,24 +124,33 @@ export async function runProcess(
 
     child.on('error', (error) => {
       clearTimeout(timeout);
-      stdoutStream?.close();
+      stdoutStream?.destroy();
       reject(error);
     });
 
     child.on('close', (exitCode) => {
       clearTimeout(timeout);
-      stdoutStream?.close();
 
-      if (timedOut) {
-        reject(new Error(`External process timed out: ${path.basename(fileName)}`));
+      const finish = () => {
+        if (timedOut) {
+          reject(new Error(`External process timed out: ${path.basename(fileName)}`));
+          return;
+        }
+
+        resolve({
+          exitCode: exitCode ?? -1,
+          stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf8')
+        });
+      };
+
+      if (stdoutStream && !stdoutStreamFinished) {
+        stdoutStream.once('finish', finish);
+        stdoutStream.end();
         return;
       }
 
-      resolve({
-        exitCode: exitCode ?? -1,
-        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-        stderr: Buffer.concat(stderrChunks).toString('utf8')
-      });
+      finish();
     });
   });
 }

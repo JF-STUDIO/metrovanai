@@ -1772,6 +1772,94 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
   }
 }
 
+class MockTaskExecutionProvider implements TaskExecutionProvider {
+  constructor(private readonly store: LocalStore) {}
+
+  getInfo(): TaskExecutionProviderInfo {
+    return {
+      provider: 'mock',
+      workflowEngine: 'mock'
+    };
+  }
+
+  createRunContext(): TaskExecutionRunContext {
+    const localMerge = createLocalHdrMergeContext(this.store);
+    const maxInFlight = parsePositiveIntEnv(process.env.METROVAN_MOCK_WORKFLOW_MAX_IN_FLIGHT, 24);
+    const latencyMs = Math.max(0, parsePositiveIntEnv(process.env.METROVAN_MOCK_WORKFLOW_LATENCY_MS, 250));
+
+    const executeWorkflowTask = async (
+      project: ProjectRecord,
+      hdrItem: HdrItem,
+      mergedPath: string,
+      mergedFileName: string,
+      onProgress?: (update: WorkflowExecutionProgress) => void,
+      options?: WorkflowExecutionOptions
+    ): Promise<WorkflowExecutionArtifact> => {
+      const dirs = this.store.getProjectDirectories(project);
+      fs.mkdirSync(dirs.results, { recursive: true });
+      const suffix = options?.outputSuffix ? `_${sanitizeSegment(options.outputSuffix)}` : '';
+      const resultFileName = `${path.basename(mergedFileName, path.extname(mergedFileName))}${suffix}_mock.jpg`;
+      const resultPath = path.join(dirs.results, resultFileName);
+
+      onProgress?.({
+        stage: 'runninghub',
+        monitorState: 'mock-running',
+        detail: `${hdrItem.title} mock processing`,
+        remoteProgress: 30,
+        queuePosition: 0,
+        workflowName: 'mock',
+        taskId: `mock-${hdrItem.id}`
+      });
+
+      if (latencyMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, latencyMs));
+      }
+
+      await extractPreviewOrConvertToJpeg(mergedPath, resultPath, 95);
+      const mirrored = await mirrorLocalFileToObjectStorage({
+        userKey: project.userKey,
+        projectId: project.id,
+        userDisplayName: project.userDisplayName,
+        projectName: project.name,
+        category: 'results',
+        sourcePath: resultPath,
+        fileName: resultFileName,
+        contentType: 'image/jpeg'
+      });
+
+      onProgress?.({
+        stage: 'runninghub',
+        monitorState: 'mock-completed',
+        detail: `${hdrItem.title} mock completed`,
+        remoteProgress: 100,
+        queuePosition: 0,
+        workflowName: 'mock',
+        taskId: `mock-${hdrItem.id}`
+      });
+
+      return {
+        resultPath,
+        resultFileName,
+        resultStorageKey: mirrored?.storageKey ?? null,
+        mergedPath,
+        mergedFileName,
+        mergedStorageKey: hdrItem.mergedKey ?? null
+      };
+    };
+
+    return {
+      getMergeConcurrency(totalPendingItems: number) {
+        return Math.max(1, Math.min(resolveLocalMergeMaxInFlight(), totalPendingItems));
+      },
+      getMaxConcurrency(totalPendingItems: number) {
+        return Math.max(1, Math.min(maxInFlight, totalPendingItems));
+      },
+      ensureMergedHdrItem: localMerge.ensureMergedHdrItem,
+      executeWorkflowTask
+    };
+  }
+}
+
 export function createTaskExecutionProvider(
   provider: string | undefined,
   options: { repoRoot: string; store: LocalStore }
@@ -1788,6 +1876,10 @@ export function createTaskExecutionProvider(
 
   if (normalizedProvider === 'runpod-native' || normalizedProvider === 'runpod-serverless') {
     return new RunpodNativeTaskExecutionProvider(options.repoRoot, options.store);
+  }
+
+  if (normalizedProvider === 'mock' || normalizedProvider === 'dry-run') {
+    return new MockTaskExecutionProvider(options.store);
   }
 
   throw new Error(`Unsupported task execution provider: ${provider}`);

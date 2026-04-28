@@ -254,7 +254,9 @@ export class LocalStore {
   private readonly storage: StorageProvider;
 
   constructor(repoRoot: string) {
-    this.runtimeRoot = path.join(repoRoot, 'server-runtime');
+    this.runtimeRoot = process.env.METROVAN_RUNTIME_ROOT
+      ? path.resolve(process.env.METROVAN_RUNTIME_ROOT)
+      : path.join(repoRoot, 'server-runtime');
     ensureDir(this.runtimeRoot);
     this.metadata = createMetadataProvider(process.env.METROVAN_METADATA_PROVIDER, {
       filePath: path.join(this.runtimeRoot, 'db.json')
