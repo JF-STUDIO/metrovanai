@@ -668,55 +668,6 @@ def compute_white_priority_gains(camera: np.ndarray) -> dict[str, float] | None:
     }
 
 
-def gains_from_rgb_mask(rgb: np.ndarray, mask: np.ndarray, red_limits: tuple[float, float], blue_limits: tuple[float, float]) -> dict[str, float] | None:
-    values = rgb[mask]
-    if values.shape[0] < 1000:
-        return None
-    medians = np.median(values, axis=0)
-    if not np.all(np.isfinite(medians)) or np.min(medians) <= 1e-4:
-        return None
-    r_median, g_median, b_median = medians
-    return {
-        "r": max(red_limits[0], min(red_limits[1], float(g_median / max(r_median, 1e-6)))),
-        "g": 1.0,
-        "b": max(blue_limits[0], min(blue_limits[1], float(g_median / max(b_median, 1e-6)))),
-    }
-
-
-def blend_gains(primary: dict[str, float], secondary: dict[str, float], primary_weight: float) -> dict[str, float]:
-    weight = max(0.0, min(1.0, primary_weight))
-    return {
-        "r": primary["r"] * weight + secondary["r"] * (1.0 - weight),
-        "g": 1.0,
-        "b": primary["b"] * weight + secondary["b"] * (1.0 - weight),
-    }
-
-
-def compute_group_rgb_grey_gains(reference: np.ndarray) -> dict[str, float] | None:
-    luma = luminance(reference)
-    sat = saturation(reference)
-    channel_max = reference.max(axis=2)
-    channel_min = reference.min(axis=2)
-
-    low_sat_mask = (luma > 0.08) & (luma < 0.92) & (sat < 0.35)
-    interior_mask = (luma > 0.16) & (luma < 0.82) & (channel_max < 0.90) & (channel_min > 0.03)
-
-    low_sat_gains = gains_from_rgb_mask(reference, low_sat_mask, (0.72, 1.25), (0.75, 1.30))
-    interior_gains = gains_from_rgb_mask(reference, interior_mask, (0.72, 1.20), (0.82, 1.35))
-    if interior_gains and low_sat_gains:
-        blended = blend_gains(interior_gains, low_sat_gains, 0.65)
-        return {
-            "r": max(0.74, min(1.18, blended["r"])),
-            "g": 1.0,
-            "b": max(0.82, min(1.35, blended["b"])),
-        }
-    return interior_gains or low_sat_gains
-
-
-def estimate_group_rgb_grey_gains(reference_prepared: Path) -> dict[str, float] | None:
-    return compute_group_rgb_grey_gains(load_rgb(reference_prepared))
-
-
 def estimate_rgb_gains(camera_path: Path, auto_path: Path) -> dict[str, float] | None:
     camera = load_rgb(camera_path)
     auto = load_rgb(auto_path)
@@ -945,7 +896,9 @@ def estimate_group_gains(reference: dict[str, Any], source_paths: dict[str, Path
     source = source_paths[str(reference.get("id"))]
     if not is_raw(source):
         return None
-    return estimate_group_rgb_grey_gains(reference_prepared)
+    auto_path = work_dir / "reference-auto.jpg"
+    render_raw_to_jpeg(source, auto_path, 95, "autold", HDR_LONG_EDGE)
+    return estimate_rgb_gains(reference_prepared, auto_path)
 
 
 def apply_group_gains(prepared: list[Path], gains: dict[str, float], work_dir: Path) -> list[Path]:
@@ -1014,28 +967,16 @@ def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
             exposure = normalized_exposures[0]
             source = source_paths[str(exposure.get("id"))]
             if is_raw(source):
-                rendered = work_dir / "single-camera.jpg"
-                render_raw_to_jpeg(source, rendered, 95, "camera", HDR_LONG_EDGE)
-                gains = estimate_group_rgb_grey_gains(rendered)
-                if gains:
-                    print(f"RAW RGB grey WB gains for {source.name}: r={gains['r']:.4f} b={gains['b']:.4f}", flush=True)
-                    apply_image_adjustments(rendered, output_path, 95, gains, None)
-                else:
-                    shutil.copyfile(rendered, output_path)
+                raw_wb_mode = estimate_raw_rgb_grey_wb_mode(source, work_dir)
+                render_raw_to_jpeg(source, output_path, 95, raw_wb_mode, HDR_LONG_EDGE)
             else:
                 convert_to_jpeg(source, output_path, 95, HDR_LONG_EDGE)
             return
 
         reference = pick_reference(normalized_exposures)
         reference_source = source_paths[str(reference.get("id"))]
-        prepared, _, reference_prepared = prepare_inputs(normalized_exposures, source_paths, work_dir, "camera")
-        gains = estimate_group_gains(reference, source_paths, reference_prepared, work_dir) if reference_prepared else None
-        if gains:
-            print(
-                f"RAW group RGB grey WB gains from {reference_source.name}: r={gains['r']:.4f} b={gains['b']:.4f}",
-                flush=True,
-            )
-            prepared = apply_group_gains(prepared, gains, work_dir)
+        raw_wb_mode = estimate_raw_rgb_grey_wb_mode(reference_source, work_dir) if is_raw(reference_source) else "camera"
+        prepared, _, _ = prepare_inputs(normalized_exposures, source_paths, work_dir, raw_wb_mode)
         align_and_fuse(prepared, output_path, work_dir)
 
 
