@@ -128,6 +128,10 @@ export interface UploadCapabilitiesPayload {
     uploadExpiresSeconds: number;
     requiredEnv: string[];
   };
+  directUploadTargets?: {
+    maxFiles: number;
+    maxBatchBytes: number;
+  };
 }
 
 export type UploadProgressStage = 'preparing' | 'uploading' | 'retrying' | 'finalizing' | 'completed';
@@ -160,6 +164,16 @@ interface DirectUploadTarget {
   method: 'PUT';
   headers: Record<string, string>;
   expiresAt: string;
+}
+
+interface DirectUploadTargetLimits {
+  maxFiles: number;
+  maxBatchBytes: number;
+}
+
+interface PendingDirectUploadFile {
+  file: File;
+  index: number;
 }
 
 export interface UploadedObjectReference {
@@ -364,6 +378,8 @@ const UPLOAD_RETRY_JITTER_MS = 650;
 const DIRECT_OBJECT_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 const LARGE_DIRECT_OBJECT_FILE_BYTES = 80 * 1024 * 1024;
 const HUGE_DIRECT_OBJECT_FILE_BYTES = 200 * 1024 * 1024;
+const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
+const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
 
 function extractErrorMessage(input: unknown): string | null {
   if (typeof input === 'string') {
@@ -1163,7 +1179,53 @@ function getUploadObjectIdentity(file: Pick<File, 'name' | 'size'> | Pick<Upload
   return `${name.trim().toLowerCase()}:${file.size}`;
 }
 
-async function uploadFilesViaDirectObject(projectId: string, files: File[], onProgress: UploadProgressHandler, options: UploadFilesOptions = {}) {
+function normalizeDirectUploadTargetLimits(limits?: UploadCapabilitiesPayload['directUploadTargets']): DirectUploadTargetLimits {
+  const maxFiles = Number(limits?.maxFiles ?? DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES);
+  const maxBatchBytes = Number(limits?.maxBatchBytes ?? DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES);
+  return {
+    maxFiles: Number.isFinite(maxFiles) && maxFiles > 0 ? Math.floor(maxFiles) : DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES,
+    maxBatchBytes:
+      Number.isFinite(maxBatchBytes) && maxBatchBytes > 0
+        ? Math.floor(maxBatchBytes)
+        : DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES
+  };
+}
+
+function splitDirectUploadTargetBatches(files: PendingDirectUploadFile[], limits: DirectUploadTargetLimits) {
+  const batches: PendingDirectUploadFile[][] = [];
+  let currentBatch: PendingDirectUploadFile[] = [];
+  let currentBytes = 0;
+
+  for (const item of files) {
+    const itemBytes = Math.max(1, item.file.size);
+    const shouldFlush =
+      currentBatch.length > 0 &&
+      (currentBatch.length >= limits.maxFiles || currentBytes + itemBytes > limits.maxBatchBytes);
+
+    if (shouldFlush) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBytes = 0;
+    }
+
+    currentBatch.push(item);
+    currentBytes += itemBytes;
+  }
+
+  if (currentBatch.length) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
+}
+
+async function uploadFilesViaDirectObject(
+  projectId: string,
+  files: File[],
+  onProgress: UploadProgressHandler,
+  options: UploadFilesOptions = {},
+  targetLimits?: UploadCapabilitiesPayload['directUploadTargets']
+) {
   throwIfUploadAborted(options.signal);
   const completedByIdentity = new Map(
     (options.completedObjects ?? []).map((uploaded) => [getUploadObjectIdentity(uploaded), uploaded])
@@ -1193,10 +1255,6 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
     uploadedFiles: files.length - pendingFiles.length,
     totalFiles: files.length
   });
-  const { targets } = await createDirectUploadTargets(projectId, pendingFiles);
-  if (targets.length !== pendingFiles.length) {
-    throw new Error('Direct upload target count mismatch.');
-  }
 
   const totalBytes = Math.max(
     1,
@@ -1205,7 +1263,6 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
   const loadedByFile = new Array<number>(pendingFiles.length).fill(0);
   let completedBytes = Array.from(completedByIdentity.values()).reduce((sum, uploaded) => sum + Math.max(1, uploaded.size), 0);
   let uploadedFiles = files.length - pendingFiles.length;
-  let nextFileIndex = 0;
 
   const reportProgress = (overrides: Partial<UploadProgressSnapshot> = {}) => {
     const activeBytes = loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0);
@@ -1220,60 +1277,81 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
     });
   };
 
-  async function worker() {
-    while (nextFileIndex < pendingFiles.length) {
-      throwIfUploadAborted(options.signal);
-      const fileIndex = nextFileIndex;
-      nextFileIndex += 1;
-      const file = pendingFiles[fileIndex];
-      const target = targets[fileIndex];
-      if (!file || !target) {
-        continue;
-      }
+  const pendingEntries = pendingFiles.map((file, index) => ({ file, index }));
+  const targetBatches = splitDirectUploadTargetBatches(pendingEntries, normalizeDirectUploadTargetLimits(targetLimits));
 
-      const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
-        loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
-        reportProgress();
-      }, {
-        onRetry: ({ attempt, maxAttempts }) => {
-          loadedByFile[fileIndex] = 0;
-          reportProgress({
-            stage: 'retrying',
-            currentFileName: file.name,
-            attempt,
-            maxAttempts
-          });
-        },
-        refreshTarget: async () => {
-          const refreshed = await createDirectUploadTargets(projectId, [file]);
-          const nextTarget = refreshed.targets[0];
-          if (!nextTarget) {
-            throw new Error('Direct upload target refresh failed.');
-          }
-          targets[fileIndex] = nextTarget;
-          return nextTarget;
-        },
-        signal: options.signal
-      });
-      targets[fileIndex] = latestTarget;
-
-      const uploadedObject = {
-        originalName: latestTarget.originalName || file.name,
-        mimeType: file.type || latestTarget.mimeType || 'application/octet-stream',
-        size: file.size || latestTarget.size,
-        storageKey: latestTarget.storageKey
-      };
-      completedByIdentity.set(getUploadObjectIdentity(uploadedObject), uploadedObject);
-      options.onFileUploaded?.(uploadedObject);
-      completedBytes += Math.max(1, file.size);
-      uploadedFiles += 1;
-      loadedByFile[fileIndex] = 0;
-      reportProgress();
+  async function uploadTargetBatch(batch: PendingDirectUploadFile[]) {
+    throwIfUploadAborted(options.signal);
+    reportProgress({ stage: 'preparing' });
+    const batchFiles = batch.map((item) => item.file);
+    const { targets } = await createDirectUploadTargets(projectId, batchFiles);
+    if (targets.length !== batch.length) {
+      throw new Error('Direct upload target count mismatch.');
     }
+
+    let nextBatchFileIndex = 0;
+
+    async function worker() {
+      while (nextBatchFileIndex < batch.length) {
+        throwIfUploadAborted(options.signal);
+        const batchFileIndex = nextBatchFileIndex;
+        nextBatchFileIndex += 1;
+        const entry = batch[batchFileIndex];
+        const target = targets[batchFileIndex];
+        if (!entry || !target) {
+          continue;
+        }
+
+        const file = entry.file;
+        const fileIndex = entry.index;
+        const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
+          loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
+          reportProgress();
+        }, {
+          onRetry: ({ attempt, maxAttempts }) => {
+            loadedByFile[fileIndex] = 0;
+            reportProgress({
+              stage: 'retrying',
+              currentFileName: file.name,
+              attempt,
+              maxAttempts
+            });
+          },
+          refreshTarget: async () => {
+            const refreshed = await createDirectUploadTargets(projectId, [file]);
+            const nextTarget = refreshed.targets[0];
+            if (!nextTarget) {
+              throw new Error('Direct upload target refresh failed.');
+            }
+            targets[batchFileIndex] = nextTarget;
+            return nextTarget;
+          },
+          signal: options.signal
+        });
+        targets[batchFileIndex] = latestTarget;
+
+        const uploadedObject = {
+          originalName: latestTarget.originalName || file.name,
+          mimeType: file.type || latestTarget.mimeType || 'application/octet-stream',
+          size: file.size || latestTarget.size,
+          storageKey: latestTarget.storageKey
+        };
+        completedByIdentity.set(getUploadObjectIdentity(uploadedObject), uploadedObject);
+        options.onFileUploaded?.(uploadedObject);
+        completedBytes += Math.max(1, file.size);
+        uploadedFiles += 1;
+        loadedByFile[fileIndex] = 0;
+        reportProgress();
+      }
+    }
+
+    const workerCount = Math.min(getDirectObjectUploadConcurrency(batchFiles), batch.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
   }
 
-  const workerCount = Math.min(getDirectObjectUploadConcurrency(pendingFiles), pendingFiles.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  for (const batch of targetBatches) {
+    await uploadTargetBatch(batch);
+  }
 
   onProgress(96, {
     stage: 'finalizing',
@@ -1300,7 +1378,7 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
 export async function uploadFiles(projectId: string, files: File[], onProgress: UploadProgressHandler, options: UploadFilesOptions = {}) {
   const capabilities = await fetchUploadCapabilities().catch(() => null);
   if (capabilities?.directObject.enabled) {
-    return await uploadFilesViaDirectObject(projectId, files, onProgress, options);
+    return await uploadFilesViaDirectObject(projectId, files, onProgress, options, capabilities.directUploadTargets);
   }
 
   if ((capabilities?.localProxy.enabled || !capabilities) && isLocalDevelopmentOrigin()) {
