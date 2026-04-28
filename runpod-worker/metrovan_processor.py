@@ -36,10 +36,15 @@ RAW_EXTENSIONS = {
 JPEG_EXTENSIONS = {".jpg", ".jpeg"}
 HDR_LONG_EDGE = 3000
 RAW_WB_SEARCH_LONG_EDGE = 900
+RAW_PREVIEW_FALLBACK_ENV = "METROVAN_ALLOW_RAW_PREVIEW_FALLBACK"
 
 
 def env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
+
+
+def env_enabled(name: str, default: str = "false") -> bool:
+    return env(name, default).lower() in {"1", "true", "yes", "on"}
 
 
 ACR_LCP_CACHE_DIR = Path(env("METROVAN_ACR_LCP_CACHE_DIR", "/tmp/metrovan-acr-lcp"))
@@ -47,10 +52,29 @@ ACR_LCP_ZIP_MARKER = ACR_LCP_CACHE_DIR / ".ready"
 _LCP_PROFILE_CACHE: list[dict[str, Any]] | None = None
 
 
+COMMON_TOOL_PATHS = {
+    "METROVAN_RAWTHERAPEE_CLI": [
+        "C:/Program Files/RawTherapee/5.12/rawtherapee-cli.exe",
+        "C:/Program Files/RawTherapee/5.11/rawtherapee-cli.exe",
+    ],
+    "METROVAN_ALIGN_IMAGE_STACK": [
+        "C:/Program Files/Hugin/bin/align_image_stack.exe",
+        "C:/Program Files (x86)/Hugin/bin/align_image_stack.exe",
+    ],
+    "METROVAN_ENFUSE": [
+        "C:/Program Files/Hugin/bin/enfuse.exe",
+        "C:/Program Files (x86)/Hugin/bin/enfuse.exe",
+    ],
+}
+
+
 def find_tool(env_name: str, names: list[str]) -> str:
     configured = env(env_name)
     if configured and Path(configured).exists():
         return configured
+    for candidate in COMMON_TOOL_PATHS.get(env_name, []):
+        if Path(candidate).exists():
+            return candidate
     for name in names:
         found = shutil.which(name)
         if found:
@@ -502,6 +526,7 @@ def build_rawtherapee_profile(mode: str, resize_long_edge: int = HDR_LONG_EDGE, 
 def render_raw_to_jpeg(source: Path, destination: Path, quality: int, mode: str, resize_long_edge: int = HDR_LONG_EDGE) -> None:
     rawtherapee = TOOLS["rawtherapee"]
     rawtherapee_error = "rawtherapee-cli is not available in the worker image."
+    allow_preview_fallback = env_enabled(RAW_PREVIEW_FALLBACK_ENV)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     if rawtherapee:
@@ -524,7 +549,7 @@ def render_raw_to_jpeg(source: Path, destination: Path, quality: int, mode: str,
                 return
             rawtherapee_error = f"rawtherapee conversion failed: {trim_error(result.stderr or result.stdout)}"
 
-    if extract_raw_preview_to_jpeg(source, destination, quality, resize_long_edge):
+    if allow_preview_fallback and extract_raw_preview_to_jpeg(source, destination, quality, resize_long_edge):
         return
 
     raise RuntimeError(rawtherapee_error)
@@ -641,6 +666,55 @@ def compute_white_priority_gains(camera: np.ndarray) -> dict[str, float] | None:
         "g": 1.0,
         "b": max(0.7, min(1.5, g_median / max(b_median, 1e-6))),
     }
+
+
+def gains_from_rgb_mask(rgb: np.ndarray, mask: np.ndarray, red_limits: tuple[float, float], blue_limits: tuple[float, float]) -> dict[str, float] | None:
+    values = rgb[mask]
+    if values.shape[0] < 1000:
+        return None
+    medians = np.median(values, axis=0)
+    if not np.all(np.isfinite(medians)) or np.min(medians) <= 1e-4:
+        return None
+    r_median, g_median, b_median = medians
+    return {
+        "r": max(red_limits[0], min(red_limits[1], float(g_median / max(r_median, 1e-6)))),
+        "g": 1.0,
+        "b": max(blue_limits[0], min(blue_limits[1], float(g_median / max(b_median, 1e-6)))),
+    }
+
+
+def blend_gains(primary: dict[str, float], secondary: dict[str, float], primary_weight: float) -> dict[str, float]:
+    weight = max(0.0, min(1.0, primary_weight))
+    return {
+        "r": primary["r"] * weight + secondary["r"] * (1.0 - weight),
+        "g": 1.0,
+        "b": primary["b"] * weight + secondary["b"] * (1.0 - weight),
+    }
+
+
+def compute_group_rgb_grey_gains(reference: np.ndarray) -> dict[str, float] | None:
+    luma = luminance(reference)
+    sat = saturation(reference)
+    channel_max = reference.max(axis=2)
+    channel_min = reference.min(axis=2)
+
+    low_sat_mask = (luma > 0.08) & (luma < 0.92) & (sat < 0.35)
+    interior_mask = (luma > 0.16) & (luma < 0.82) & (channel_max < 0.90) & (channel_min > 0.03)
+
+    low_sat_gains = gains_from_rgb_mask(reference, low_sat_mask, (0.72, 1.25), (0.75, 1.30))
+    interior_gains = gains_from_rgb_mask(reference, interior_mask, (0.72, 1.20), (0.82, 1.35))
+    if interior_gains and low_sat_gains:
+        blended = blend_gains(interior_gains, low_sat_gains, 0.65)
+        return {
+            "r": max(0.74, min(1.18, blended["r"])),
+            "g": 1.0,
+            "b": max(0.82, min(1.35, blended["b"])),
+        }
+    return interior_gains or low_sat_gains
+
+
+def estimate_group_rgb_grey_gains(reference_prepared: Path) -> dict[str, float] | None:
+    return compute_group_rgb_grey_gains(load_rgb(reference_prepared))
 
 
 def estimate_rgb_gains(camera_path: Path, auto_path: Path) -> dict[str, float] | None:
@@ -871,9 +945,7 @@ def estimate_group_gains(reference: dict[str, Any], source_paths: dict[str, Path
     source = source_paths[str(reference.get("id"))]
     if not is_raw(source):
         return None
-    auto_path = work_dir / "reference-auto.jpg"
-    render_raw_to_jpeg(source, auto_path, 95, "autold", HDR_LONG_EDGE)
-    return estimate_rgb_gains(reference_prepared, auto_path)
+    return estimate_group_rgb_grey_gains(reference_prepared)
 
 
 def apply_group_gains(prepared: list[Path], gains: dict[str, float], work_dir: Path) -> list[Path]:
@@ -942,16 +1014,28 @@ def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
             exposure = normalized_exposures[0]
             source = source_paths[str(exposure.get("id"))]
             if is_raw(source):
-                raw_wb_mode = estimate_raw_rgb_grey_wb_mode(source, work_dir)
-                render_raw_to_jpeg(source, output_path, 95, raw_wb_mode, HDR_LONG_EDGE)
+                rendered = work_dir / "single-camera.jpg"
+                render_raw_to_jpeg(source, rendered, 95, "camera", HDR_LONG_EDGE)
+                gains = estimate_group_rgb_grey_gains(rendered)
+                if gains:
+                    print(f"RAW RGB grey WB gains for {source.name}: r={gains['r']:.4f} b={gains['b']:.4f}", flush=True)
+                    apply_image_adjustments(rendered, output_path, 95, gains, None)
+                else:
+                    shutil.copyfile(rendered, output_path)
             else:
                 convert_to_jpeg(source, output_path, 95, HDR_LONG_EDGE)
             return
 
         reference = pick_reference(normalized_exposures)
         reference_source = source_paths[str(reference.get("id"))]
-        raw_wb_mode = estimate_raw_rgb_grey_wb_mode(reference_source, work_dir) if is_raw(reference_source) else "camera"
-        prepared, _, _ = prepare_inputs(normalized_exposures, source_paths, work_dir, raw_wb_mode)
+        prepared, _, reference_prepared = prepare_inputs(normalized_exposures, source_paths, work_dir, "camera")
+        gains = estimate_group_gains(reference, source_paths, reference_prepared, work_dir) if reference_prepared else None
+        if gains:
+            print(
+                f"RAW group RGB grey WB gains from {reference_source.name}: r={gains['r']:.4f} b={gains['b']:.4f}",
+                flush=True,
+            )
+            prepared = apply_group_gains(prepared, gains, work_dir)
         align_and_fuse(prepared, output_path, work_dir)
 
 
