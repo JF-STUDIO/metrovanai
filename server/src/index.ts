@@ -933,6 +933,8 @@ function buildAdminWorkflowPayload() {
       instanceType: item.instanceType ?? null,
       inputCount: item.inputs?.length ?? 0,
       outputCount: item.outputs?.length ?? 0,
+      inputNodeIds: item.inputs?.map((input) => input.nodeId).filter(Boolean) ?? [],
+      outputNodeIds: item.outputs?.map((output) => output.nodeId).filter(Boolean) ?? [],
       promptNodeId: item.prompt?.nodeId ?? null
     }))
   };

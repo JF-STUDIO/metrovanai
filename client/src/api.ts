@@ -312,6 +312,8 @@ export interface AdminWorkflowSummary {
     instanceType: string | null;
     inputCount: number;
     outputCount: number;
+    inputNodeIds: string[];
+    outputNodeIds: string[];
     promptNodeId: string | null;
   }>;
 }

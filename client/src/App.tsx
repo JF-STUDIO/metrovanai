@@ -3958,6 +3958,23 @@ function App() {
     }
   }
 
+  function getAdminFeatureWorkflowDisplay(feature: StudioFeatureConfig) {
+    const items = adminWorkflowSummary?.items ?? [];
+    const configuredWorkflowId = feature.workflowId.trim();
+    const matched = configuredWorkflowId ? items.find((item) => item.workflowId === configuredWorkflowId) ?? null : null;
+    const activeName = adminWorkflowSummary?.active?.trim().toLowerCase();
+    const active = activeName ? items.find((item) => item.name.trim().toLowerCase() === activeName) ?? null : null;
+    const defaultWorkflow = items.find((item) => item.workflowId) ?? null;
+    const shouldUseDefaultWorkflow = feature.id === 'hdr-true-color' || feature.id === 'hdr-white-wall';
+    const fallback = matched ?? (shouldUseDefaultWorkflow ? active ?? defaultWorkflow : null);
+
+    return {
+      workflowId: configuredWorkflowId || fallback?.workflowId || '',
+      inputNodeId: feature.inputNodeId.trim() || fallback?.inputNodeIds?.join(', ') || '',
+      outputNodeId: feature.outputNodeId.trim() || fallback?.outputNodeIds?.join(', ') || ''
+    };
+  }
+
   async function handleAdminSaveSystemSettings() {
     const runpodHdrBatchSize = Number(adminSystemDraft.runpodHdrBatchSize);
     if (
@@ -5702,6 +5719,7 @@ function App() {
                   const expanded = Boolean(adminExpandedFeatureIds[feature.id]);
                   const beforeBusy = adminFeatureImageBusy === `${feature.id}:beforeImageUrl`;
                   const afterBusy = adminFeatureImageBusy === `${feature.id}:afterImageUrl`;
+                  const workflowDisplay = getAdminFeatureWorkflowDisplay(feature);
 
                   return (
                     <article key={feature.id} className="admin-workflow-card admin-feature-editor-card">
@@ -5719,9 +5737,9 @@ function App() {
                           <small>{feature.id}</small>
                         </div>
                         <div className="admin-feature-summary-meta">
-                          <span>Workflow: {feature.workflowId || '未设置'}</span>
-                          <span>Input: {feature.inputNodeId || '未设置'}</span>
-                          <span>Output: {feature.outputNodeId || '未设置'}</span>
+                          <span>Workflow: {workflowDisplay.workflowId || '未设置'}</span>
+                          <span>Input: {workflowDisplay.inputNodeId || '未设置'}</span>
+                          <span>Output: {workflowDisplay.outputNodeId || '未设置'}</span>
                           <span>{feature.pointsPerPhoto} 积分 / 张</span>
                         </div>
                         <div className="admin-feature-summary-images" aria-hidden="true">
