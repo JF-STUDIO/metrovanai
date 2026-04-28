@@ -178,6 +178,7 @@ interface RateLimitBucket {
 }
 
 const rateLimitBuckets = new Map<string, RateLimitBucket>();
+let externalRateLimitWarningLogged = false;
 const rateLimitCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, bucket] of rateLimitBuckets.entries()) {
@@ -522,35 +523,124 @@ function checkDirectUploadTargetLimits(files: Array<{ size: number }>) {
   }
 }
 
-function checkRateLimit(
-  req: express.Request,
-  res: express.Response,
-  input: { scope: string; limit: number; windowMs: number; message?: string }
-) {
+function getExternalRateLimitConfig() {
+  const url = String(process.env.UPSTASH_REDIS_REST_URL ?? process.env.METROVAN_UPSTASH_REDIS_REST_URL ?? '')
+    .trim()
+    .replace(/\/+$/, '');
+  const token = String(process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.METROVAN_UPSTASH_REDIS_REST_TOKEN ?? '').trim();
+  return url && token ? { url, token } : null;
+}
+
+function getLocalRateLimitBucket(key: string, windowMs: number) {
   const now = Date.now();
-  const key = `${input.scope}:${getClientIp(req)}`;
   const existing = rateLimitBuckets.get(key);
   const bucket: RateLimitBucket =
     existing && existing.resetAt > now
       ? existing
       : {
           count: 0,
-          resetAt: now + input.windowMs
+          resetAt: now + windowMs
         };
 
   bucket.count += 1;
   rateLimitBuckets.set(key, bucket);
+  return bucket;
+}
+
+function normalizeUpstashPipelineResult(payload: unknown) {
+  return Array.isArray(payload) ? payload : [];
+}
+
+function readUpstashResultNumber(item: unknown) {
+  if (item && typeof item === 'object' && 'result' in item) {
+    const parsed = Number((item as { result?: unknown }).result);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const parsed = Number(item);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function callUpstashPipeline(config: { url: string; token: string }, commands: unknown[][]) {
+  const response = await fetch(`${config.url}/pipeline`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(commands)
+  });
+  if (!response.ok) {
+    throw new Error(`Upstash rate limit request failed: ${response.status}`);
+  }
+  return normalizeUpstashPipelineResult(await response.json());
+}
+
+async function getExternalRateLimitBucket(key: string, windowMs: number) {
+  const config = getExternalRateLimitConfig();
+  if (!config) {
+    return null;
+  }
+
+  const redisKey = `metrovan:rate-limit:${key}`;
+  const firstResult = await callUpstashPipeline(config, [
+    ['INCR', redisKey],
+    ['PTTL', redisKey]
+  ]);
+  const count = readUpstashResultNumber(firstResult[0]) ?? 1;
+  let ttlMs = readUpstashResultNumber(firstResult[1]) ?? -1;
+  if (count === 1 || ttlMs < 0) {
+    const secondResult = await callUpstashPipeline(config, [
+      ['PEXPIRE', redisKey, windowMs],
+      ['PTTL', redisKey]
+    ]);
+    ttlMs = readUpstashResultNumber(secondResult[1]) ?? windowMs;
+  }
+
+  return {
+    count,
+    resetAt: Date.now() + Math.max(1, ttlMs)
+  };
+}
+
+async function getRateLimitBucket(key: string, windowMs: number) {
+  try {
+    const externalBucket = await getExternalRateLimitBucket(key, windowMs);
+    if (externalBucket) {
+      return externalBucket;
+    }
+  } catch (error) {
+    if (!externalRateLimitWarningLogged) {
+      externalRateLimitWarningLogged = true;
+      console.warn(
+        `External rate limit backend failed; falling back to in-memory limits: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  return getLocalRateLimitBucket(key, windowMs);
+}
+
+async function checkRateLimit(
+  req: express.Request,
+  res: express.Response,
+  input: { scope: string; limit: number; windowMs: number; message?: string }
+) {
+  const key = `${input.scope}:${getClientIp(req)}`;
+  const bucket = await getRateLimitBucket(key, input.windowMs);
   if (bucket.count <= input.limit) {
     return true;
   }
 
+  const now = Date.now();
   const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
   res.setHeader('Retry-After', String(retryAfterSeconds));
   res.status(429).json({ error: input.message ?? 'Too many attempts. Please try again later.' });
   return false;
 }
 
-function checkUserRateLimit(
+async function checkUserRateLimit(
   req: express.Request,
   res: express.Response,
   user: UserRecord,
@@ -2389,11 +2479,11 @@ app.post('/api/billing/checkout', async (req, res) => {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'billing-checkout',
       limit: 20,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -2481,11 +2571,11 @@ app.post('/api/billing/checkout/confirm', async (req, res) => {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'billing-checkout-confirm',
       limit: 60,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -2524,17 +2614,17 @@ app.post('/api/billing/checkout/confirm', async (req, res) => {
   }
 });
 
-app.post('/api/billing/activation-code/redeem', (req, res) => {
+app.post('/api/billing/activation-code/redeem', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'billing-activation-code-redeem',
       limit: 10,
       windowMs: 1000 * 60 * 60
-    })
+    }))
   ) {
     return;
   }
@@ -2594,17 +2684,17 @@ app.post('/api/billing/activation-code/redeem', (req, res) => {
   });
 });
 
-app.post('/api/billing/top-up', (req, res) => {
+app.post('/api/billing/top-up', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'billing-internal-top-up',
       limit: 10,
       windowMs: 1000 * 60 * 60
-    })
+    }))
   ) {
     return;
   }
@@ -2666,14 +2756,14 @@ app.post('/api/billing/top-up', (req, res) => {
   res.status(201).json(buildBillingPayload(user.userKey));
 });
 
-app.use('/api/admin', (req, res, next) => {
+app.use('/api/admin', async (req, res, next) => {
   const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
   if (
-    !checkRateLimit(req, res, {
+    !(await checkRateLimit(req, res, {
       scope: isMutation ? 'admin-api-write' : 'admin-api-read',
       limit: isMutation ? 120 : 600,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -3288,16 +3378,16 @@ app.post('/api/auth/register', async (req, res) => {
 
   const email = normalizeEmail(parsed.data.email);
   if (
-    !checkRateLimit(req, res, {
+    !(await checkRateLimit(req, res, {
       scope: `auth-register:${email}`,
       limit: 3,
       windowMs: 1000 * 60 * 60
-    }) ||
-    !checkRateLimit(req, res, {
+    })) ||
+    !(await checkRateLimit(req, res, {
       scope: 'auth-register-ip',
       limit: 20,
       windowMs: 1000 * 60 * 60
-    })
+    }))
   ) {
     return;
   }
@@ -3340,16 +3430,16 @@ app.post('/api/auth/login', async (req, res) => {
 
   const email = normalizeEmail(parsed.data.email);
   if (
-    !checkRateLimit(req, res, {
+    !(await checkRateLimit(req, res, {
       scope: `auth-login:${email}`,
       limit: 8,
       windowMs: 1000 * 60 * 15
-    }) ||
-    !checkRateLimit(req, res, {
+    })) ||
+    !(await checkRateLimit(req, res, {
       scope: 'auth-login-ip',
       limit: 60,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -3415,13 +3505,13 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ session: buildAuthSessionResponse(store.getUserById(user.id) ?? user, csrfToken) });
 });
 
-app.post('/api/auth/email-verification/confirm', (req, res) => {
+app.post('/api/auth/email-verification/confirm', async (req, res) => {
   if (
-    !checkRateLimit(req, res, {
+    !(await checkRateLimit(req, res, {
       scope: 'auth-email-verify-confirm',
       limit: 20,
       windowMs: 1000 * 60 * 60
-    })
+    }))
   ) {
     return;
   }
@@ -3482,11 +3572,11 @@ app.post('/api/auth/email-verification/resend', async (req, res) => {
 
   const email = normalizeEmail(parsed.data.email);
   if (
-    !checkRateLimit(req, res, {
+    !(await checkRateLimit(req, res, {
       scope: `auth-email-verify-resend:${email}`,
       limit: 3,
       windowMs: 1000 * 60 * 60
-    })
+    }))
   ) {
     return;
   }
@@ -3512,11 +3602,11 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
 
   const email = normalizeEmail(parsed.data.email);
   if (
-    !checkRateLimit(req, res, {
+    !(await checkRateLimit(req, res, {
       scope: `auth-password-reset:${email}`,
       limit: 3,
       windowMs: 1000 * 60 * 60
-    })
+    }))
   ) {
     return;
   }
@@ -3547,11 +3637,11 @@ app.post('/api/auth/password-reset/request', async (req, res) => {
 
 app.post('/api/auth/password-reset/confirm', async (req, res) => {
   if (
-    !checkRateLimit(req, res, {
+    !(await checkRateLimit(req, res, {
       scope: 'auth-password-reset-confirm',
       limit: 20,
       windowMs: 1000 * 60 * 60
-    })
+    }))
   ) {
     return;
   }
@@ -3971,11 +4061,11 @@ app.get('/api/projects/:id/download', async (req, res) => {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'project-download',
       limit: 30,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -4003,11 +4093,11 @@ app.post('/api/projects/:id/download', async (req, res) => {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'project-download',
       limit: 30,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -4038,17 +4128,17 @@ app.post('/api/projects/:id/download', async (req, res) => {
   }
 });
 
-app.post('/api/projects/:id/direct-upload/targets', (req, res) => {
+app.post('/api/projects/:id/direct-upload/targets', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'direct-upload-targets',
       limit: 120,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -4103,11 +4193,11 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'direct-upload-complete',
       limit: 120,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -4514,11 +4604,11 @@ app.post('/api/projects/:id/hdr-items/:hdrItemId/regenerate', async (req, res) =
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'project-result-regenerate',
       limit: 30,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -4566,11 +4656,11 @@ app.post('/api/projects/:id/start', async (req, res) => {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'project-processing-start',
       limit: 20,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }
@@ -4646,11 +4736,11 @@ app.post('/api/projects/:id/retry-failed', async (req, res) => {
     return;
   }
   if (
-    !checkUserRateLimit(req, res, user, {
+    !(await checkUserRateLimit(req, res, user, {
       scope: 'project-processing-retry',
       limit: 20,
       windowMs: 1000 * 60 * 15
-    })
+    }))
   ) {
     return;
   }

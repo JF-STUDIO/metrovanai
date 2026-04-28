@@ -56,7 +56,9 @@ export function buildDeploymentReadiness(input: {
     'METROVAN_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES',
     30 * 1024 * 1024 * 1024
   );
-  const distributedRateLimitReady = hasEnv('METROVAN_RATE_LIMIT_REDIS_URL') || hasEnv('UPSTASH_REDIS_REST_URL');
+  const distributedRateLimitReady =
+    (hasEnv('UPSTASH_REDIS_REST_URL') && hasEnv('UPSTASH_REDIS_REST_TOKEN')) ||
+    (hasEnv('METROVAN_UPSTASH_REDIS_REST_URL') && hasEnv('METROVAN_UPSTASH_REDIS_REST_TOKEN'));
   const checks: DeploymentReadinessCheck[] = [
     {
       id: 'security.csp',
@@ -70,11 +72,11 @@ export function buildDeploymentReadiness(input: {
     },
     {
       id: 'security.distributed_rate_limit',
-      status: distributedRateLimitReady ? 'planned' : 'action-required',
-      current: distributedRateLimitReady ? 'configured env, app fallback still in-memory' : 'in-memory per instance',
+      status: distributedRateLimitReady ? 'ready' : 'action-required',
+      current: distributedRateLimitReady ? 'Upstash Redis REST' : 'in-memory per instance',
       next: distributedRateLimitReady
-        ? 'Wire the configured Redis/Upstash backend into runtime rate limiting so limits survive restarts and multi-instance traffic.'
-        : 'Add Redis/Upstash backed rate limits for auth, billing, upload signing, processing start, downloads and admin writes.'
+        ? 'Runtime rate limits use an external backend and survive restarts or multi-instance traffic.'
+        : 'Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for global rate limits.'
     },
     {
       id: 'metadata.provider',
