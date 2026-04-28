@@ -12,6 +12,7 @@ import type {
   SystemSettings,
   UserRecord
 } from './types.js';
+import { DEFAULT_STUDIO_FEATURES, normalizeStudioFeatures } from './studio-features.js';
 import { ensureDir, loadJson, saveJson } from './utils.js';
 
 const { Pool } = pg;
@@ -67,7 +68,10 @@ function createEmptyDatabase(): DatabaseShape {
     passwordResetTokens: [],
     emailVerificationTokens: [],
     auditLogs: [],
-    systemSettings: { runpodHdrBatchSize: DEFAULT_RUNPOD_HDR_BATCH_SIZE }
+    systemSettings: {
+      runpodHdrBatchSize: DEFAULT_RUNPOD_HDR_BATCH_SIZE,
+      studioFeatures: DEFAULT_STUDIO_FEATURES
+    }
   };
 }
 
@@ -80,7 +84,8 @@ function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): Sy
         MAX_RUNPOD_HDR_BATCH_SIZE,
         Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : DEFAULT_RUNPOD_HDR_BATCH_SIZE
       )
-    )
+    ),
+    studioFeatures: normalizeStudioFeatures(input?.studioFeatures)
   };
 }
 

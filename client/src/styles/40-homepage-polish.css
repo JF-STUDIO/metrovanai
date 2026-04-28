@@ -1754,6 +1754,20 @@
   border-radius: 1.1rem;
 }
 
+.admin-feature-editor-card {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.admin-feature-editor-card label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.admin-feature-editor-card input {
+  width: 100%;
+}
+
 .admin-workflow-card strong,
 .admin-workflow-card span,
 .admin-workflow-card small {

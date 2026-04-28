@@ -57,6 +57,7 @@ import {
 } from './payments.js';
 import { ProjectProcessor } from './processor.js';
 import { LocalStore } from './store.js';
+import { getEnabledStudioFeatures } from './studio-features.js';
 import type Stripe from 'stripe';
 import type {
   BillingActivationCode,
@@ -1730,7 +1731,8 @@ async function commitStagedOriginals(projectId: string) {
 
 const createProjectSchema = z.object({
   name: z.string().min(1),
-  address: z.string().optional()
+  address: z.string().optional(),
+  studioFeatureId: z.string().trim().min(1).max(80).optional()
 });
 
 const registerSchema = z.object({
@@ -1930,6 +1932,32 @@ const adminBillingAdjustmentSchema = z.object({
 
 const adminSystemSettingsSchema = z.object({
   runpodHdrBatchSize: z.number().int().min(MIN_RUNPOD_HDR_BATCH_SIZE).max(MAX_RUNPOD_HDR_BATCH_SIZE),
+  studioFeatures: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(80),
+        enabled: z.boolean(),
+        category: z.enum(['all', 'interior', 'exterior', 'special', 'new']),
+        status: z.enum(['available', 'beta']),
+        titleZh: z.string().trim().min(1).max(80),
+        titleEn: z.string().trim().min(1).max(80),
+        descriptionZh: z.string().trim().min(1).max(240),
+        descriptionEn: z.string().trim().min(1).max(240),
+        detailZh: z.string().trim().min(1).max(500),
+        detailEn: z.string().trim().min(1).max(500),
+        tagZh: z.string().trim().min(1).max(40),
+        tagEn: z.string().trim().min(1).max(40),
+        beforeImageUrl: z.string().trim().max(1000),
+        afterImageUrl: z.string().trim().max(1000),
+        workflowId: z.string().trim().max(160),
+        inputNodeId: z.string().trim().max(160),
+        outputNodeId: z.string().trim().max(160),
+        pointsPerPhoto: z.number().int().min(0).max(1000),
+        tone: z.enum(['warm', 'white', 'dusk', 'blue', 'season'])
+      })
+    )
+    .max(50)
+    .optional(),
   confirm: z.literal(true)
 });
 
@@ -2516,6 +2544,12 @@ app.get('/api/admin/settings', (req, res) => {
   });
 });
 
+app.get('/api/studio/features', (_req, res) => {
+  res.json({
+    features: getEnabledStudioFeatures(store.getSystemSettings())
+  });
+});
+
 app.get('/api/admin/workflows', (req, res) => {
   if (!requireAdminApiAccess(req, res)) {
     return;
@@ -2541,7 +2575,8 @@ app.patch('/api/admin/settings', (req, res) => {
 
   const before = store.getSystemSettings();
   const settings = store.updateSystemSettings({
-    runpodHdrBatchSize: parsed.data.runpodHdrBatchSize
+    runpodHdrBatchSize: parsed.data.runpodHdrBatchSize,
+    studioFeatures: parsed.data.studioFeatures ?? before.studioFeatures
   });
   writeAdminAuditLog(req, actor, {
     action: 'admin.settings.update',
@@ -3372,7 +3407,8 @@ app.post('/api/projects', (req, res) => {
     userKey: user.userKey,
     userDisplayName: user.displayName,
     name: parsed.data.name,
-    address: parsed.data.address
+    address: parsed.data.address,
+    studioFeatureId: parsed.data.studioFeatureId
   });
   respondWithProject(res, project, 201);
 });

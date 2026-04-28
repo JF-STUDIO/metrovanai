@@ -43,6 +43,7 @@ import {
   type DatabaseShape,
   type MetadataProvider
 } from './metadata.js';
+import { normalizeStudioFeatures } from './studio-features.js';
 
 const DEFAULT_PROJECT_REGENERATION_FREE_LIMIT = 10;
 
@@ -87,7 +88,8 @@ function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): Sy
         MAX_RUNPOD_HDR_BATCH_SIZE,
         Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : DEFAULT_RUNPOD_HDR_BATCH_SIZE
       )
-    )
+    ),
+    studioFeatures: normalizeStudioFeatures(input?.studioFeatures)
   };
 }
 
@@ -812,9 +814,18 @@ export class LocalStore {
     return updated;
   }
 
-  createProject(input: { userKey: string; userDisplayName: string; name: string; address?: string }) {
+  createProject(input: {
+    userKey: string;
+    userDisplayName: string;
+    name: string;
+    address?: string;
+    studioFeatureId?: string | null;
+  }) {
     const db = this.loadDb();
     const now = new Date().toISOString();
+    const feature = normalizeStudioFeatures(db.systemSettings?.studioFeatures).find(
+      (item) => item.enabled && item.id === input.studioFeatureId
+    );
     const project: ProjectRecord = {
       id: nanoid(10),
       userKey: input.userKey,
@@ -825,6 +836,12 @@ export class LocalStore {
       currentStep: 1,
       pointsEstimate: 0,
       pointsSpent: 0,
+      studioFeatureId: feature?.id ?? null,
+      studioFeatureTitle: feature?.titleZh ?? feature?.titleEn ?? null,
+      workflowId: feature?.workflowId || null,
+      workflowInputNodeId: feature?.inputNodeId || null,
+      workflowOutputNodeId: feature?.outputNodeId || null,
+      pointsPerPhoto: feature?.pointsPerPhoto ?? 1,
       regenerationUsage: normalizeProjectRegenerationUsage(undefined),
       photoCount: 0,
       groupCount: 1,
@@ -1716,7 +1733,8 @@ export class LocalStore {
     project.regenerationUsage = normalizeProjectRegenerationUsage(project.regenerationUsage, project.hdrItems);
     project.photoCount = project.hdrItems.reduce((sum, item) => sum + item.exposures.length, 0);
     project.groupCount = project.groups.length;
-    project.pointsEstimate = project.hdrItems.length;
+    project.pointsPerPhoto = Math.max(0, Math.round(Number(project.pointsPerPhoto ?? 1) || 1));
+    project.pointsEstimate = project.hdrItems.length * project.pointsPerPhoto;
     project.resultAssets = this.deriveResultAssets(project);
     project.downloadReady = project.resultAssets.length > 0 && project.status === 'completed';
     project.job = normalizeProjectJobState(project.job);

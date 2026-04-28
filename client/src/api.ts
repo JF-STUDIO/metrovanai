@@ -262,6 +262,29 @@ export interface AdminActivationCodesPayload {
 
 export interface AdminSystemSettings {
   runpodHdrBatchSize: number;
+  studioFeatures: StudioFeatureConfig[];
+}
+
+export interface StudioFeatureConfig {
+  id: string;
+  enabled: boolean;
+  category: 'all' | 'interior' | 'exterior' | 'special' | 'new';
+  status: 'available' | 'beta';
+  titleZh: string;
+  titleEn: string;
+  descriptionZh: string;
+  descriptionEn: string;
+  detailZh: string;
+  detailEn: string;
+  tagZh: string;
+  tagEn: string;
+  beforeImageUrl: string;
+  afterImageUrl: string;
+  workflowId: string;
+  inputNodeId: string;
+  outputNodeId: string;
+  pointsPerPhoto: number;
+  tone: 'warm' | 'white' | 'dusk' | 'blue' | 'season';
 }
 
 export interface AdminWorkflowSummary {
@@ -624,6 +647,10 @@ export async function fetchAdminWorkflows() {
   return await jsonRequest<{ workflows: AdminWorkflowSummary; settings: AdminSystemSettings }>('/api/admin/workflows');
 }
 
+export async function fetchStudioFeatures() {
+  return await jsonRequest<{ features: StudioFeatureConfig[] }>('/api/studio/features');
+}
+
 export async function updateAdminSettings(input: AdminSystemSettings) {
   return await jsonRequest<{ settings: AdminSystemSettings }>('/api/admin/settings', {
     method: 'PATCH',
@@ -660,6 +687,7 @@ export async function fetchProject(projectId: string) {
 export async function createProject(input: {
   name: string;
   address?: string;
+  studioFeatureId?: string;
 }) {
   return await jsonRequest<{ project: ProjectRecord }>('/api/projects', {
     method: 'POST',

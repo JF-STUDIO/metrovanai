@@ -205,6 +205,12 @@ export interface ProjectRecord {
   currentStep: 1 | 2 | 3 | 4;
   pointsEstimate: number;
   pointsSpent: number;
+  studioFeatureId?: string | null;
+  studioFeatureTitle?: string | null;
+  workflowId?: string | null;
+  workflowInputNodeId?: string | null;
+  workflowOutputNodeId?: string | null;
+  pointsPerPhoto?: number;
   regenerationUsage: ProjectRegenerationUsage;
   photoCount: number;
   groupCount: number;

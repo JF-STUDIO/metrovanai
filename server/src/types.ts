@@ -274,6 +274,29 @@ export interface AuditLogEntry {
 
 export interface SystemSettings {
   runpodHdrBatchSize: number;
+  studioFeatures: StudioFeatureConfig[];
+}
+
+export interface StudioFeatureConfig {
+  id: string;
+  enabled: boolean;
+  category: 'all' | 'interior' | 'exterior' | 'special' | 'new';
+  status: 'available' | 'beta';
+  titleZh: string;
+  titleEn: string;
+  descriptionZh: string;
+  descriptionEn: string;
+  detailZh: string;
+  detailEn: string;
+  tagZh: string;
+  tagEn: string;
+  beforeImageUrl: string;
+  afterImageUrl: string;
+  workflowId: string;
+  inputNodeId: string;
+  outputNodeId: string;
+  pointsPerPhoto: number;
+  tone: 'warm' | 'white' | 'dusk' | 'blue' | 'season';
 }
 
 export interface SessionRecord {
@@ -314,6 +337,12 @@ export interface ProjectRecord {
   currentStep: 1 | 2 | 3 | 4;
   pointsEstimate: number;
   pointsSpent: number;
+  studioFeatureId?: string | null;
+  studioFeatureTitle?: string | null;
+  workflowId?: string | null;
+  workflowInputNodeId?: string | null;
+  workflowOutputNodeId?: string | null;
+  pointsPerPhoto?: number;
   regenerationUsage: ProjectRegenerationUsage;
   photoCount: number;
   groupCount: number;

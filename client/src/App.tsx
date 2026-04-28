@@ -47,6 +47,7 @@ import {
   fetchProject,
   fetchProjects,
   fetchSession,
+  fetchStudioFeatures,
   getApiRoot,
   loginWithEmail,
   logoutSession,
@@ -75,6 +76,7 @@ import type {
   AdminUserListQuery,
   AdminUserSummary,
   AdminWorkflowSummary,
+  StudioFeatureConfig,
   UploadedObjectReference,
   UploadProgressSnapshot
 } from './api';
@@ -95,7 +97,7 @@ import type {
 type AuthMode = 'signin' | 'signup' | 'reset-request' | 'reset-confirm' | 'verify-email';
 type UiLocale = 'zh' | 'en';
 type AppRoute = 'home' | 'plans' | 'studio' | 'admin';
-type StudioFeatureId = 'hdr-true-color' | 'hdr-white-wall' | 'dusk-exterior' | 'blue-hour' | 'season-shift';
+type StudioFeatureId = string;
 type StudioFeatureStatus = 'available' | 'beta' | 'locked';
 
 const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
@@ -458,6 +460,28 @@ const STUDIO_FEATURES: StudioFeatureDefinition[] = [
     afterImage: showcaseExteriorAfter
   }
 ];
+
+function studioFeatureConfigToDefinition(feature: StudioFeatureConfig): StudioFeatureDefinition {
+  return {
+    id: feature.id,
+    category: feature.category,
+    status: feature.status,
+    tag: { zh: feature.tagZh, en: feature.tagEn },
+    title: { zh: feature.titleZh, en: feature.titleEn },
+    description: { zh: feature.descriptionZh, en: feature.descriptionEn },
+    detail: { zh: feature.detailZh, en: feature.detailEn },
+    exposureLabel: { zh: '导入照片', en: 'Import photos' },
+    pointLabel: { zh: `${feature.pointsPerPhoto} 积分 / 张`, en: `${feature.pointsPerPhoto} pt / photo` },
+    defaultName: { zh: feature.titleZh, en: feature.titleEn },
+    tone: feature.tone,
+    beforeImage: feature.beforeImageUrl || showcaseInteriorBefore,
+    afterImage: feature.afterImageUrl || showcaseInteriorAfter
+  };
+}
+
+function normalizeStudioFeatureDrafts(features: StudioFeatureConfig[] | undefined) {
+  return Array.isArray(features) ? features : [];
+}
 
 const DEFAULT_REGENERATION_COLOR = '#F2E8D8';
 const RESULT_COLOR_CARD_STORAGE_KEY = 'metrovanai_result_color_cards';
@@ -2465,6 +2489,7 @@ function App() {
   const [adminSystemLoaded, setAdminSystemLoaded] = useState(false);
   const [adminSystemBusy, setAdminSystemBusy] = useState(false);
   const [adminSystemDraft, setAdminSystemDraft] = useState({ runpodHdrBatchSize: '10' });
+  const [adminFeatureDrafts, setAdminFeatureDrafts] = useState<StudioFeatureConfig[]>([]);
   const [adminWorkflowSummary, setAdminWorkflowSummary] = useState<AdminWorkflowSummary | null>(null);
   const [adminWorkflowLoaded, setAdminWorkflowLoaded] = useState(false);
   const [adminWorkflowBusy, setAdminWorkflowBusy] = useState(false);
@@ -2488,6 +2513,7 @@ function App() {
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectAddress, setNewProjectAddress] = useState('');
   const [selectedFeatureId, setSelectedFeatureId] = useState<StudioFeatureId>('hdr-true-color');
+  const [studioFeatureCards, setStudioFeatureCards] = useState<StudioFeatureDefinition[]>(STUDIO_FEATURES.filter((feature) => feature.status !== 'locked'));
   const [createDialogFiles, setCreateDialogFiles] = useState<File[]>([]);
   const [createDialogDragActive, setCreateDialogDragActive] = useState(false);
   const [groupColorOverrides, setGroupColorOverrides] = useState<Record<string, string>>({});
@@ -2519,8 +2545,9 @@ function App() {
   const demoProjects = useMemo(() => createDemoProjects(), []);
   const visibleProjects = isDemoMode ? demoProjects : projects;
   const copy = UI_TEXT[locale];
-  const selectedFeature = STUDIO_FEATURES.find((feature) => feature.id === selectedFeatureId) ?? STUDIO_FEATURES[0];
-  const availableFeatureCount = STUDIO_FEATURES.filter((feature) => feature.status !== 'locked').length;
+  const visibleStudioFeatures = studioFeatureCards.filter((feature) => feature.status !== 'locked');
+  const selectedFeature = visibleStudioFeatures.find((feature) => feature.id === selectedFeatureId) ?? visibleStudioFeatures[0] ?? STUDIO_FEATURES[0];
+  const availableFeatureCount = visibleStudioFeatures.length;
   const activeStepLabels = isDemoMode ? copy.demoStepLabels : copy.stepLabels;
   const studioGuideSteps = useMemo(
     () => [
@@ -2948,6 +2975,7 @@ function App() {
           if (cancelled) return;
           setAdminSystemSettings(response.settings);
           setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+          setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
           setAdminSystemLoaded(true);
         })
         .catch((error) => {
@@ -2982,6 +3010,7 @@ function App() {
           setAdminWorkflowSummary(response.workflows);
           setAdminSystemSettings(response.settings);
           setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+          setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
           setAdminWorkflowLoaded(true);
         })
         .catch((error) => {
@@ -3001,6 +3030,27 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [activeRoute, adminWorkflowLoaded, hasAdminSession, locale]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchStudioFeatures()
+      .then((response) => {
+        if (cancelled) return;
+        const cards = response.features.map(studioFeatureConfigToDefinition).filter((feature) => feature.status !== 'locked');
+        if (cards.length) {
+          setStudioFeatureCards(cards);
+          setSelectedFeatureId((current) => (cards.some((feature) => feature.id === current) ? current : cards[0]!.id));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStudioFeatureCards(STUDIO_FEATURES.filter((feature) => feature.status !== 'locked'));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!userMenuOpen && !historyMenuOpen) {
@@ -3775,6 +3825,7 @@ function App() {
       const response = await fetchAdminSettings();
       setAdminSystemSettings(response.settings);
       setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+      setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
       setAdminSystemLoaded(true);
       setAdminWorkflowSummary((current) =>
         current
@@ -3808,6 +3859,7 @@ function App() {
       setAdminWorkflowSummary(response.workflows);
       setAdminSystemSettings(response.settings);
       setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+      setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
       setAdminWorkflowLoaded(true);
       setAdminMessage('工作流配置已刷新。');
     } catch (error) {
@@ -3815,6 +3867,21 @@ function App() {
     } finally {
       setAdminWorkflowBusy(false);
     }
+  }
+
+  function updateAdminFeatureDraft(
+    featureId: string,
+    patch: Partial<StudioFeatureConfig> | ((current: StudioFeatureConfig) => Partial<StudioFeatureConfig>)
+  ) {
+    setAdminFeatureDrafts((current) =>
+      current.map((feature) => {
+        if (feature.id !== featureId) {
+          return feature;
+        }
+        const resolvedPatch = typeof patch === 'function' ? patch(feature) : patch;
+        return { ...feature, ...resolvedPatch };
+      })
+    );
   }
 
   async function handleAdminSaveSystemSettings() {
@@ -3832,10 +3899,16 @@ function App() {
     setAdminMessage('');
     try {
       const response = await updateAdminSettings({
-        runpodHdrBatchSize: Math.round(runpodHdrBatchSize)
+        runpodHdrBatchSize: Math.round(runpodHdrBatchSize),
+        studioFeatures: adminFeatureDrafts.length ? adminFeatureDrafts : adminSystemSettings?.studioFeatures ?? []
       });
       setAdminSystemSettings(response.settings);
       setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+      setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
+      const cards = response.settings.studioFeatures.map(studioFeatureConfigToDefinition).filter((feature) => feature.status !== 'locked');
+      if (cards.length) {
+        setStudioFeatureCards(cards);
+      }
       setAdminSystemLoaded(true);
       setAdminWorkflowSummary((current) =>
         current
@@ -4425,7 +4498,8 @@ function App() {
     try {
       const response = await createProject({
         name: newProjectName.trim(),
-        address: newProjectAddress.trim()
+        address: newProjectAddress.trim(),
+        studioFeatureId: selectedFeature.id
       });
       upsertProject(response.project);
       setCreateDialogOpen(false);
@@ -5496,6 +5570,138 @@ function App() {
           <section className="admin-panel">
             <div className="admin-panel-head">
               <div>
+                <span className="admin-kicker">Studio Cards</span>
+                <h2>功能卡片配置</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void handleAdminLoadSystemSettings()}
+                disabled={adminSystemBusy}
+              >
+                刷新卡片
+              </button>
+            </div>
+            <div className="admin-workflow-list">
+              {adminFeatureDrafts.length ? (
+                adminFeatureDrafts.map((feature) => (
+                  <article key={feature.id} className="admin-workflow-card admin-feature-editor-card">
+                    <label className="admin-toggle-field">
+                      <span>启用前台显示</span>
+                      <input
+                        type="checkbox"
+                        checked={feature.enabled}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { enabled: event.target.checked })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>功能 ID</span>
+                      <input value={feature.id} disabled />
+                    </label>
+                    <label>
+                      <span>中文名字</span>
+                      <input
+                        value={feature.titleZh}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { titleZh: event.target.value })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>英文名字</span>
+                      <input
+                        value={feature.titleEn}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { titleEn: event.target.value })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>中文描述</span>
+                      <input
+                        value={feature.descriptionZh}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionZh: event.target.value })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>对比图 Before URL</span>
+                      <input
+                        value={feature.beforeImageUrl}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { beforeImageUrl: event.target.value })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>对比图 After URL</span>
+                      <input
+                        value={feature.afterImageUrl}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { afterImageUrl: event.target.value })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>工作流 ID</span>
+                      <input
+                        value={feature.workflowId}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>输入节点</span>
+                      <input
+                        value={feature.inputNodeId}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { inputNodeId: event.target.value })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>输出节点</span>
+                      <input
+                        value={feature.outputNodeId}
+                        onChange={(event) => updateAdminFeatureDraft(feature.id, { outputNodeId: event.target.value })}
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>每张积分</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="1000"
+                        value={feature.pointsPerPhoto}
+                        onChange={(event) =>
+                          updateAdminFeatureDraft(feature.id, {
+                            pointsPerPhoto: Math.max(0, Math.round(Number(event.target.value) || 0))
+                          })
+                        }
+                        disabled={adminSystemBusy}
+                      />
+                    </label>
+                  </article>
+                ))
+              ) : (
+                <div className="admin-empty compact">
+                  <strong>功能卡片尚未加载</strong>
+                  <span>点击刷新卡片或刷新工作流后再编辑。</span>
+                </div>
+              )}
+            </div>
+            <div className="admin-activation-actions">
+              <button
+                className="solid-button"
+                type="button"
+                onClick={() => void handleAdminSaveSystemSettings()}
+                disabled={adminSystemBusy || !adminFeatureDrafts.length}
+              >
+                保存卡片配置
+              </button>
+            </div>
+          </section>
+
+          <section className="admin-panel">
+            <div className="admin-panel-head">
+              <div>
                 <span className="admin-kicker">Processing Settings</span>
                 <h2>云处理 HDR 批量</h2>
               </div>
@@ -6459,7 +6665,7 @@ function App() {
                   </div>
                 </div>
                 <div className="feature-card-grid">
-                  {STUDIO_FEATURES.map((feature) => {
+                  {visibleStudioFeatures.map((feature) => {
                     const locked = feature.status === 'locked';
                     return (
                       <button
