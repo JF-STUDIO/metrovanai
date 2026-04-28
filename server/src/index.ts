@@ -1435,6 +1435,23 @@ async function ensureResultAssetPreviewFile(project: ProjectRecord, asset: Resul
   }
 }
 
+async function ensureHdrItemResultPreviewFile(project: ProjectRecord, hdrItem: HdrItem) {
+  if (!hdrItem.resultPath || !hdrItem.resultFileName) {
+    return null;
+  }
+  return await ensureResultAssetPreviewFile(project, {
+    id: `hdr-${hdrItem.id}`,
+    hdrItemId: hdrItem.id,
+    fileName: hdrItem.resultFileName,
+    storageKey: hdrItem.resultKey ?? undefined,
+    storagePath: hdrItem.resultPath,
+    storageUrl: hdrItem.resultUrl ?? '',
+    previewUrl: null,
+    sortOrder: hdrItem.index,
+    regeneration: hdrItem.regeneration
+  });
+}
+
 function sendCachedPreviewFile(res: express.Response, filePath: string | null) {
   if (!filePath) {
     res.status(404).json({ error: 'Preview not found.' });
@@ -3457,7 +3474,12 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', async (req, res) => {
   const selectedExposure =
     hdrItem.exposures.find((exposure) => exposure.id === hdrItem.selectedExposureId) ?? hdrItem.exposures[0] ?? null;
   if (hdrItem.resultPath) {
-    sendProtectedStorageFile(res, hdrItem.resultPath, hdrItem.resultKey);
+    const previewPath = await ensureHdrItemResultPreviewFile(owned.project, hdrItem);
+    if (previewPath) {
+      sendCachedPreviewFile(res, previewPath);
+      return;
+    }
+    res.status(404).json({ error: 'Preview not found.' });
     return;
   }
 
@@ -3466,7 +3488,11 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', async (req, res) => {
     previewPath = await ensureExposurePreviewFile(selectedExposure);
   }
 
-  sendProtectedStorageFile(res, previewPath ?? selectedExposure?.storagePath ?? null, previewPath ? selectedExposure?.previewKey : selectedExposure?.storageKey);
+  if (!previewPath) {
+    res.status(404).json({ error: 'Preview not found.' });
+    return;
+  }
+  sendProtectedStorageFile(res, previewPath, selectedExposure?.previewKey);
 });
 
 app.get('/api/projects/:id/hdr-items/:hdrItemId/result', (req, res) => {
@@ -3503,7 +3529,11 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', 
   }
 
   const previewPath = await ensureExposurePreviewFile(exposure);
-  sendProtectedStorageFile(res, previewPath ?? exposure.storagePath, previewPath ? exposure.previewKey : exposure.storageKey);
+  if (!previewPath) {
+    res.status(404).json({ error: 'Preview not found.' });
+    return;
+  }
+  sendProtectedStorageFile(res, previewPath, exposure.previewKey);
 });
 
 app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {

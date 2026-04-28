@@ -2157,10 +2157,10 @@ function isStrongPasswordInput(password: string) {
 function getHdrPreviewUrl(hdrItem: HdrItem) {
   const selectedExposure = getSelectedExposure(hdrItem);
   return resolveMediaUrl(
-    hdrItem.resultUrl ??
+    hdrItem.previewUrl ??
       selectedExposure?.previewUrl ??
-      hdrItem.previewUrl ??
       hdrItem.exposures[0]?.previewUrl ??
+      hdrItem.resultUrl ??
       null
   );
 }
@@ -2520,6 +2520,7 @@ function App() {
   const createFileInputRef = useRef<HTMLInputElement | null>(null);
   const resultCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const resultLayoutSnapshotRef = useRef<Record<string, DOMRect>>({});
+  const hdrExposureSwipeRef = useRef<{ hdrItemId: string; startX: number; startY: number } | null>(null);
   const resultCropDragRef = useRef<ResultCropDragState | null>(null);
   const resultCropFrameDragRef = useRef<ResultCropFrameDragState | null>(null);
   const resultCanvasRef = useRef<HTMLDivElement | null>(null);
@@ -4886,6 +4887,25 @@ function App() {
     }
   }
 
+  function handleHdrExposureSwipeStart(hdrItem: HdrItem, event: ReactPointerEvent<HTMLElement>) {
+    if (hdrItem.exposures.length <= 1) return;
+    hdrExposureSwipeRef.current = {
+      hdrItemId: hdrItem.id,
+      startX: event.clientX,
+      startY: event.clientY
+    };
+  }
+
+  function handleHdrExposureSwipeEnd(hdrItem: HdrItem, event: ReactPointerEvent<HTMLElement>) {
+    const swipe = hdrExposureSwipeRef.current;
+    hdrExposureSwipeRef.current = null;
+    if (!swipe || swipe.hdrItemId !== hdrItem.id || hdrItem.exposures.length <= 1) return;
+    const deltaX = event.clientX - swipe.startX;
+    const deltaY = event.clientY - swipe.startY;
+    if (Math.abs(deltaX) < 36 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+    void handleShiftExposure(hdrItem, deltaX < 0 ? 1 : -1);
+  }
+
   async function handleStartProcessing(options: { retryFailed?: boolean } = {}) {
     if (!currentProject) return;
     if (!workspaceHdrItems.length) {
@@ -6983,12 +7003,20 @@ function App() {
                                       }${hdrItemCompleted ? ' is-completed' : ''}${hdrItemFailed ? ' is-error' : ''}`}
                                     >
                                       <div
-                                        className={`asset-frame${showProcessingGroupGrid && previewUrl ? ' is-clickable' : ''}`}
-                                        onClick={
-                                          showProcessingGroupGrid && previewUrl
-                                            ? () => window.open(previewUrl, '_blank', 'noopener,noreferrer')
+                                        className="asset-frame"
+                                        onPointerDown={
+                                          showAssetReviewControls && hdrItem.exposures.length > 1
+                                            ? (event) => handleHdrExposureSwipeStart(hdrItem, event)
                                             : undefined
                                         }
+                                        onPointerUp={
+                                          showAssetReviewControls && hdrItem.exposures.length > 1
+                                            ? (event) => handleHdrExposureSwipeEnd(hdrItem, event)
+                                            : undefined
+                                        }
+                                        onPointerCancel={() => {
+                                          hdrExposureSwipeRef.current = null;
+                                        }}
                                       >
                                         {previewUrl ? (
                                           <img src={previewUrl} alt={hdrItem.title} loading="lazy" decoding="async" />
@@ -7016,10 +7044,22 @@ function App() {
                                         )}
                                         {hdrItem.exposures.length > 1 && showAssetReviewControls && (
                                           <>
-                                            <button className="viewer-arrow left" type="button" onClick={() => void handleShiftExposure(hdrItem, -1)}>
+                                            <button
+                                              className="viewer-arrow left"
+                                              type="button"
+                                              onPointerDown={(event) => event.stopPropagation()}
+                                              onPointerUp={(event) => event.stopPropagation()}
+                                              onClick={() => void handleShiftExposure(hdrItem, -1)}
+                                            >
                                               {'<'}
                                             </button>
-                                            <button className="viewer-arrow right" type="button" onClick={() => void handleShiftExposure(hdrItem, 1)}>
+                                            <button
+                                              className="viewer-arrow right"
+                                              type="button"
+                                              onPointerDown={(event) => event.stopPropagation()}
+                                              onPointerUp={(event) => event.stopPropagation()}
+                                              onClick={() => void handleShiftExposure(hdrItem, 1)}
+                                            >
                                               {'>'}
                                             </button>
                                           </>

@@ -693,8 +693,8 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
-.asset-frame.is-clickable {
-  cursor: zoom-in;
+.asset-frame {
+  touch-action: pan-y;
 }
 
 .demo-shell .asset-card,
