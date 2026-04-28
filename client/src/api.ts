@@ -391,6 +391,16 @@ async function readErrorMessage(response: Response) {
   }
 }
 
+export class ApiRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+  }
+}
+
 async function jsonRequest<T>(requestPath: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_ROOT}${requestPath}`, {
     credentials: 'include',
@@ -399,7 +409,7 @@ async function jsonRequest<T>(requestPath: string, init?: RequestInit): Promise<
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
+    throw new ApiRequestError(await readErrorMessage(response), response.status);
   }
 
   const payload = (await response.json()) as T;

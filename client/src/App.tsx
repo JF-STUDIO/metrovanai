@@ -22,6 +22,7 @@ import {
   type LocalImportDraft
 } from './local-import';
 import {
+  ApiRequestError,
   confirmEmailVerification,
   confirmCheckoutSession,
   confirmPasswordReset,
@@ -1715,6 +1716,17 @@ function getUserFacingErrorMessage(error: unknown, fallback: string, locale: UiL
   }
 
   return normalized;
+}
+
+function isInsufficientCreditsError(error: unknown) {
+  if (error instanceof ApiRequestError && error.status === 402) {
+    return true;
+  }
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes('insufficient credits') || message.includes('required points') || message.includes('积分不足');
 }
 
 function getAuthErrorMessage(error: unknown, mode: AuthMode, locale: UiLocale) {
@@ -4931,6 +4943,11 @@ function App() {
       setUploadMode(null);
       setUploadPercent(0);
       setUploadSnapshot(null);
+      if (isInsufficientCreditsError(error)) {
+        setBillingModalMode('topup');
+        setBillingOpen(false);
+        openRecharge();
+      }
       setMessage(getUserFacingErrorMessage(error, copy.startProcessingFailed, locale));
     } finally {
       setBusy(false);
