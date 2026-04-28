@@ -6514,15 +6514,6 @@ function App() {
             </span>
           </button>
           <div className="header-actions">
-            {!isDemoMode && (
-              <button
-                className="studio-new-project-trigger"
-                type="button"
-                onClick={returnToStudioFeatureCards}
-              >
-                {copy.newProject}
-              </button>
-            )}
             <div className="points-pill">
               <span className="points-pill-label">{copy.points}</span>
               <strong className="points-pill-value">{isDemoMode ? '42.5' : billingSummary?.availablePoints ?? 0}</strong>
