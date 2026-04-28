@@ -1051,6 +1051,13 @@ function getPublicJobDetail(job: ProjectJobState, status: PublicJobStatus) {
     return '部分照片暂时未能完成，请检查后重试。';
   }
 
+  if ((job.phase as string) === 'hdr_merging') {
+    return '正在合成并准备照片。';
+  }
+  if ((job.phase as string) === 'workflow_uploading') {
+    return '正在提交照片，请稍候。';
+  }
+
   const realtime = job.workflowRealtime;
   if (realtime?.total) {
     const finished = realtime.returned + realtime.failed;
@@ -1066,12 +1073,6 @@ function getPublicJobDetail(job: ProjectJobState, status: PublicJobStatus) {
 
   if (status === 'pending') {
     return '系统正在准备当前任务。';
-  }
-  if (job.phase === 'hdr_merging') {
-    return '正在合成并准备照片。';
-  }
-  if (job.phase === 'workflow_uploading') {
-    return '正在提交照片，请稍候。';
   }
   if (job.phase === 'workflow_running') {
     return '照片正在处理中，完成后会自动显示结果。';
