@@ -964,14 +964,14 @@
 
 .studio-feature-after {
   animation: studioFeatureReveal 5.8s ease-in-out infinite;
-  clip-path: inset(0 0 0 48%);
+  clip-path: inset(0 100% 0 0);
 }
 
 .studio-feature-scanline {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 52%;
+  left: 0%;
   width: 2px;
   background: linear-gradient(180deg, transparent, rgba(147, 233, 255, 0.9), transparent);
   box-shadow: 0 0 24px rgba(147, 233, 255, 0.78);
@@ -1267,25 +1267,29 @@
 }
 
 @keyframes studioFeatureReveal {
-  0%,
-  38% {
-    clip-path: inset(0 0 0 60%);
+  0% {
+    clip-path: inset(0 100% 0 0);
   }
 
-  52%,
+  50% {
+    clip-path: inset(0 0 0 0);
+  }
+
   100% {
-    clip-path: inset(0 0 0 16%);
+    clip-path: inset(0 100% 0 0);
   }
 }
 
 @keyframes studioFeatureScan {
-  0%,
-  38% {
-    left: 40%;
+  0% {
+    left: 0%;
   }
 
-  52%,
+  50% {
+    left: 100%;
+  }
+
   100% {
-    left: 84%;
+    left: 0%;
   }
 }
