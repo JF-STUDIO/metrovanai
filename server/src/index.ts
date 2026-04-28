@@ -42,6 +42,7 @@ import {
   deleteProjectIncomingObjects,
   downloadDirectObjectToFile,
   getDirectObjectUploadCapabilities,
+  getObjectStorageMetadata,
   isDirectUploadKeyForProject,
   restoreObjectToFileIfAvailable
 } from './object-storage.js';
@@ -1521,11 +1522,11 @@ function collectDirectUploadManifestEntriesByName(stagingRoot: string) {
 }
 
 function parseDirectUploadCompleteConcurrency() {
-  const raw = Number(process.env.METROVAN_DIRECT_UPLOAD_COMPLETE_CONCURRENCY ?? 16);
+  const raw = Number(process.env.METROVAN_DIRECT_UPLOAD_COMPLETE_CONCURRENCY ?? 4);
   if (!Number.isFinite(raw) || raw <= 0) {
-    return 16;
+    return 4;
   }
-  return Math.max(1, Math.min(32, Math.round(raw)));
+  return Math.max(1, Math.min(8, Math.round(raw)));
 }
 
 function shouldStageDirectUploadObjectsLocally() {
@@ -1556,6 +1557,16 @@ async function runWithConcurrency<T>(items: T[], concurrency: number, handler: (
   }
 
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
+}
+
+async function assertDirectUploadObjectReady(input: { storageKey: string; expectedSize: number }) {
+  const metadata = await getObjectStorageMetadata(input.storageKey);
+  if (!metadata) {
+    throw new Error('Uploaded object was not found. Please retry the failed upload.');
+  }
+  if (metadata.size !== null && metadata.size !== input.expectedSize) {
+    throw new Error('Uploaded object size does not match the selected file. Please retry the failed upload.');
+  }
 }
 
 function trimObjectStoragePrefix(value: string | undefined, fallback: string) {
@@ -1848,7 +1859,7 @@ const downloadRequestSchema = z.object({
   folderMode: z.enum(['grouped', 'flat']).optional(),
   namingMode: z.enum(['original', 'sequence', 'custom-prefix']).optional(),
   customPrefix: z.string().trim().max(40).optional(),
-  variants: z.array(downloadVariantSchema).min(1).optional()
+  variants: z.array(downloadVariantSchema).min(1).max(5).optional()
 });
 
 const topUpSchema = z.object({
@@ -3680,8 +3691,9 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
     return;
   }
 
+  let directUploadConfig: ReturnType<typeof assertDirectObjectUploadConfigured>;
   try {
-    assertDirectObjectUploadConfigured();
+    directUploadConfig = assertDirectObjectUploadConfigured();
   } catch {
     res.status(501).json({ error: 'Direct upload is not configured.' });
     return;
@@ -3708,6 +3720,9 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
       if (!isSupportedUploadFileName(file.originalName)) {
         throw new Error('Only RAW and JPG files are supported.');
       }
+      if (file.size > directUploadConfig.maxFileBytes) {
+        throw new Error('File is too large for direct upload.');
+      }
       if (
         !isDirectUploadKeyForProject({
           userKey: user.userKey,
@@ -3730,6 +3745,10 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
         storageKey: file.storageKey,
         localPath: targetPath
       };
+    });
+
+    await runWithConcurrency(downloadInputs, parseDirectUploadCompleteConcurrency(), async (file) => {
+      await assertDirectUploadObjectReady({ storageKey: file.storageKey, expectedSize: file.size });
     });
 
     const shouldDownloadToLocalStaging = shouldStageDirectUploadObjectsLocally();

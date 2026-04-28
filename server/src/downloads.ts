@@ -206,6 +206,7 @@ type DownloadAsset = ProjectRecord['resultAssets'][number];
 type PreparedDownloadSource = {
   stream: AsyncIterable<Buffer | Uint8Array | string>;
   mtime: Date;
+  cleanup?: () => void;
 };
 
 async function prepareAssetDownloadSource(
@@ -237,7 +238,10 @@ async function prepareAssetDownloadSource(
     await writeJpegVariant(asset.storagePath, variantPath, 95, resize);
     return {
       stream: fs.createReadStream(variantPath),
-      mtime: fs.statSync(asset.storagePath).mtime
+      mtime: fs.statSync(asset.storagePath).mtime,
+      cleanup: () => {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
     };
   }
 
@@ -364,13 +368,17 @@ export async function streamProjectDownloadArchive(
           .split(path.sep)
           .join('/');
 
-        await writeZipStreamEntry({
-          writer,
-          centralChunks,
-          relativeName,
-          mtime: source.mtime,
-          source: source.stream
-        });
+        try {
+          await writeZipStreamEntry({
+            writer,
+            centralChunks,
+            relativeName,
+            mtime: source.mtime,
+            source: source.stream
+          });
+        } finally {
+          source.cleanup?.();
+        }
         writtenEntries += 1;
       }
     }

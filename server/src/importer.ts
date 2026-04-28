@@ -282,7 +282,7 @@ function createExposureFromFrontendMetadata(input: {
   const originalName = path.basename(input.exposure.originalName || input.fallbackOriginalName || 'source');
   const fileName = path.basename(input.exposure.fileName || originalName);
   const manifestEntry = takeDirectUploadManifestEntry(originalName, input.directUploadKeys);
-  const storageKey = input.exposure.storageKey ?? manifestEntry?.storageKey ?? undefined;
+  const storageKey = manifestEntry?.storageKey ?? undefined;
   const dirs = input.store.ensureProjectDirectories(input.project);
   const localPath =
     manifestEntry?.localPath ??
@@ -298,10 +298,10 @@ function createExposureFromFrontendMetadata(input: {
     originalName,
     extension,
     mimeType:
-      input.exposure.mimeType ||
       manifestEntry?.mimeType ||
+      input.exposure.mimeType ||
       (isRawExtension(extension) ? 'image/x-raw' : 'image/jpeg'),
-    size: input.exposure.size ?? manifestEntry?.size ?? 1,
+    size: manifestEntry?.size ?? input.exposure.size ?? 1,
     isRaw: input.exposure.isRaw ?? isRawExtension(extension),
     storageKey,
     storagePath: localPath,

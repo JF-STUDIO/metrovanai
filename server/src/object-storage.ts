@@ -198,7 +198,12 @@ function getSigningKey(config: ObjectStorageConfig, dateStamp: string) {
   return hmac(serviceKey, 'aws4_request');
 }
 
-function createPresignedUrl(config: ObjectStorageConfig, method: 'GET' | 'PUT' | 'DELETE', key: string, expiresSeconds: number) {
+function createPresignedUrl(
+  config: ObjectStorageConfig,
+  method: 'GET' | 'PUT' | 'DELETE' | 'HEAD',
+  key: string,
+  expiresSeconds: number
+) {
   const now = new Date();
   const amzDate = toAmzDate(now);
   const dateStamp = amzDate.slice(0, 8);
@@ -226,7 +231,7 @@ function createPresignedUrl(config: ObjectStorageConfig, method: 'GET' | 'PUT' |
 
 function createSignedHeaderRequest(
   config: ObjectStorageConfig,
-  method: 'GET',
+  method: 'GET' | 'HEAD',
   url: URL,
   canonicalQuery: string
 ): { headers: Record<string, string> } {
@@ -310,6 +315,33 @@ export async function listObjectStorageKeysByPrefix(prefix: string) {
   } while (continuationToken);
 
   return keys;
+}
+
+export async function getObjectStorageMetadata(storageKey: string) {
+  const config = getObjectStorageConfig();
+  if (!config || !isConfiguredObjectStorageKey(storageKey)) {
+    return null;
+  }
+
+  const url = getObjectUrl(config, normalizeStorageKey(storageKey));
+  const canonicalQuery = '';
+  const signed = createSignedHeaderRequest(config, 'HEAD', url, canonicalQuery);
+  const response = await fetch(url, { method: 'HEAD', headers: signed.headers });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Object metadata lookup failed: ${response.status}`);
+  }
+
+  const size = Number(response.headers.get('content-length') ?? '');
+  return {
+    storageKey: normalizeStorageKey(storageKey),
+    size: Number.isFinite(size) && size >= 0 ? size : null,
+    contentType: response.headers.get('content-type'),
+    etag: response.headers.get('etag'),
+    lastModified: response.headers.get('last-modified')
+  };
 }
 
 function buildIncomingProjectPrefix(

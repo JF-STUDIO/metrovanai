@@ -312,11 +312,16 @@ export interface AuthProvidersPayload {
 
 const MAX_UPLOAD_BATCH_BYTES = 40 * 1024 * 1024;
 const MAX_UPLOAD_BATCH_FILES = 16;
-const MAX_UPLOAD_CONCURRENT_BATCHES = 24;
+const MAX_UPLOAD_CONCURRENT_BATCHES = 4;
+const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 8;
+const DIRECT_OBJECT_UPLOAD_LARGE_FILE_CONCURRENCY = 6;
+const DIRECT_OBJECT_UPLOAD_HUGE_FILE_CONCURRENCY = 4;
 const MAX_UPLOAD_BATCH_RETRIES = 3;
 const UPLOAD_RETRY_BASE_DELAY_MS = 850;
 const UPLOAD_RETRY_JITTER_MS = 650;
-const DIRECT_OBJECT_UPLOAD_TIMEOUT_MS = 8 * 60 * 1000;
+const DIRECT_OBJECT_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
+const LARGE_DIRECT_OBJECT_FILE_BYTES = 80 * 1024 * 1024;
+const HUGE_DIRECT_OBJECT_FILE_BYTES = 200 * 1024 * 1024;
 
 function extractErrorMessage(input: unknown): string | null {
   if (typeof input === 'string') {
@@ -1044,6 +1049,17 @@ async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProg
   return { project: latestProject };
 }
 
+function getDirectObjectUploadConcurrency(files: File[]) {
+  const maxFileBytes = files.reduce((max, file) => Math.max(max, file.size), 0);
+  if (maxFileBytes >= HUGE_DIRECT_OBJECT_FILE_BYTES) {
+    return DIRECT_OBJECT_UPLOAD_HUGE_FILE_CONCURRENCY;
+  }
+  if (maxFileBytes >= LARGE_DIRECT_OBJECT_FILE_BYTES) {
+    return DIRECT_OBJECT_UPLOAD_LARGE_FILE_CONCURRENCY;
+  }
+  return DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY;
+}
+
 async function uploadFilesViaDirectObject(projectId: string, files: File[], onProgress: UploadProgressHandler) {
   onProgress(1, {
     stage: 'preparing',
@@ -1120,7 +1136,7 @@ async function uploadFilesViaDirectObject(projectId: string, files: File[], onPr
     }
   }
 
-  const workerCount = Math.min(MAX_UPLOAD_CONCURRENT_BATCHES, files.length);
+  const workerCount = Math.min(getDirectObjectUploadConcurrency(files), files.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   onProgress(96, {
