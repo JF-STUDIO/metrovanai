@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
 import { writeJpegVariant } from './images.js';
 import { restoreObjectToFileIfAvailable } from './object-storage.js';
 import type { ProjectRecord } from './types.js';
@@ -53,10 +54,19 @@ export async function buildProjectDownloadArchive(project: ProjectRecord, input?
 
     for (const [index, asset] of orderedAssets.entries()) {
       if (!fs.existsSync(asset.storagePath)) {
-        await restoreObjectToFileIfAvailable(asset.storageKey, asset.storagePath);
+        try {
+          await restoreObjectToFileIfAvailable(asset.storageKey, asset.storagePath);
+        } catch (error) {
+          console.warn(
+            `[download] result restore failed: project=${project.id} asset=${asset.id} key=${asset.storageKey ?? 'none'} ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
       }
 
       if (!fs.existsSync(asset.storagePath)) {
+        console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
         continue;
       }
 
@@ -70,11 +80,17 @@ export async function buildProjectDownloadArchive(project: ProjectRecord, input?
         addVariantSuffix
       });
       const targetPath = path.join(variantFolder, targetFileName);
-      await writeJpegVariant(asset.storagePath, targetPath, 95, resolveVariantResize(variant));
+      const resize = resolveVariantResize(variant);
+      if (!resize) {
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.copyFileSync(asset.storagePath, targetPath);
+      } else {
+        await writeJpegVariant(asset.storagePath, targetPath, 95, resize);
+      }
     }
   }
 
-  writeZipArchive(stagingRoot, zipPath, baseName);
+  await writeZipArchive(stagingRoot, zipPath, baseName);
 
   return {
     zipPath,
@@ -91,11 +107,14 @@ for (let index = 0; index < crc32Table.length; index += 1) {
   crc32Table[index] = value >>> 0;
 }
 
-function crc32(buffer: Buffer) {
-  let value = 0xffffffff;
+function crc32Update(value: number, buffer: Buffer) {
   for (const byte of buffer) {
     value = crc32Table[(value ^ byte) & 0xff] ^ (value >>> 8);
   }
+  return value >>> 0;
+}
+
+function crc32Finalize(value: number) {
   return (value ^ 0xffffffff) >>> 0;
 }
 
@@ -128,7 +147,51 @@ function assertZip32Limit(value: number, label: string) {
   }
 }
 
-function writeZipArchive(sourceRoot: string, zipPath: string, rootFolderName: string) {
+class ZipWriteCursor {
+  offset = 0;
+
+  constructor(private readonly output: fs.WriteStream) {}
+
+  async write(chunk: Buffer) {
+    if (!this.output.write(chunk)) {
+      await once(this.output, 'drain');
+    }
+    this.offset += chunk.length;
+  }
+
+  async copyFromFile(filePath: string) {
+    for await (const chunk of fs.createReadStream(filePath)) {
+      await this.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+  }
+
+  async close() {
+    const finished = once(this.output, 'finish');
+    const failed = once(this.output, 'error').then(([error]) => {
+      throw error;
+    });
+    this.output.end();
+    await Promise.race([finished, failed]);
+  }
+}
+
+async function calculateFileChecksum(filePath: string) {
+  let value = 0xffffffff;
+  let size = 0;
+
+  for await (const chunk of fs.createReadStream(filePath)) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    value = crc32Update(value, buffer);
+  }
+
+  return {
+    checksum: crc32Finalize(value),
+    size
+  };
+}
+
+async function writeZipArchive(sourceRoot: string, zipPath: string, rootFolderName: string) {
   const files = listFiles(sourceRoot);
   if (!files.length) {
     throw new Error('No files were prepared for download.');
@@ -137,79 +200,90 @@ function writeZipArchive(sourceRoot: string, zipPath: string, rootFolderName: st
     throw new Error('Too many files for a single download archive.');
   }
 
-  const localChunks: Buffer[] = [];
+  const output = fs.createWriteStream(zipPath, { flags: 'wx' });
+  const writer = new ZipWriteCursor(output);
   const centralChunks: Buffer[] = [];
-  let offset = 0;
 
-  for (const filePath of files) {
-    const data = fs.readFileSync(filePath);
-    const relativeName = path
-      .join(rootFolderName, path.relative(sourceRoot, filePath))
-      .split(path.sep)
-      .join('/');
-    const name = Buffer.from(relativeName, 'utf8');
-    const stats = fs.statSync(filePath);
-    const { dosTime, dosDate } = toDosDateTime(stats.mtime);
-    const checksum = crc32(data);
+  try {
+    for (const filePath of files) {
+      const relativeName = path
+        .join(rootFolderName, path.relative(sourceRoot, filePath))
+        .split(path.sep)
+        .join('/');
+      const name = Buffer.from(relativeName, 'utf8');
+      const stats = fs.statSync(filePath);
+      const { dosTime, dosDate } = toDosDateTime(stats.mtime);
+      const { checksum, size } = await calculateFileChecksum(filePath);
+      const offset = writer.offset;
 
-    assertZip32Limit(data.length, relativeName);
-    assertZip32Limit(offset, `${relativeName} offset`);
+      assertZip32Limit(size, relativeName);
+      assertZip32Limit(offset, `${relativeName} offset`);
 
-    const localHeader = Buffer.alloc(30 + name.length);
-    localHeader.writeUInt32LE(0x04034b50, 0);
-    localHeader.writeUInt16LE(20, 4);
-    localHeader.writeUInt16LE(0x0800, 6);
-    localHeader.writeUInt16LE(0, 8);
-    localHeader.writeUInt16LE(dosTime, 10);
-    localHeader.writeUInt16LE(dosDate, 12);
-    localHeader.writeUInt32LE(checksum, 14);
-    localHeader.writeUInt32LE(data.length, 18);
-    localHeader.writeUInt32LE(data.length, 22);
-    localHeader.writeUInt16LE(name.length, 26);
-    localHeader.writeUInt16LE(0, 28);
-    name.copy(localHeader, 30);
+      const localHeader = Buffer.alloc(30 + name.length);
+      localHeader.writeUInt32LE(0x04034b50, 0);
+      localHeader.writeUInt16LE(20, 4);
+      localHeader.writeUInt16LE(0x0800, 6);
+      localHeader.writeUInt16LE(0, 8);
+      localHeader.writeUInt16LE(dosTime, 10);
+      localHeader.writeUInt16LE(dosDate, 12);
+      localHeader.writeUInt32LE(checksum, 14);
+      localHeader.writeUInt32LE(size, 18);
+      localHeader.writeUInt32LE(size, 22);
+      localHeader.writeUInt16LE(name.length, 26);
+      localHeader.writeUInt16LE(0, 28);
+      name.copy(localHeader, 30);
 
-    const centralHeader = Buffer.alloc(46 + name.length);
-    centralHeader.writeUInt32LE(0x02014b50, 0);
-    centralHeader.writeUInt16LE(20, 4);
-    centralHeader.writeUInt16LE(20, 6);
-    centralHeader.writeUInt16LE(0x0800, 8);
-    centralHeader.writeUInt16LE(0, 10);
-    centralHeader.writeUInt16LE(dosTime, 12);
-    centralHeader.writeUInt16LE(dosDate, 14);
-    centralHeader.writeUInt32LE(checksum, 16);
-    centralHeader.writeUInt32LE(data.length, 20);
-    centralHeader.writeUInt32LE(data.length, 24);
-    centralHeader.writeUInt16LE(name.length, 28);
-    centralHeader.writeUInt16LE(0, 30);
-    centralHeader.writeUInt16LE(0, 32);
-    centralHeader.writeUInt16LE(0, 34);
-    centralHeader.writeUInt16LE(0, 36);
-    centralHeader.writeUInt32LE(0, 38);
-    centralHeader.writeUInt32LE(offset, 42);
-    name.copy(centralHeader, 46);
+      const centralHeader = Buffer.alloc(46 + name.length);
+      centralHeader.writeUInt32LE(0x02014b50, 0);
+      centralHeader.writeUInt16LE(20, 4);
+      centralHeader.writeUInt16LE(20, 6);
+      centralHeader.writeUInt16LE(0x0800, 8);
+      centralHeader.writeUInt16LE(0, 10);
+      centralHeader.writeUInt16LE(dosTime, 12);
+      centralHeader.writeUInt16LE(dosDate, 14);
+      centralHeader.writeUInt32LE(checksum, 16);
+      centralHeader.writeUInt32LE(size, 20);
+      centralHeader.writeUInt32LE(size, 24);
+      centralHeader.writeUInt16LE(name.length, 28);
+      centralHeader.writeUInt16LE(0, 30);
+      centralHeader.writeUInt16LE(0, 32);
+      centralHeader.writeUInt16LE(0, 34);
+      centralHeader.writeUInt16LE(0, 36);
+      centralHeader.writeUInt32LE(0, 38);
+      centralHeader.writeUInt32LE(offset, 42);
+      name.copy(centralHeader, 46);
 
-    localChunks.push(localHeader, data);
-    centralChunks.push(centralHeader);
-    offset += localHeader.length + data.length;
+      await writer.write(localHeader);
+      await writer.copyFromFile(filePath);
+      centralChunks.push(centralHeader);
+    }
+
+    const centralOffset = writer.offset;
+    const centralSize = centralChunks.reduce((total, chunk) => total + chunk.length, 0);
+    assertZip32Limit(centralOffset, 'central directory offset');
+    assertZip32Limit(centralSize, 'central directory size');
+
+    for (const centralHeader of centralChunks) {
+      await writer.write(centralHeader);
+    }
+
+    const endRecord = Buffer.alloc(22);
+    endRecord.writeUInt32LE(0x06054b50, 0);
+    endRecord.writeUInt16LE(0, 4);
+    endRecord.writeUInt16LE(0, 6);
+    endRecord.writeUInt16LE(files.length, 8);
+    endRecord.writeUInt16LE(files.length, 10);
+    endRecord.writeUInt32LE(centralSize, 12);
+    endRecord.writeUInt32LE(centralOffset, 16);
+    endRecord.writeUInt16LE(0, 20);
+
+    await writer.write(endRecord);
+    await writer.close();
+  } catch (error) {
+    output.destroy();
+    fs.rmSync(zipPath, { force: true });
+    throw error;
   }
-
-  const centralOffset = offset;
-  const centralSize = centralChunks.reduce((total, chunk) => total + chunk.length, 0);
-  assertZip32Limit(centralOffset, 'central directory offset');
-  assertZip32Limit(centralSize, 'central directory size');
-
-  const endRecord = Buffer.alloc(22);
-  endRecord.writeUInt32LE(0x06054b50, 0);
-  endRecord.writeUInt16LE(0, 4);
-  endRecord.writeUInt16LE(0, 6);
-  endRecord.writeUInt16LE(files.length, 8);
-  endRecord.writeUInt16LE(files.length, 10);
-  endRecord.writeUInt32LE(centralSize, 12);
-  endRecord.writeUInt32LE(centralOffset, 16);
-  endRecord.writeUInt16LE(0, 20);
-
-  fs.writeFileSync(zipPath, Buffer.concat([...localChunks, ...centralChunks, endRecord]));
 }
 
 function normalizeDownloadOptions(input?: ProjectDownloadOptions): ProjectDownloadOptions {

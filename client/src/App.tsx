@@ -5061,15 +5061,26 @@ function App() {
     });
   }
 
-  function downloadViewerAsset(asset: ResultAsset) {
+  async function downloadViewerAsset(asset: ResultAsset) {
     const url = resolveMediaUrl(asset.storageUrl);
     if (!url) return;
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = asset.fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+    try {
+      const response = await fetch(url, { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = asset.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      setMessage(getUserFacingErrorMessage(error, copy.downloadFailed, locale));
+    }
   }
 
   function shiftViewer(direction: -1 | 1) {
@@ -7352,7 +7363,7 @@ function App() {
                 <button className="result-editor-deliver" type="button" onClick={() => setResultViewerIndex(null)}>
                   Deliver
                 </button>
-                <button className="result-editor-icon-button" type="button" onClick={() => downloadViewerAsset(currentViewerAsset)}>
+                <button className="result-editor-icon-button" type="button" onClick={() => void downloadViewerAsset(currentViewerAsset)}>
                   ↓
                 </button>
                 <button
