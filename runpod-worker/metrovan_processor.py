@@ -35,6 +35,7 @@ RAW_EXTENSIONS = {
 }
 JPEG_EXTENSIONS = {".jpg", ".jpeg"}
 HDR_LONG_EDGE = 3000
+RAW_WB_SEARCH_LONG_EDGE = 900
 
 
 def env(name: str, default: str = "") -> str:
@@ -404,8 +405,27 @@ def download_source(source: dict[str, Any], index: int, target_dir: Path) -> Pat
     return target
 
 
+def parse_rawtherapee_wb_mode(mode: str) -> tuple[str, int, float]:
+    normalized = (mode or "camera").strip()
+    if normalized.lower().startswith("custom:"):
+        parts = normalized.split(":")
+        if len(parts) >= 3:
+            try:
+                temperature = int(round(float(parts[1])))
+                green = float(parts[2])
+                return "Custom", max(2500, min(9000, temperature)), max(0.75, min(1.35, green))
+            except ValueError:
+                pass
+        return "Custom", 5000, 1.0
+    return ("Camera" if normalized == "camera" else normalized), 5000, 1.0
+
+
+def custom_raw_wb_mode(temperature: int, green: float) -> str:
+    return f"custom:{int(round(temperature))}:{green:.4f}"
+
+
 def build_rawtherapee_profile(mode: str, resize_long_edge: int = HDR_LONG_EDGE, lcp_profile: Path | None = None) -> str:
-    setting = "Camera" if mode == "camera" else mode
+    setting, temperature, green = parse_rawtherapee_wb_mode(mode)
     lens_profile_lines = [
         "[LensProfile]",
         "LcMode=lcp" if lcp_profile else "LcMode=lfauto",
@@ -437,8 +457,8 @@ def build_rawtherapee_profile(mode: str, resize_long_edge: int = HDR_LONG_EDGE, 
             "[White Balance]",
             "Enabled=true",
             f"Setting={setting}",
-            "Temperature=5000",
-            "Green=1",
+            f"Temperature={temperature}",
+            f"Green={green}",
             "Equal=1",
             "TemperatureBias=0",
             "StandardObserver=TWO_DEGREES",
@@ -749,7 +769,84 @@ def apply_image_adjustments(
     output.save(destination_path, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
 
 
-def prepare_inputs(exposures: list[dict[str, Any]], source_paths: dict[str, Path], work_dir: Path) -> tuple[list[Path], dict[str, Any], Path | None]:
+def score_rgb_grey_target(target_path: Path, candidate_path: Path) -> float:
+    target = load_rgb(target_path)
+    candidate = load_rgb(candidate_path)
+    if candidate.shape != target.shape:
+        candidate_image = Image.fromarray(np.clip(candidate * 255.0, 0, 255).astype(np.uint8), mode="RGB")
+        candidate_image = candidate_image.resize((target.shape[1], target.shape[0]), Image.Resampling.BILINEAR)
+        candidate = np.asarray(candidate_image, dtype=np.float32) / 255.0
+
+    target_luma = luminance(target)
+    target_max = target.max(axis=2)
+    mask = (target_luma > 0.08) & (target_luma < 0.76) & (target_max < 0.94)
+    if np.count_nonzero(mask) < 500:
+        mask = (target_luma > 0.05) & (target_luma < 0.9)
+    if np.count_nonzero(mask) == 0:
+        mask = np.ones(target.shape[:2], dtype=bool)
+
+    return float(np.mean(np.abs(candidate[mask] - target[mask])))
+
+
+def evaluate_raw_wb_candidates(
+    source: Path,
+    target_path: Path,
+    candidates: list[tuple[int, float]],
+    search_dir: Path,
+    scores: dict[tuple[int, float], tuple[float, Path]],
+) -> tuple[int, float, float]:
+    best: tuple[int, float, float] | None = None
+    for temperature, green in candidates:
+        key = (int(round(temperature)), round(float(green), 4))
+        if key not in scores:
+            candidate_path = search_dir / f"custom-{key[0]}k-g{key[1]:.4f}.jpg"
+            render_raw_to_jpeg(source, candidate_path, 90, custom_raw_wb_mode(key[0], key[1]), RAW_WB_SEARCH_LONG_EDGE)
+            scores[key] = (score_rgb_grey_target(target_path, candidate_path), candidate_path)
+        score = scores[key][0]
+        if best is None or score < best[2]:
+            best = (key[0], key[1], score)
+    if best is None:
+        raise RuntimeError("No RAW white-balance candidates were evaluated.")
+    return best
+
+
+def estimate_raw_rgb_grey_wb_mode(source: Path, work_dir: Path) -> str:
+    search_dir = work_dir / f"raw-wb-{source.stem}"
+    search_dir.mkdir(parents=True, exist_ok=True)
+    camera_path = search_dir / "camera.jpg"
+    auto_path = search_dir / "autold.jpg"
+    target_path = search_dir / "rgb-grey-target.jpg"
+
+    render_raw_to_jpeg(source, camera_path, 90, "camera", RAW_WB_SEARCH_LONG_EDGE)
+    render_raw_to_jpeg(source, auto_path, 90, "autold", RAW_WB_SEARCH_LONG_EDGE)
+    gains = estimate_rgb_gains(camera_path, auto_path)
+    if not gains:
+        return "camera"
+    apply_image_adjustments(camera_path, target_path, 90, gains, None)
+
+    scores: dict[tuple[int, float], tuple[float, Path]] = {}
+    coarse = [(temperature, green) for temperature in (4200, 4600, 5000, 5400, 5800) for green in (0.98, 1.03, 1.08)]
+    best_temperature, best_green, _ = evaluate_raw_wb_candidates(source, target_path, coarse, search_dir, scores)
+    refine = [
+        (max(2500, min(9000, best_temperature + delta_temperature)), max(0.75, min(1.35, best_green + delta_green)))
+        for delta_temperature in (-200, -100, 0, 100, 200)
+        for delta_green in (-0.03, 0.0, 0.03)
+    ]
+    best_temperature, best_green, best_score = evaluate_raw_wb_candidates(source, target_path, refine, search_dir, scores)
+    print(
+        "RAW RGB grey WB selected for "
+        f"{source.name}: Temperature={best_temperature} Green={best_green:.4f} score={best_score:.5f}",
+        flush=True,
+    )
+    return custom_raw_wb_mode(best_temperature, best_green)
+
+
+def prepare_inputs(
+    exposures: list[dict[str, Any]],
+    source_paths: dict[str, Path],
+    work_dir: Path,
+    raw_wb_mode: str = "camera",
+) -> tuple[list[Path], dict[str, Any], Path | None]:
     inputs_dir = work_dir / "prepared"
     inputs_dir.mkdir(parents=True, exist_ok=True)
     reference = pick_reference(exposures)
@@ -760,7 +857,7 @@ def prepare_inputs(exposures: list[dict[str, Any]], source_paths: dict[str, Path
         source = source_paths[str(exposure.get("id"))]
         prepared_path = inputs_dir / f"{index:04d}_{source.stem}.jpg"
         if is_raw(source):
-            render_raw_to_jpeg(source, prepared_path, 95, "camera", HDR_LONG_EDGE)
+            render_raw_to_jpeg(source, prepared_path, 95, raw_wb_mode, HDR_LONG_EDGE)
         else:
             convert_to_jpeg(source, prepared_path, 95, HDR_LONG_EDGE)
         if exposure is reference:
@@ -790,7 +887,7 @@ def apply_group_gains(prepared: list[Path], gains: dict[str, float], work_dir: P
     return adjusted
 
 
-def align_and_fuse(prepared: list[Path], output_path: Path, work_dir: Path, tone_target: Path | None, gains: dict[str, float] | None) -> None:
+def align_and_fuse(prepared: list[Path], output_path: Path, work_dir: Path) -> None:
     align_tool = TOOLS["align"]
     enfuse_tool = TOOLS["enfuse"]
     if not align_tool or not enfuse_tool:
@@ -816,8 +913,7 @@ def align_and_fuse(prepared: list[Path], output_path: Path, work_dir: Path, tone
     if result.returncode != 0 or not fused_tif.exists():
         raise RuntimeError(f"enfuse failed: {trim_error(result.stderr or result.stdout)}")
 
-    tone = estimate_tone_adjustments(fused_tif, tone_target, None) if tone_target and tone_target.exists() else None
-    apply_image_adjustments(fused_tif, output_path, 95, gains, tone)
+    apply_image_adjustments(fused_tif, output_path, 96, None, None)
 
 
 def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
@@ -846,28 +942,17 @@ def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
             exposure = normalized_exposures[0]
             source = source_paths[str(exposure.get("id"))]
             if is_raw(source):
-                camera = work_dir / "single-camera.jpg"
-                auto = work_dir / "single-auto.jpg"
-                render_raw_to_jpeg(source, camera, 95, "camera", HDR_LONG_EDGE)
-                render_raw_to_jpeg(source, auto, 95, "autold", HDR_LONG_EDGE)
-                gains = estimate_rgb_gains(camera, auto)
-                tone = estimate_tone_adjustments(camera, auto, gains)
-                apply_image_adjustments(camera, output_path, 95, gains, tone)
+                raw_wb_mode = estimate_raw_rgb_grey_wb_mode(source, work_dir)
+                render_raw_to_jpeg(source, output_path, 95, raw_wb_mode, HDR_LONG_EDGE)
             else:
                 convert_to_jpeg(source, output_path, 95, HDR_LONG_EDGE)
             return
 
-        prepared, reference, reference_prepared = prepare_inputs(normalized_exposures, source_paths, work_dir)
-        gains = estimate_group_gains(reference, source_paths, reference_prepared, work_dir) if reference_prepared else None
-        prepared_for_align = apply_group_gains(prepared, gains, work_dir) if gains else prepared
-
-        tone_target = None
+        reference = pick_reference(normalized_exposures)
         reference_source = source_paths[str(reference.get("id"))]
-        if is_raw(reference_source):
-            tone_target = work_dir / "reference-auto-tone.jpg"
-            render_raw_to_jpeg(reference_source, tone_target, 95, "autold", HDR_LONG_EDGE)
-
-        align_and_fuse(prepared_for_align, output_path, work_dir, tone_target, None)
+        raw_wb_mode = estimate_raw_rgb_grey_wb_mode(reference_source, work_dir) if is_raw(reference_source) else "camera"
+        prepared, _, _ = prepare_inputs(normalized_exposures, source_paths, work_dir, raw_wb_mode)
+        align_and_fuse(prepared, output_path, work_dir)
 
 
 def process_regenerate(input_payload: dict[str, Any], output_path: Path) -> None:
