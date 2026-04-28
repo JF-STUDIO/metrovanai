@@ -35,6 +35,7 @@ import {
   type TrashFileInput,
   type TrashRetentionCategory
 } from './storage.js';
+import { normalizeBillingPackages } from './billing-packages.js';
 import {
   createMetadataProvider,
   DEFAULT_RUNPOD_HDR_BATCH_SIZE,
@@ -89,6 +90,7 @@ function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): Sy
         Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : DEFAULT_RUNPOD_HDR_BATCH_SIZE
       )
     ),
+    billingPackages: normalizeBillingPackages(input?.billingPackages),
     studioFeatures: normalizeStudioFeatures(input?.studioFeatures)
   };
 }

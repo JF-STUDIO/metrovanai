@@ -272,6 +272,7 @@ export interface AdminActivationCodesPayload {
 
 export interface AdminSystemSettings {
   runpodHdrBatchSize: number;
+  billingPackages: BillingPackage[];
   studioFeatures: StudioFeatureConfig[];
 }
 

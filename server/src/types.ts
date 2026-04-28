@@ -274,6 +274,7 @@ export interface AuditLogEntry {
 
 export interface SystemSettings {
   runpodHdrBatchSize: number;
+  billingPackages: BillingPackage[];
   studioFeatures: StudioFeatureConfig[];
 }
 

@@ -3651,7 +3651,9 @@
 .admin-prototype .settings-row select,
 .admin-prototype .settings-row textarea,
 .admin-prototype .feature-admin-form input,
-.admin-prototype .feature-admin-form textarea {
+.admin-prototype .feature-admin-form textarea,
+.admin-prototype .admin-form-grid input,
+.admin-prototype .admin-form-grid select {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 12px;
@@ -3941,6 +3943,51 @@
   font-family: var(--display);
   font-size: 24px;
   font-weight: 600;
+}
+
+.admin-prototype .admin-inline-editor {
+  margin-bottom: 20px;
+}
+
+.admin-prototype .admin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px 22px;
+}
+
+.admin-prototype .admin-form-grid label {
+  display: grid;
+  gap: 7px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.admin-prototype .admin-form-grid input,
+.admin-prototype .admin-form-grid select {
+  width: 100%;
+  min-height: 38px;
+  font-size: 13px;
+}
+
+.admin-prototype .admin-check-field {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  align-self: end;
+}
+
+.admin-prototype .admin-check-field input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.admin-prototype .admin-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 16px 22px;
 }
 
 .admin-prototype .code-text,
@@ -4293,6 +4340,7 @@
 
   .admin-prototype .plans-grid,
   .admin-prototype .prompt-grid,
+  .admin-prototype .admin-form-grid,
   .admin-prototype .feature-admin-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4319,6 +4367,7 @@
   .admin-prototype .kpi-grid,
   .admin-prototype .code-grid,
   .admin-prototype .prompt-grid,
+  .admin-prototype .admin-form-grid,
   .admin-prototype .feature-admin-grid {
     grid-template-columns: 1fr;
   }

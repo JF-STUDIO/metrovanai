@@ -109,6 +109,133 @@ type StudioFeatureImageField = 'beforeImageUrl' | 'afterImageUrl';
 const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
 const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
 const LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY = 4;
+const ADMIN_POINT_PRICE_USD = 0.25;
+const ADMIN_MAX_BATCH_CODES = 100;
+
+interface AdminPlanDraft {
+  id: string;
+  name: string;
+  amountUsd: string;
+  points: string;
+  discountPercent: string;
+  listPriceUsd: string;
+}
+
+interface AdminBatchCodeDraft {
+  prefix: string;
+  count: string;
+  label: string;
+  packageId: string;
+  discountPercentOverride: string;
+  bonusPoints: string;
+  maxRedemptions: string;
+  expiresAt: string;
+  active: boolean;
+}
+
+function createAdminPlanDraft(plan?: BillingPackage, sequence = 1): AdminPlanDraft {
+  if (plan) {
+    return {
+      id: plan.id,
+      name: plan.name,
+      amountUsd: String(plan.amountUsd),
+      points: String(plan.points),
+      discountPercent: String(plan.discountPercent),
+      listPriceUsd: String(plan.listPriceUsd)
+    };
+  }
+
+  return {
+    id: `recharge-custom-${Date.now().toString(36)}`,
+    name: `Custom Recharge ${sequence}`,
+    amountUsd: '100',
+    points: String(Math.floor(100 / ADMIN_POINT_PRICE_USD)),
+    discountPercent: '0',
+    listPriceUsd: '100'
+  };
+}
+
+function createAdminBatchCodeDraft(packageId = ''): AdminBatchCodeDraft {
+  return {
+    prefix: 'METROVAN',
+    count: '10',
+    label: '批量兑换码',
+    packageId,
+    discountPercentOverride: '',
+    bonusPoints: '0',
+    maxRedemptions: '1',
+    expiresAt: '',
+    active: true
+  };
+}
+
+function normalizeAdminPlanId(input: string, amountUsd: number) {
+  const normalized = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return normalized || `recharge-${Math.round(amountUsd)}`;
+}
+
+function readPositiveAdminNumber(value: string, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function buildAdminPlanPackageFromDraft(draft: AdminPlanDraft): BillingPackage | null {
+  const amountUsd = Number(readPositiveAdminNumber(draft.amountUsd, 0).toFixed(2));
+  const points = Math.round(readPositiveAdminNumber(draft.points, 0));
+  if (!amountUsd || !points) {
+    return null;
+  }
+
+  const listPriceUsd = Number(readPositiveAdminNumber(draft.listPriceUsd, amountUsd).toFixed(2));
+  const discountPercent = Math.max(0, Math.min(100, Math.round(Number(draft.discountPercent) || 0)));
+  const basePoints = Math.max(1, Math.floor(amountUsd / ADMIN_POINT_PRICE_USD));
+  const bonusPoints = Math.max(0, points - basePoints);
+
+  return {
+    id: normalizeAdminPlanId(draft.id, amountUsd),
+    name: draft.name.trim() || `$${amountUsd.toFixed(0)} Recharge`,
+    points,
+    listPriceUsd,
+    amountUsd,
+    discountPercent,
+    pointPriceUsd: Number((amountUsd / points).toFixed(4)),
+    bonusPoints
+  };
+}
+
+function randomAdminCodePart(length: number) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const values =
+    typeof crypto !== 'undefined' && crypto.getRandomValues
+      ? crypto.getRandomValues(new Uint32Array(length))
+      : Array.from({ length }, () => Math.floor(Math.random() * alphabet.length));
+
+  return Array.from(values, (value) => alphabet[Number(value) % alphabet.length]).join('');
+}
+
+function buildUniqueAdminActivationCode(prefix: string, reserved: Set<string>) {
+  const normalizedPrefix = prefix
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'CODE';
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const code = `${normalizedPrefix}-${randomAdminCodePart(8)}`;
+    if (!reserved.has(code)) {
+      reserved.add(code);
+      return code;
+    }
+  }
+
+  const fallback = `${normalizedPrefix}-${Date.now().toString(36).toUpperCase()}-${randomAdminCodePart(4)}`;
+  reserved.add(fallback);
+  return fallback;
+}
 
 interface SessionState {
   id: string;
@@ -2528,6 +2655,10 @@ function App() {
   const [adminFeatureDrafts, setAdminFeatureDrafts] = useState<StudioFeatureConfig[]>([]);
   const [adminExpandedFeatureIds, setAdminExpandedFeatureIds] = useState<Record<string, boolean>>({});
   const [adminFeatureImageBusy, setAdminFeatureImageBusy] = useState<string | null>(null);
+  const [adminPlanEditorOpen, setAdminPlanEditorOpen] = useState(false);
+  const [adminPlanDraft, setAdminPlanDraft] = useState<AdminPlanDraft>(() => createAdminPlanDraft());
+  const [adminBatchCodeOpen, setAdminBatchCodeOpen] = useState(false);
+  const [adminBatchCodeDraft, setAdminBatchCodeDraft] = useState<AdminBatchCodeDraft>(() => createAdminBatchCodeDraft());
   const [adminWorkflowSummary, setAdminWorkflowSummary] = useState<AdminWorkflowSummary | null>(null);
   const [adminWorkflowLoaded, setAdminWorkflowLoaded] = useState(false);
   const [adminWorkflowBusy, setAdminWorkflowBusy] = useState(false);
@@ -3048,6 +3179,7 @@ function App() {
           if (cancelled) return;
           setAdminActivationCodes(response.items);
           setAdminActivationPackages(response.packages);
+          setBillingPackages(response.packages);
           setAdminActivationLoaded(true);
         })
         .catch((error) => {
@@ -3079,10 +3211,7 @@ function App() {
       fetchAdminSettings()
         .then((response) => {
           if (cancelled) return;
-          setAdminSystemSettings(response.settings);
-          setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
-          setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
-          setAdminSystemLoaded(true);
+          syncAdminSystemSettings(response.settings);
         })
         .catch((error) => {
           if (cancelled) return;
@@ -3114,9 +3243,7 @@ function App() {
         .then((response) => {
           if (cancelled) return;
           setAdminWorkflowSummary(response.workflows);
-          setAdminSystemSettings(response.settings);
-          setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
-          setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
+          syncAdminSystemSettings(response.settings);
           setAdminWorkflowLoaded(true);
         })
         .catch((error) => {
@@ -3213,6 +3340,15 @@ function App() {
     setBillingSummary(payload.summary);
     setBillingEntries(payload.entries);
     setBillingPackages(payload.packages);
+  }
+
+  function syncAdminSystemSettings(settings: AdminSystemSettings) {
+    setAdminSystemSettings(settings);
+    setAdminSystemDraft({ runpodHdrBatchSize: String(settings.runpodHdrBatchSize) });
+    setAdminFeatureDrafts(normalizeStudioFeatureDrafts(settings.studioFeatures));
+    setAdminActivationPackages(settings.billingPackages);
+    setBillingPackages(settings.billingPackages);
+    setAdminSystemLoaded(true);
   }
 
   function collectLocalDraftFiles(draft: LocalImportDraft) {
@@ -3952,6 +4088,7 @@ function App() {
       const response = await fetchAdminActivationCodes();
       setAdminActivationCodes(response.items);
       setAdminActivationPackages(response.packages);
+      setBillingPackages(response.packages);
       setAdminActivationLoaded(true);
       setAdminMessage(`已载入 ${response.items.length} 个优惠码。`);
     } catch (error) {
@@ -3971,10 +4108,7 @@ function App() {
     setAdminMessage('');
     try {
       const response = await fetchAdminSettings();
-      setAdminSystemSettings(response.settings);
-      setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
-      setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
-      setAdminSystemLoaded(true);
+      syncAdminSystemSettings(response.settings);
       setAdminWorkflowSummary((current) =>
         current
           ? {
@@ -4005,9 +4139,7 @@ function App() {
     try {
       const response = await fetchAdminWorkflows();
       setAdminWorkflowSummary(response.workflows);
-      setAdminSystemSettings(response.settings);
-      setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
-      setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
+      syncAdminSystemSettings(response.settings);
       setAdminWorkflowLoaded(true);
       setAdminMessage('工作流配置已刷新。');
     } catch (error) {
@@ -4122,11 +4254,10 @@ function App() {
     try {
       const response = await updateAdminSettings({
         runpodHdrBatchSize: Math.round(runpodHdrBatchSize),
+        billingPackages: adminSystemSettings?.billingPackages ?? adminActivationPackages,
         studioFeatures: adminFeatureDrafts.length ? adminFeatureDrafts : adminSystemSettings?.studioFeatures ?? []
       });
-      setAdminSystemSettings(response.settings);
-      setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
-      setAdminFeatureDrafts(normalizeStudioFeatureDrafts(response.settings.studioFeatures));
+      syncAdminSystemSettings(response.settings);
       const cards = response.settings.studioFeatures.map(studioFeatureConfigToDefinition).filter((feature) => feature.status !== 'locked');
       if (cards.length) {
         setStudioFeatureCards(cards);
@@ -4160,9 +4291,120 @@ function App() {
     return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : null;
   }
 
+  function getAdminPlanPackages() {
+    if (adminSystemSettings?.billingPackages?.length) {
+      return adminSystemSettings.billingPackages;
+    }
+    if (adminActivationPackages.length) {
+      return adminActivationPackages;
+    }
+    return billingPackages;
+  }
+
+  function handleAdminOpenNewPlanPackage() {
+    const nextSequence = getAdminPlanPackages().length + 1;
+    setAdminPlanDraft(createAdminPlanDraft(undefined, nextSequence));
+    setAdminPlanEditorOpen(true);
+    setAdminConsolePage('plans');
+  }
+
+  function handleAdminEditPlanPackage(plan: BillingPackage) {
+    setAdminPlanDraft(createAdminPlanDraft(plan));
+    setAdminPlanEditorOpen(true);
+    setAdminConsolePage('plans');
+  }
+
+  async function handleAdminSavePlanPackage() {
+    const nextPackage = buildAdminPlanPackageFromDraft(adminPlanDraft);
+    if (!nextPackage) {
+      setAdminMessage('请填写有效的套餐金额和积分。');
+      return;
+    }
+
+    setAdminSystemBusy(true);
+    setAdminMessage('');
+    try {
+      let baseSettings = adminSystemSettings;
+      if (!baseSettings) {
+        const response = await fetchAdminSettings();
+        baseSettings = response.settings;
+      }
+
+      const currentPackages = baseSettings.billingPackages?.length ? baseSettings.billingPackages : getAdminPlanPackages();
+      const nextPackages = [nextPackage, ...currentPackages.filter((item) => item.id !== nextPackage.id)];
+      const response = await updateAdminSettings({
+        runpodHdrBatchSize: baseSettings.runpodHdrBatchSize,
+        billingPackages: nextPackages,
+        studioFeatures: baseSettings.studioFeatures
+      });
+
+      syncAdminSystemSettings(response.settings);
+      setAdminPlanEditorOpen(false);
+      setAdminActivationLoaded(false);
+      setAdminMessage(`套餐已保存：${nextPackage.name}。`);
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '套餐保存失败。', locale));
+    } finally {
+      setAdminSystemBusy(false);
+    }
+  }
+
+  function handleAdminOpenBatchActivationCodes() {
+    const defaultPackageId = adminActivationPackages[0]?.id ?? getAdminPlanPackages()[0]?.id ?? '';
+    setAdminBatchCodeDraft(createAdminBatchCodeDraft(defaultPackageId));
+    setAdminBatchCodeOpen(true);
+    setAdminConsolePage('codes');
+  }
+
+  async function handleAdminCreateBatchActivationCodes() {
+    const count = parseOptionalAdminNumber(adminBatchCodeDraft.count) ?? 0;
+    if (count < 1 || count > ADMIN_MAX_BATCH_CODES) {
+      setAdminMessage(`批量生成数量必须是 1 到 ${ADMIN_MAX_BATCH_CODES}。`);
+      return;
+    }
+
+    const label = adminBatchCodeDraft.label.trim() || '批量兑换码';
+    if (!window.confirm(`确认生成 ${count} 个兑换码？`)) {
+      return;
+    }
+
+    setAdminActivationBusy(true);
+    setAdminMessage('');
+    try {
+      const reserved = new Set(adminActivationCodes.map((item) => item.code));
+      const created: AdminActivationCode[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const response = await createAdminActivationCode({
+          code: buildUniqueAdminActivationCode(adminBatchCodeDraft.prefix, reserved),
+          label: count === 1 ? label : `${label} ${String(index + 1).padStart(2, '0')}`,
+          active: adminBatchCodeDraft.active,
+          packageId: adminBatchCodeDraft.packageId || null,
+          discountPercentOverride: parseOptionalAdminNumber(adminBatchCodeDraft.discountPercentOverride),
+          bonusPoints: parseOptionalAdminNumber(adminBatchCodeDraft.bonusPoints) ?? 0,
+          maxRedemptions: parseOptionalAdminNumber(adminBatchCodeDraft.maxRedemptions),
+          expiresAt: adminBatchCodeDraft.expiresAt.trim() || null
+        });
+        created.push(response.item);
+      }
+
+      setAdminActivationCodes((current) => [
+        ...created,
+        ...current.filter((item) => !created.some((createdItem) => createdItem.id === item.id))
+      ]);
+      setAdminBatchCodeOpen(false);
+      setAdminActivationLoaded(true);
+      setAdminMessage(`已生成 ${created.length} 个兑换码。`);
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '批量兑换码生成失败。', locale));
+    } finally {
+      setAdminActivationBusy(false);
+    }
+  }
+
   async function handleAdminCreateActivationCode() {
-    const code = adminActivationDraft.code.trim().toUpperCase();
-    const label = adminActivationDraft.label.trim();
+    const reserved = new Set(adminActivationCodes.map((item) => item.code));
+    const code = adminActivationDraft.code.trim().toUpperCase() || buildUniqueAdminActivationCode('CODE', reserved);
+    const label = adminActivationDraft.label.trim() || '后台新建兑换码';
     if (!code || !label) {
       setAdminMessage('请填写优惠码和显示名称。');
       return;
@@ -5877,7 +6119,11 @@ function App() {
     const pendingProjectCount = adminProjects.filter((project) =>
       ['importing', 'uploading', 'processing', 'failed'].includes(project.status)
     ).length;
-    const planPackages = adminActivationPackages.length ? adminActivationPackages : billingPackages;
+    const planPackages = adminSystemSettings?.billingPackages?.length
+      ? adminSystemSettings.billingPackages
+      : adminActivationPackages.length
+        ? adminActivationPackages
+        : billingPackages;
     const totalProjectPhotos = adminProjects.reduce((sum, project) => sum + project.photoCount, 0) || adminTotals.photos;
     const totalProjectResults = adminProjects.reduce((sum, project) => sum + project.resultAssets.length, 0);
     const workflowItems = adminWorkflowSummary?.items ?? [];
@@ -6389,7 +6635,7 @@ function App() {
           <>编辑前台 Plans 页展示的 <span className="mono accent-text">{planPackages.length}</span> 档套餐 · 改动会即时生效</>,
           <>
             <button className="btn btn-ghost" type="button">预览前台</button>
-            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadActivationCodes()}>+ 新增套餐</button>
+            <button className="btn btn-primary" type="button" onClick={handleAdminOpenNewPlanPackage} disabled={adminSystemBusy}>+ 新增套餐</button>
           </>
         )}
         <div className="plans-grid">
@@ -6405,11 +6651,51 @@ function App() {
                 <li>激活码折扣可叠加</li>
                 <li>自动到账积分</li>
               </ul>
-              <button className="plan-edit-btn" type="button" onClick={() => setAdminConsolePage('codes')}>编辑套餐</button>
+              <button className="plan-edit-btn" type="button" onClick={() => handleAdminEditPlanPackage(plan)}>编辑套餐</button>
             </div>
           ))}
           {!planPackages.length && <div className="empty-tip">暂无套餐数据</div>}
         </div>
+        {adminPlanEditorOpen ? (
+          <div className="card admin-inline-editor">
+            <div className="card-header">
+              <h3>套餐设置</h3>
+              <button className="tbl-icon" type="button" onClick={() => setAdminPlanEditorOpen(false)}>×</button>
+            </div>
+            <div className="admin-form-grid">
+              <label>
+                <span>套餐 ID</span>
+                <input value={adminPlanDraft.id} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, id: event.target.value }))} />
+              </label>
+              <label>
+                <span>套餐名称</span>
+                <input value={adminPlanDraft.name} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, name: event.target.value }))} />
+              </label>
+              <label>
+                <span>实付金额 USD</span>
+                <input type="number" min="1" value={adminPlanDraft.amountUsd} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, amountUsd: event.target.value }))} />
+              </label>
+              <label>
+                <span>到账积分</span>
+                <input type="number" min="1" value={adminPlanDraft.points} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, points: event.target.value }))} />
+              </label>
+              <label>
+                <span>显示优惠 %</span>
+                <input type="number" min="0" max="100" value={adminPlanDraft.discountPercent} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, discountPercent: event.target.value }))} />
+              </label>
+              <label>
+                <span>原价 USD</span>
+                <input type="number" min="1" value={adminPlanDraft.listPriceUsd} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, listPriceUsd: event.target.value }))} />
+              </label>
+            </div>
+            <div className="admin-form-actions">
+              <button className="btn btn-ghost" type="button" onClick={() => setAdminPlanEditorOpen(false)}>取消</button>
+              <button className="btn btn-primary" type="button" onClick={() => void handleAdminSavePlanPackage()} disabled={adminSystemBusy}>
+                {adminSystemBusy ? '保存中...' : '保存套餐'}
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="card">
           <div className="card-header">
             <h3>套餐转化漏斗</h3>
@@ -6430,7 +6716,7 @@ function App() {
           '兑换码',
           '生成与管理积分兑换码、活动促销码、合作伙伴码',
           <>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadActivationCodes()}>批量生成</button>
+            <button className="btn btn-ghost" type="button" onClick={handleAdminOpenBatchActivationCodes}>批量生成</button>
             <button className="btn btn-primary" type="button" onClick={() => void handleAdminCreateActivationCode()}>+ 新建兑换码</button>
           </>
         )}
@@ -6439,6 +6725,61 @@ function App() {
           <div className="code-stat"><div className="label">已使用</div><div className="value accent-text">{usedCodeCount.toLocaleString()}</div></div>
           <div className="code-stat"><div className="label">使用率</div><div className="value success-text">{codeUsageRate}%</div></div>
         </div>
+        {adminBatchCodeOpen ? (
+          <div className="card admin-inline-editor">
+            <div className="card-header">
+              <h3>批量生成兑换码</h3>
+              <button className="tbl-icon" type="button" onClick={() => setAdminBatchCodeOpen(false)}>×</button>
+            </div>
+            <div className="admin-form-grid">
+              <label>
+                <span>前缀</span>
+                <input value={adminBatchCodeDraft.prefix} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, prefix: event.target.value.toUpperCase() }))} />
+              </label>
+              <label>
+                <span>数量</span>
+                <input type="number" min="1" max={ADMIN_MAX_BATCH_CODES} value={adminBatchCodeDraft.count} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, count: event.target.value }))} />
+              </label>
+              <label>
+                <span>显示名称</span>
+                <input value={adminBatchCodeDraft.label} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, label: event.target.value }))} />
+              </label>
+              <label>
+                <span>绑定套餐</span>
+                <select value={adminBatchCodeDraft.packageId} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, packageId: event.target.value }))}>
+                  <option value="">不绑定套餐</option>
+                  {planPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>覆盖优惠 %</span>
+                <input type="number" min="0" max="100" value={adminBatchCodeDraft.discountPercentOverride} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, discountPercentOverride: event.target.value }))} />
+              </label>
+              <label>
+                <span>额外积分</span>
+                <input type="number" min="0" value={adminBatchCodeDraft.bonusPoints} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, bonusPoints: event.target.value }))} />
+              </label>
+              <label>
+                <span>每码次数</span>
+                <input type="number" min="1" value={adminBatchCodeDraft.maxRedemptions} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, maxRedemptions: event.target.value }))} />
+              </label>
+              <label>
+                <span>到期时间</span>
+                <input type="datetime-local" value={adminBatchCodeDraft.expiresAt} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, expiresAt: event.target.value }))} />
+              </label>
+              <label className="admin-check-field">
+                <input type="checkbox" checked={adminBatchCodeDraft.active} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, active: event.target.checked }))} />
+                <span>生成后立即启用</span>
+              </label>
+            </div>
+            <div className="admin-form-actions">
+              <button className="btn btn-ghost" type="button" onClick={() => setAdminBatchCodeOpen(false)}>取消</button>
+              <button className="btn btn-primary" type="button" onClick={() => void handleAdminCreateBatchActivationCodes()} disabled={adminActivationBusy}>
+                {adminActivationBusy ? '生成中...' : '确认生成'}
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="card">
           <div className="toolbar">
             <input
@@ -6446,9 +6787,14 @@ function App() {
               onChange={(event) => setAdminActivationDraft((current) => ({ ...current, code: event.target.value.toUpperCase() }))}
               placeholder="搜索或输入兑换码"
             />
+            <input
+              value={adminActivationDraft.label}
+              onChange={(event) => setAdminActivationDraft((current) => ({ ...current, label: event.target.value }))}
+              placeholder="显示名称"
+            />
             <select value={adminActivationDraft.packageId} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, packageId: event.target.value }))}>
               <option value="">所有类型</option>
-              {adminActivationPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              {planPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
             <input value={adminActivationDraft.bonusPoints} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, bonusPoints: event.target.value }))} placeholder="积分面值" />
             <div className="filter-pills">

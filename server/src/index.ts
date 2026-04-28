@@ -62,6 +62,7 @@ import {
 } from './payments.js';
 import { ProjectProcessor } from './processor.js';
 import { LocalStore } from './store.js';
+import { normalizeBillingPackages } from './billing-packages.js';
 import { getEnabledStudioFeatures } from './studio-features.js';
 import type Stripe from 'stripe';
 import type {
@@ -205,23 +206,6 @@ function getBaseTopUpPoints(amountUsd: number) {
   return Math.max(1, Math.floor(amountUsd / POINT_PRICE_USD));
 }
 
-function createTopUpPackage(input: { id: string; name: string; amountUsd: number; discountPercent: number }) {
-  const amountUsd = Number(input.amountUsd.toFixed(2));
-  const basePoints = getBaseTopUpPoints(amountUsd);
-  const bonusPoints = Math.round(basePoints * (input.discountPercent / 100));
-  const points = basePoints + bonusPoints;
-  return {
-    id: input.id,
-    name: input.name,
-    points,
-    listPriceUsd: amountUsd,
-    amountUsd,
-    discountPercent: input.discountPercent,
-    pointPriceUsd: POINT_PRICE_USD,
-    bonusPoints
-  };
-}
-
 function createCustomTopUpPackage(amountUsd: number): BillingPackage {
   const normalizedAmountUsd = normalizeTopUpAmountUsd(amountUsd);
   if (normalizedAmountUsd === null) {
@@ -244,7 +228,8 @@ function createCustomTopUpPackage(amountUsd: number): BillingPackage {
 function rebuildTopUpPackage(basePackage: BillingPackage, input?: { discountPercent?: number; extraBonusPoints?: number }) {
   const discountPercent = Math.max(0, Math.round(input?.discountPercent ?? basePackage.discountPercent));
   const basePoints = getBaseTopUpPoints(basePackage.amountUsd);
-  const packageBonusPoints = Math.round(basePoints * (discountPercent / 100));
+  const configuredBonusPoints = Math.max(0, Math.round(basePackage.bonusPoints));
+  const packageBonusPoints = Math.max(configuredBonusPoints, Math.round(basePoints * (discountPercent / 100)));
   const extraBonusPoints = Math.max(0, Math.round(input?.extraBonusPoints ?? 0));
   const bonusPoints = packageBonusPoints + extraBonusPoints;
   return {
@@ -289,12 +274,9 @@ function applyActivationCodeToPackage(basePackage: BillingPackage, activationCod
   });
 }
 
-const TOP_UP_PACKAGES = [
-  createTopUpPackage({ id: 'recharge-100', name: '$100 Recharge', amountUsd: 100, discountPercent: 5 }),
-  createTopUpPackage({ id: 'recharge-500', name: '$500 Recharge', amountUsd: 500, discountPercent: 10 }),
-  createTopUpPackage({ id: 'recharge-1000', name: '$1000 Recharge', amountUsd: 1000, discountPercent: 20 }),
-  createTopUpPackage({ id: 'recharge-2000', name: '$2000 Recharge', amountUsd: 2000, discountPercent: 40 })
-] as const;
+function getTopUpPackages() {
+  return normalizeBillingPackages(store.getSystemSettings().billingPackages);
+}
 
 function resolveTopUpSelection(input: { packageId?: string; customAmountUsd?: number; activationCode?: string }) {
   const normalizedCustomAmount =
@@ -305,7 +287,7 @@ function resolveTopUpSelection(input: { packageId?: string; customAmountUsd?: nu
 
   const selectedPackage = normalizedCustomAmount
     ? createCustomTopUpPackage(normalizedCustomAmount)
-    : TOP_UP_PACKAGES.find((item) => item.id === input.packageId);
+    : getTopUpPackages().find((item) => item.id === input.packageId);
   if (!selectedPackage) {
     return { ok: false as const, status: 404, error: 'Top-up package not found.' };
   }
@@ -643,7 +625,7 @@ function buildBillingPayload(userKey: string) {
   return {
     summary: store.getBillingSummary(userKey),
     entries: store.listBillingEntries(userKey),
-    packages: TOP_UP_PACKAGES
+    packages: getTopUpPackages()
   };
 }
 
@@ -814,13 +796,14 @@ function parseAdminExpiresAt(value: string | null | undefined) {
 }
 
 function buildAdminActivationCodePayload() {
+  const packages = getTopUpPackages();
   return {
     items: store.listActivationCodes().map((item) => ({
       ...item,
       available: isActivationCodeAvailable(item),
-      packageName: item.packageId ? TOP_UP_PACKAGES.find((pkg) => pkg.id === item.packageId)?.name ?? null : null
+      packageName: item.packageId ? packages.find((pkg) => pkg.id === item.packageId)?.name ?? null : null
     })),
-    packages: TOP_UP_PACKAGES
+    packages
   };
 }
 
@@ -1954,8 +1937,20 @@ const adminBillingAdjustmentSchema = z.object({
   confirm: z.literal(true)
 });
 
+const adminBillingPackageSchema = z.object({
+  id: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(80),
+  points: z.number().int().min(1).max(1000000),
+  listPriceUsd: z.number().min(1).max(50000),
+  amountUsd: z.number().min(1).max(50000),
+  discountPercent: z.number().int().min(0).max(100),
+  pointPriceUsd: z.number().min(0.0001).max(100),
+  bonusPoints: z.number().int().min(0).max(1000000)
+});
+
 const adminSystemSettingsSchema = z.object({
   runpodHdrBatchSize: z.number().int().min(MIN_RUNPOD_HDR_BATCH_SIZE).max(MAX_RUNPOD_HDR_BATCH_SIZE),
+  billingPackages: z.array(adminBillingPackageSchema).max(24).optional(),
   studioFeatures: z
     .array(
       z.object({
@@ -2535,7 +2530,7 @@ app.post('/api/billing/top-up', (req, res) => {
     return;
   }
 
-  const selectedPackage = TOP_UP_PACKAGES.find((item) => item.id === parsed.data.packageId);
+  const selectedPackage = getTopUpPackages().find((item) => item.id === parsed.data.packageId);
   if (!selectedPackage) {
     res.status(404).json({ error: 'Top-up package not found.' });
     return;
@@ -2810,6 +2805,7 @@ app.patch('/api/admin/settings', (req, res) => {
   const before = store.getSystemSettings();
   const settings = store.updateSystemSettings({
     runpodHdrBatchSize: parsed.data.runpodHdrBatchSize,
+    billingPackages: parsed.data.billingPackages ?? before.billingPackages,
     studioFeatures: parsed.data.studioFeatures ?? before.studioFeatures
   });
   writeAdminAuditLog(req, actor, {
@@ -3086,7 +3082,8 @@ app.post('/api/admin/activation-codes', (req, res) => {
   }
 
   const nextPackageId = parsed.data.packageId ?? null;
-  if (nextPackageId && !TOP_UP_PACKAGES.some((item) => item.id === nextPackageId)) {
+  const packages = getTopUpPackages();
+  if (nextPackageId && !packages.some((item) => item.id === nextPackageId)) {
     res.status(404).json({ error: 'Recharge tier not found for this activation code.' });
     return;
   }
@@ -3111,7 +3108,7 @@ app.post('/api/admin/activation-codes', (req, res) => {
     item: {
       ...created,
       available: isActivationCodeAvailable(created),
-      packageName: created.packageId ? TOP_UP_PACKAGES.find((pkg) => pkg.id === created.packageId)?.name ?? null : null
+      packageName: created.packageId ? packages.find((pkg) => pkg.id === created.packageId)?.name ?? null : null
     }
   });
 });
@@ -3136,7 +3133,8 @@ app.patch('/api/admin/activation-codes/:id', (req, res) => {
   }
 
   const nextPackageId = parsed.data.packageId === undefined ? existing.packageId : parsed.data.packageId;
-  if (nextPackageId && !TOP_UP_PACKAGES.some((item) => item.id === nextPackageId)) {
+  const packages = getTopUpPackages();
+  if (nextPackageId && !packages.some((item) => item.id === nextPackageId)) {
     res.status(404).json({ error: 'Recharge tier not found for this activation code.' });
     return;
   }
@@ -3172,7 +3170,7 @@ app.patch('/api/admin/activation-codes/:id', (req, res) => {
     item: {
       ...updated,
       available: isActivationCodeAvailable(updated),
-      packageName: updated.packageId ? TOP_UP_PACKAGES.find((pkg) => pkg.id === updated.packageId)?.name ?? null : null
+      packageName: updated.packageId ? packages.find((pkg) => pkg.id === updated.packageId)?.name ?? null : null
     }
   });
 });

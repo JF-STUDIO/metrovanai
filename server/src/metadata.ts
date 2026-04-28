@@ -12,6 +12,7 @@ import type {
   SystemSettings,
   UserRecord
 } from './types.js';
+import { normalizeBillingPackages } from './billing-packages.js';
 import { DEFAULT_STUDIO_FEATURES, normalizeStudioFeatures } from './studio-features.js';
 import { ensureDir, loadJson, saveJson } from './utils.js';
 
@@ -70,6 +71,7 @@ function createEmptyDatabase(): DatabaseShape {
     auditLogs: [],
     systemSettings: {
       runpodHdrBatchSize: DEFAULT_RUNPOD_HDR_BATCH_SIZE,
+      billingPackages: normalizeBillingPackages(undefined),
       studioFeatures: DEFAULT_STUDIO_FEATURES
     }
   };
@@ -85,6 +87,7 @@ function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): Sy
         Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : DEFAULT_RUNPOD_HDR_BATCH_SIZE
       )
     ),
+    billingPackages: normalizeBillingPackages(input?.billingPackages),
     studioFeatures: normalizeStudioFeatures(input?.studioFeatures)
   };
 }
