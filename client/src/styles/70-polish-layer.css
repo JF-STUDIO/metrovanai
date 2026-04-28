@@ -691,6 +691,10 @@
   font-style: normal;
 }
 
+.feature-create-priority {
+  display: none;
+}
+
 .studio-shell .sidebar-card,
 .studio-shell .workspace,
 .studio-shell .panel,
