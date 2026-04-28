@@ -6328,11 +6328,6 @@ function App() {
               <em>{copy.studioSubLabel}</em>
             </span>
           </button>
-          {!isDemoMode && (
-            <button className="header-center" type="button" onClick={() => navigateToRoute('home')}>
-              {copy.home}
-            </button>
-          )}
           <div className="header-actions">
             {!isDemoMode && (
               <button
