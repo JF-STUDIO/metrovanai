@@ -4837,6 +4837,11 @@ if (fs.existsSync(clientIndexPath)) {
       }
     })
   );
+  app.get(/^\/assets(?:\/|$)/, (_req, res) => {
+    res.status(404);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('text/plain').send('Asset not found. Refresh the page.');
+  });
   app.get(/^(?!\/api(?:\/|$))(?!\/storage(?:\/|$)).*/, (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(clientIndexPath);

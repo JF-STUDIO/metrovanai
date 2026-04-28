@@ -16,6 +16,7 @@ body {
   display: grid;
   place-content: center;
   gap: 12px;
+  padding: 24px;
   background:
     radial-gradient(circle at 50% 25%, rgba(127, 224, 255, 0.14), transparent 34%),
     #020304;
@@ -24,11 +25,31 @@ body {
 }
 
 .boot-fallback strong {
-  font-size: clamp(30px, 6vw, 72px);
-  letter-spacing: -0.06em;
+  font-size: 42px;
+  line-height: 1.05;
+  letter-spacing: 0;
 }
 
 .boot-fallback span {
   color: rgba(248, 251, 255, 0.62);
   font-size: 15px;
+}
+
+.boot-fallback button {
+  justify-self: center;
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid rgba(127, 224, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(127, 224, 255, 0.12);
+  color: #f8fbff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .boot-fallback strong {
+    font-size: 32px;
+  }
 }
