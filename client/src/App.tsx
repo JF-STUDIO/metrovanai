@@ -38,6 +38,8 @@ import {
   adjustAdminUserBilling,
   fetchAdminActivationCodes,
   fetchAdminAuditLogs,
+  fetchAdminOrders,
+  fetchAdminProjects,
   fetchAdminSettings,
   fetchAdminUserDetail,
   fetchAdminUsers,
@@ -88,6 +90,7 @@ import type {
   ColorMode,
   HdrItem,
   LocalImportReviewState,
+  PaymentOrderRecord,
   ProjectGroup,
   ProjectJobState,
   ProjectRecord,
@@ -98,6 +101,7 @@ import type {
 type AuthMode = 'signin' | 'signup' | 'reset-request' | 'reset-confirm' | 'verify-email';
 type UiLocale = 'zh' | 'en';
 type AppRoute = 'home' | 'plans' | 'studio' | 'admin';
+type AdminConsolePage = 'dashboard' | 'users' | 'works' | 'orders' | 'plans' | 'codes' | 'engine' | 'prompts' | 'content' | 'logs' | 'settings';
 type StudioFeatureId = string;
 type StudioFeatureStatus = 'available' | 'beta' | 'locked';
 type StudioFeatureImageField = 'beforeImageUrl' | 'afterImageUrl';
@@ -505,6 +509,20 @@ const ADMIN_FEATURE_TONE_OPTIONS: Array<{ value: StudioFeatureConfig['tone']; la
   { value: 'blue', label: '蓝调' },
   { value: 'season', label: '季节' }
 ];
+
+const ADMIN_CONSOLE_PAGE_LABELS: Record<AdminConsolePage, string> = {
+  dashboard: '仪表盘',
+  users: '用户管理',
+  works: '修图作品',
+  orders: '订单管理',
+  plans: '套餐配置',
+  codes: '兑换码',
+  engine: 'AI 引擎',
+  prompts: 'Prompt 模板',
+  content: '内容运营',
+  logs: '操作日志',
+  settings: '系统设置'
+};
 
 const DEFAULT_REGENERATION_COLOR = '#F2E8D8';
 const RESULT_COLOR_CARD_STORAGE_KEY = 'metrovanai_result_color_cards';
@@ -2473,9 +2491,16 @@ function App() {
     locale: getStoredLocale()
   });
   const [adminUsers, setAdminUsers] = useState<AdminUserSummary[]>([]);
+  const [adminProjects, setAdminProjects] = useState<ProjectRecord[]>([]);
+  const [adminOrders, setAdminOrders] = useState<PaymentOrderRecord[]>([]);
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminMessage, setAdminMessage] = useState('');
+  const [adminConsolePage, setAdminConsolePage] = useState<AdminConsolePage>('dashboard');
   const [adminLoaded, setAdminLoaded] = useState(false);
+  const [adminProjectsLoaded, setAdminProjectsLoaded] = useState(false);
+  const [adminProjectsBusy, setAdminProjectsBusy] = useState(false);
+  const [adminOrdersLoaded, setAdminOrdersLoaded] = useState(false);
+  const [adminOrdersBusy, setAdminOrdersBusy] = useState(false);
   const [adminSearch, setAdminSearch] = useState('');
   const [adminRoleFilter, setAdminRoleFilter] = useState<AdminUserListQuery['role']>('all');
   const [adminStatusFilter, setAdminStatusFilter] = useState<AdminUserListQuery['accountStatus']>('all');
@@ -2945,6 +2970,70 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [activeRoute, adminLoaded, adminUserQuery, hasAdminSession, locale]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || !hasAdminSession || adminProjectsLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setAdminProjectsBusy(true);
+      fetchAdminProjects()
+        .then((response) => {
+          if (cancelled) return;
+          setAdminProjects(response.items);
+          setAdminProjectsLoaded(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setAdminProjectsLoaded(true);
+          setAdminMessage(getUserFacingErrorMessage(error, '项目列表读取失败。', locale));
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setAdminProjectsBusy(false);
+          }
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeRoute, adminProjectsLoaded, hasAdminSession, locale]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || !hasAdminSession || adminOrdersLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setAdminOrdersBusy(true);
+      fetchAdminOrders()
+        .then((response) => {
+          if (cancelled) return;
+          setAdminOrders(response.items);
+          setAdminOrdersLoaded(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setAdminOrdersLoaded(true);
+          setAdminMessage(getUserFacingErrorMessage(error, '订单列表读取失败。', locale));
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setAdminOrdersBusy(false);
+          }
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeRoute, adminOrdersLoaded, hasAdminSession, locale]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || !hasAdminSession || adminActivationLoaded) {
@@ -3635,6 +3724,48 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '管理员连接失败。', locale));
     } finally {
       setAdminBusy(false);
+    }
+  }
+
+  async function handleAdminLoadProjects() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminProjectsBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminProjects();
+      setAdminProjects(response.items);
+      setAdminProjectsLoaded(true);
+      setAdminMessage(`已载入 ${response.total} 个项目。`);
+    } catch (error) {
+      setAdminProjectsLoaded(true);
+      setAdminMessage(getUserFacingErrorMessage(error, '项目列表读取失败。', locale));
+    } finally {
+      setAdminProjectsBusy(false);
+    }
+  }
+
+  async function handleAdminLoadOrders() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminOrdersBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminOrders();
+      setAdminOrders(response.items);
+      setAdminOrdersLoaded(true);
+      setAdminMessage(`已载入 ${response.total} 个订单。`);
+    } catch (error) {
+      setAdminOrdersLoaded(true);
+      setAdminMessage(getUserFacingErrorMessage(error, '订单列表读取失败。', locale));
+    } finally {
+      setAdminOrdersBusy(false);
     }
   }
 
@@ -5605,11 +5736,110 @@ function App() {
     }).format(new Date(value));
   }
 
+  function formatAdminShortDate(value: string | null) {
+    if (!value) {
+      return '—';
+    }
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(new Date(value));
+  }
+
+  function formatPaymentOrderStatus(status: PaymentOrderRecord['status']) {
+    switch (status) {
+      case 'paid':
+        return '已支付';
+      case 'checkout_created':
+        return '待支付';
+      case 'pending':
+        return '待创建';
+      case 'failed':
+        return '失败';
+      case 'expired':
+        return '已过期';
+      case 'cancelled':
+        return '已取消';
+      default:
+        return status;
+    }
+  }
+
+  function getAdminInitials(value: string) {
+    const normalized = value.trim();
+    if (!normalized) {
+      return 'MV';
+    }
+    return normalized
+      .split(/\s+/)
+      .map((part) => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+  }
+
   if (activeRoute === 'admin') {
+    const navButton = (page: AdminConsolePage, label: string, badge?: string) => (
+      <button
+        key={page}
+        className={`admin-console-nav-item${adminConsolePage === page ? ' active' : ''}`}
+        type="button"
+        onClick={() => setAdminConsolePage(page)}
+      >
+        <span className="admin-console-nav-ico">{label.slice(0, 1)}</span>
+        <span>{label}</span>
+        {badge ? <em>{badge}</em> : null}
+      </button>
+    );
+    const paidOrders = adminOrders.filter((order) => order.status === 'paid');
+    const orderRevenue = paidOrders.reduce((sum, order) => sum + order.amountUsd, 0);
+    const pendingProjectCount = adminProjects.filter((project) =>
+      ['importing', 'uploading', 'processing', 'failed'].includes(project.status)
+    ).length;
+    const planPackages = adminActivationPackages.length ? adminActivationPackages : billingPackages;
+
     return (
       <>
         <main className="admin-shell">
           <div className="ambient-layer studio-ambient" />
+          <aside className="admin-console-sidebar">
+            <button className="admin-console-brand" type="button" onClick={() => navigateToRoute('studio')}>
+              <span>M</span>
+              <strong>Metrovan AI</strong>
+              <small>Admin Console</small>
+            </button>
+            <div className="admin-console-nav-group">
+              <b>概览</b>
+              {navButton('dashboard', '仪表盘')}
+            </div>
+            <div className="admin-console-nav-group">
+              <b>业务</b>
+              {navButton('users', '用户管理')}
+              {navButton('works', '修图作品', pendingProjectCount ? String(pendingProjectCount) : undefined)}
+              {navButton('orders', '订单管理')}
+              {navButton('plans', '套餐配置')}
+              {navButton('codes', '兑换码')}
+            </div>
+            <div className="admin-console-nav-group">
+              <b>AI</b>
+              {navButton('engine', 'AI 引擎')}
+              {navButton('prompts', 'Prompt 模板')}
+            </div>
+            <div className="admin-console-nav-group">
+              <b>运营 & 系统</b>
+              {navButton('content', '内容运营')}
+              {navButton('logs', '操作日志')}
+              {navButton('settings', '系统设置')}
+            </div>
+            <button className="admin-console-account" type="button" onClick={() => void signOut()}>
+              <span>{getAdminInitials(session?.displayName ?? session?.email ?? 'Admin')}</span>
+              <strong>{session?.displayName ?? 'Admin'}</strong>
+              <small>{session?.role === 'admin' ? '超级管理员' : '未授权'}</small>
+            </button>
+          </aside>
+          <section className="admin-console-main">
           <header className="admin-header">
             <button className="brand-button admin-brand" type="button" onClick={() => navigateToRoute('home')}>
               <img className="landing-brand-logo" src={logoFull} alt="Metrovan AI" decoding="async" />
@@ -5636,7 +5866,15 @@ function App() {
             )}
           </header>
 
-          <section className="admin-hero-card">
+          <div className="admin-console-topbar">
+            <div>
+              <span>Console /</span>
+              <strong>{ADMIN_CONSOLE_PAGE_LABELS[adminConsolePage]}</strong>
+            </div>
+            <div className="admin-console-search">搜索用户、订单、项目</div>
+          </div>
+
+          <section className="admin-hero-card" hidden={adminConsolePage !== 'dashboard'}>
             <div>
               <span className="admin-kicker">Metrovan AI Admin</span>
               <h1>用户与业务后台</h1>
@@ -5669,7 +5907,7 @@ function App() {
 
           {adminMessage && <div className="global-message admin-message">{adminMessage}</div>}
 
-          <section className="admin-stat-grid" aria-label="Admin summary">
+          <section className="admin-stat-grid" aria-label="Admin summary" hidden={adminConsolePage !== 'dashboard'}>
             <article>
               <span>用户</span>
               <strong>{adminTotals.users}</strong>
@@ -5688,7 +5926,282 @@ function App() {
             </article>
           </section>
 
-          <section className="admin-panel">
+          <section className="admin-dashboard-grid" hidden={adminConsolePage !== 'dashboard'}>
+            <article className="admin-panel admin-dashboard-card wide">
+              <div className="admin-panel-head">
+                <div>
+                  <span className="admin-kicker">Revenue</span>
+                  <h2>营收与处理概览</h2>
+                </div>
+                <button className="ghost-button" type="button" onClick={() => void handleAdminLoadOrders()} disabled={adminOrdersBusy}>
+                  刷新订单
+                </button>
+              </div>
+              <div className="admin-console-metrics">
+                <div>
+                  <span>已支付订单</span>
+                  <strong>{paidOrders.length}</strong>
+                </div>
+                <div>
+                  <span>订单营收</span>
+                  <strong>${orderRevenue.toFixed(2)}</strong>
+                </div>
+                <div>
+                  <span>待处理项目</span>
+                  <strong>{pendingProjectCount}</strong>
+                </div>
+              </div>
+              <div className="admin-console-chart" aria-hidden="true">
+                <i style={{ height: '38%' }} />
+                <i style={{ height: '52%' }} />
+                <i style={{ height: '44%' }} />
+                <i style={{ height: '66%' }} />
+                <i style={{ height: '58%' }} />
+                <i style={{ height: '78%' }} />
+                <i style={{ height: '70%' }} />
+                <i style={{ height: '86%' }} />
+              </div>
+            </article>
+            <article className="admin-panel admin-dashboard-card">
+              <div className="admin-panel-head">
+                <div>
+                  <span className="admin-kicker">Live</span>
+                  <h2>实时动态</h2>
+                </div>
+              </div>
+              <div className="admin-console-feed">
+                {adminOrders.slice(0, 3).map((order) => (
+                  <div key={order.id}>
+                    <b>{order.email}</b>
+                    <span>{formatPaymentOrderStatus(order.status)} · ${order.amountUsd.toFixed(2)} · {formatAdminShortDate(order.createdAt)}</span>
+                  </div>
+                ))}
+                {adminProjects.slice(0, 3).map((project) => (
+                  <div key={project.id}>
+                    <b>{project.name}</b>
+                    <span>{getProjectStatusLabel(project, locale)} · {project.photoCount} 张 · {formatAdminShortDate(project.updatedAt)}</span>
+                  </div>
+                ))}
+                {!adminOrders.length && !adminProjects.length && <p>{adminOrdersBusy || adminProjectsBusy ? '正在读取实时动态...' : '暂无动态。'}</p>}
+              </div>
+            </article>
+          </section>
+
+          <section className="admin-panel" hidden={adminConsolePage !== 'works'}>
+            <div className="admin-panel-head">
+              <div>
+                <span className="admin-kicker">Works</span>
+                <h2>修图作品</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadProjects()} disabled={adminProjectsBusy}>
+                {adminProjectsBusy ? '刷新中...' : '刷新项目'}
+              </button>
+            </div>
+            {adminProjects.length ? (
+              <div className="admin-console-work-grid">
+                {adminProjects.slice(0, 24).map((project) => {
+                  const preview = project.resultAssets[0]?.previewUrl ?? project.resultAssets[0]?.storageUrl ?? project.hdrItems[0]?.previewUrl ?? null;
+                  return (
+                    <article key={project.id} className="admin-console-work-card">
+                      <div className="admin-console-work-thumb">
+                        {preview ? <img src={resolveMediaUrl(preview)} alt={project.name} loading="lazy" decoding="async" /> : <span>NO PREVIEW</span>}
+                        <em>{getProjectStatusLabel(project, locale)}</em>
+                      </div>
+                      <div>
+                        <strong>{project.name}</strong>
+                        <span>{project.userDisplayName || project.userKey} · {project.photoCount} 张 · {project.resultAssets.length} 结果</span>
+                      </div>
+                      <button
+                        className="ghost-button compact"
+                        type="button"
+                        onClick={() => {
+                          setAdminDetailProjects((current) =>
+                            current.some((item) => item.id === project.id) ? current : [project, ...current]
+                          );
+                          setAdminSelectedProjectId(project.id);
+                          setAdminConsolePage('users');
+                        }}
+                      >
+                        查看项目
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="admin-empty compact">
+                <strong>{adminProjectsBusy ? '正在读取项目...' : '暂无项目'}</strong>
+                <span>这里会显示所有用户的修图项目、状态、照片数量和结果图。</span>
+              </div>
+            )}
+          </section>
+
+          <section className="admin-panel" hidden={adminConsolePage !== 'orders'}>
+            <div className="admin-panel-head">
+              <div>
+                <span className="admin-kicker">Orders</span>
+                <h2>订单管理</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadOrders()} disabled={adminOrdersBusy}>
+                {adminOrdersBusy ? '刷新中...' : '刷新订单'}
+              </button>
+            </div>
+            <div className="admin-console-metrics">
+              <div>
+                <span>订单总数</span>
+                <strong>{adminOrders.length}</strong>
+              </div>
+              <div>
+                <span>已支付</span>
+                <strong>{paidOrders.length}</strong>
+              </div>
+              <div>
+                <span>已支付金额</span>
+                <strong>${orderRevenue.toFixed(2)}</strong>
+              </div>
+            </div>
+            {adminOrders.length ? (
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>订单号</th>
+                      <th>用户</th>
+                      <th>套餐</th>
+                      <th>金额</th>
+                      <th>状态</th>
+                      <th>激活码</th>
+                      <th>创建时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminOrders.map((order) => (
+                      <tr key={order.id}>
+                        <td className="cell-id">{order.id}</td>
+                        <td>
+                          <strong>{order.email}</strong>
+                          <span>{order.userKey}</span>
+                        </td>
+                        <td>{order.packageName}</td>
+                        <td className="mono">${order.amountUsd.toFixed(2)} · {order.points} pts</td>
+                        <td>
+                          <span className={`admin-status ${order.status === 'paid' ? 'ok' : order.status === 'failed' ? 'danger' : 'warn'}`}>
+                            {formatPaymentOrderStatus(order.status)}
+                          </span>
+                        </td>
+                        <td>{order.activationCode ?? '—'}</td>
+                        <td>{formatAdminDate(order.createdAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="admin-empty compact">
+                <strong>{adminOrdersBusy ? '正在读取订单...' : '暂无订单'}</strong>
+                <span>充值订单会在这里显示状态、金额、积分和激活码。</span>
+              </div>
+            )}
+          </section>
+
+          <section className="admin-panel" hidden={adminConsolePage !== 'plans'}>
+            <div className="admin-panel-head">
+              <div>
+                <span className="admin-kicker">Plans</span>
+                <h2>套餐配置</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadActivationCodes()} disabled={adminActivationBusy}>
+                刷新套餐
+              </button>
+            </div>
+            <div className="admin-console-plan-grid">
+              {planPackages.map((item) => (
+                <article key={item.id} className="admin-console-plan-card">
+                  <span>{item.id}</span>
+                  <strong>{item.name}</strong>
+                  <b>${item.amountUsd.toFixed(2)}</b>
+                  <small>{item.points} pts · 原价 ${item.listPriceUsd.toFixed(2)} · 优惠 {item.discountPercent}%</small>
+                </article>
+              ))}
+              {!planPackages.length && (
+                <div className="admin-empty compact">
+                  <strong>暂无套餐数据</strong>
+                  <span>读取充值包后会显示前台充值页使用的套餐。</span>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="admin-panel" hidden={adminConsolePage !== 'prompts'}>
+            <div className="admin-panel-head">
+              <div>
+                <span className="admin-kicker">Prompts</span>
+                <h2>Prompt 模板</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>
+                刷新工作流
+              </button>
+            </div>
+            <div className="admin-console-template-list">
+              {(adminWorkflowSummary?.items ?? []).map((item) => (
+                <article key={`${item.name}-prompt`}>
+                  <strong>{item.name}</strong>
+                  <span>Prompt Node: {item.promptNodeId ?? '未配置'} · Workflow: {item.workflowId ?? '未配置'}</span>
+                </article>
+              ))}
+              {!adminWorkflowSummary?.items.length && (
+                <div className="admin-empty compact">
+                  <strong>暂无 Prompt 模板</strong>
+                  <span>当前后台会从工作流配置中读取 prompt 节点；后续可在这里扩展版本管理和 A/B 对比。</span>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="admin-panel" hidden={adminConsolePage !== 'logs'}>
+            <div className="admin-panel-head">
+              <div>
+                <span className="admin-kicker">Audit</span>
+                <h2>操作日志</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadAuditLogs()} disabled={adminActionBusy}>
+                读取日志
+              </button>
+            </div>
+            {adminAuditLogs.length ? (
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>操作员</th>
+                      <th>操作</th>
+                      <th>对象</th>
+                      <th>IP</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminAuditLogs.map((entry) => (
+                      <tr key={entry.id}>
+                        <td>{formatAdminDate(entry.createdAt)}</td>
+                        <td>{entry.actorEmail ?? entry.actorType}</td>
+                        <td>{entry.action}</td>
+                        <td>{entry.targetUserId ?? entry.targetProjectId ?? '—'}</td>
+                        <td className="cell-id">{entry.ipAddress}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="admin-empty compact">
+                <strong>暂无日志</strong>
+                <span>点击读取日志后显示管理员操作记录。</span>
+              </div>
+            )}
+          </section>
+
+          <section className="admin-panel" hidden={adminConsolePage !== 'content'}>
             <div className="admin-panel-head">
               <div>
                 <span className="admin-kicker">Studio Cards</span>
@@ -5991,7 +6504,7 @@ function App() {
             </div>
           </section>
 
-          <section className="admin-panel">
+          <section className="admin-panel" hidden={adminConsolePage !== 'settings'}>
             <div className="admin-panel-head">
               <div>
                 <span className="admin-kicker">Processing Settings</span>
@@ -6036,7 +6549,7 @@ function App() {
             </div>
           </section>
 
-          <section className="admin-panel">
+          <section className="admin-panel" hidden={adminConsolePage !== 'engine'}>
             <div className="admin-panel-head">
               <div>
                 <span className="admin-kicker">Workflow Control</span>
@@ -6108,7 +6621,7 @@ function App() {
             )}
           </section>
 
-          <section className="admin-panel">
+          <section className="admin-panel" hidden={adminConsolePage !== 'codes'}>
             <div className="admin-panel-head">
               <div>
                 <span className="admin-kicker">Activation Codes</span>
@@ -6259,7 +6772,7 @@ function App() {
             )}
           </section>
 
-          <section className="admin-panel">
+          <section className="admin-panel" hidden={adminConsolePage !== 'users'}>
             <div className="admin-panel-head">
               <div>
                 <span className="admin-kicker">Users</span>
@@ -6462,7 +6975,7 @@ function App() {
             </div>
           </section>
 
-          <section className="admin-detail-grid">
+          <section className="admin-detail-grid" hidden={adminConsolePage !== 'users'}>
             <article className="admin-panel">
               <div className="admin-panel-head">
                 <div>
@@ -6759,6 +7272,7 @@ function App() {
                 {!adminAuditLogs.length && <p>暂无审计日志。</p>}
               </div>
             </article>
+          </section>
           </section>
         </main>
       </>

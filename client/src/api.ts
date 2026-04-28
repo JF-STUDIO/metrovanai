@@ -203,6 +203,16 @@ export interface AdminUsersPayload {
   items: AdminUserSummary[];
 }
 
+export interface AdminProjectsPayload {
+  total: number;
+  items: ProjectRecord[];
+}
+
+export interface AdminOrdersPayload {
+  total: number;
+  items: PaymentOrderRecord[];
+}
+
 export interface AdminUserListQuery {
   search?: string;
   role?: 'all' | 'user' | 'admin';
@@ -570,6 +580,16 @@ export async function fetchAdminUsers(query: AdminUserListQuery = {}) {
   if (query.pageSize) params.set('pageSize', String(query.pageSize));
   const queryString = params.toString();
   return await jsonRequest<AdminUsersPayload>(`/api/admin/users${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function fetchAdminProjects(limit = 120) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return await jsonRequest<AdminProjectsPayload>(`/api/admin/projects?${params.toString()}`);
+}
+
+export async function fetchAdminOrders(limit = 120) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return await jsonRequest<AdminOrdersPayload>(`/api/admin/orders?${params.toString()}`);
 }
 
 export async function fetchAdminUserProjects(userId: string) {

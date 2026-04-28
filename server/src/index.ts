@@ -2640,6 +2640,37 @@ app.get('/api/admin/settings', (req, res) => {
   });
 });
 
+app.get('/api/admin/projects', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const limit = Math.max(1, Math.min(500, Math.round(Number(req.query.limit ?? 120))));
+  const projects = store
+    .listUsers()
+    .flatMap((user) => store.listProjects(user.userKey))
+    .sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1));
+
+  res.json({
+    total: projects.length,
+    items: projects.slice(0, limit).map((project) => buildPublicProject(project))
+  });
+});
+
+app.get('/api/admin/orders', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const limit = Math.max(1, Math.min(500, Math.round(Number(req.query.limit ?? 120))));
+  const orders = store.listPaymentOrders();
+
+  res.json({
+    total: orders.length,
+    items: orders.slice(0, limit)
+  });
+});
+
 app.get('/api/studio/features', (_req, res) => {
   res.json({
     features: getEnabledStudioFeatures(store.getSystemSettings())

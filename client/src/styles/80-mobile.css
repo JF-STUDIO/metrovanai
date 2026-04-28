@@ -658,6 +658,49 @@ body {
     flex-direction: column;
   }
 
+  .admin-shell {
+    display: grid;
+  }
+
+  .admin-console-sidebar {
+    position: relative;
+    display: block;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid rgba(124, 232, 255, 0.14);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .admin-console-nav-group {
+    display: inline-grid;
+    min-width: 150px;
+    margin-right: 0.7rem;
+    vertical-align: top;
+  }
+
+  .admin-console-account {
+    display: none;
+  }
+
+  .admin-console-main {
+    padding: 0 0.72rem 1.5rem;
+  }
+
+  .admin-console-topbar {
+    position: relative;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.75rem 0;
+  }
+
+  .admin-dashboard-grid,
+  .admin-console-metrics,
+  .admin-console-work-grid,
+  .admin-console-plan-grid {
+    grid-template-columns: 1fr;
+  }
+
   .admin-panel-actions {
     justify-content: stretch;
   }
