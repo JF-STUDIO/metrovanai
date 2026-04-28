@@ -859,25 +859,24 @@
 
 .feature-launch-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1.25rem;
-  align-items: start;
-  margin-bottom: clamp(1.3rem, 2.4vw, 2.2rem);
+  place-items: center;
+  margin-bottom: clamp(1.05rem, 2vw, 1.65rem);
+  text-align: center;
 }
 
 .feature-launch-head h1 {
   margin: 0;
-  font-size: clamp(2.6rem, 5vw, 4.8rem);
-  line-height: 0.92;
-  letter-spacing: -0.07em;
+  font-size: clamp(2.15rem, 3.7vw, 3.55rem);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
 }
 
 .feature-launch-head p {
-  max-width: 44rem;
-  margin: 0.82rem 0 0;
+  max-width: 42rem;
+  margin: 0.72rem auto 0;
   color: rgba(242, 246, 255, 0.64);
-  font-size: clamp(0.98rem, 1.35vw, 1.22rem);
-  line-height: 1.65;
+  font-size: clamp(0.86rem, 1.05vw, 1rem);
+  line-height: 1.55;
   font-weight: 700;
 }
 
@@ -912,15 +911,15 @@
 .feature-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: clamp(1rem, 1.6vw, 1.45rem);
+  gap: clamp(0.78rem, 1.15vw, 1.05rem);
 }
 
 .studio-feature-card {
   position: relative;
   overflow: hidden;
-  min-height: 27rem;
+  min-height: 20.8rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 1.65rem;
+  border-radius: 1.28rem;
   padding: 0;
   background: rgba(255, 255, 255, 0.03);
   color: #fff;
@@ -943,7 +942,7 @@
 
 .studio-feature-visual {
   position: relative;
-  height: 15.4rem;
+  height: 10.9rem;
   overflow: hidden;
   background:
     linear-gradient(135deg, rgba(255, 185, 76, 0.9), rgba(8, 12, 18, 0.28)),
@@ -991,13 +990,13 @@
 .studio-feature-lock {
   position: absolute;
   z-index: 2;
-  top: 1.1rem;
-  left: 1.1rem;
+  top: 0.82rem;
+  left: 0.82rem;
   border-radius: 999px;
-  padding: 0.46rem 0.78rem;
+  padding: 0.38rem 0.66rem;
   background: rgba(5, 7, 10, 0.68);
   color: rgba(255, 255, 255, 0.92);
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   font-weight: 900;
   letter-spacing: 0.04em;
   backdrop-filter: blur(12px);
@@ -1005,7 +1004,7 @@
 
 .studio-feature-lock {
   left: auto;
-  right: 1.1rem;
+  right: 0.82rem;
   color: rgba(255, 255, 255, 0.76);
 }
 
@@ -1013,33 +1012,33 @@
   position: relative;
   z-index: 1;
   display: grid;
-  gap: 0.82rem;
-  padding: 1.22rem 1.32rem 1.18rem;
+  gap: 0.62rem;
+  padding: 0.92rem 1rem 0.95rem;
 }
 
 .studio-feature-body strong {
-  font-size: clamp(1.38rem, 2vw, 1.8rem);
-  line-height: 1.08;
+  font-size: clamp(1.05rem, 1.45vw, 1.32rem);
+  line-height: 1.12;
   letter-spacing: -0.04em;
 }
 
 .studio-feature-body p {
-  min-height: 4.8rem;
+  min-height: 4.05rem;
   margin: 0;
   color: rgba(242, 246, 255, 0.68);
-  font-size: 0.96rem;
-  line-height: 1.65;
+  font-size: 0.82rem;
+  line-height: 1.52;
   font-weight: 700;
 }
 
 .studio-feature-meta {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1rem;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
-  padding-top: 1rem;
+  padding-top: 0.76rem;
   color: rgba(242, 246, 255, 0.54);
-  font-size: 0.92rem;
+  font-size: 0.82rem;
   font-weight: 900;
 }
 

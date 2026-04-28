@@ -1470,6 +1470,12 @@
   color: rgba(255, 255, 255, 0.5);
 }
 
+.admin-debt-text {
+  display: block;
+  color: #ffb4b4 !important;
+  font-weight: 800;
+}
+
 .admin-status {
   display: inline-flex !important;
   width: fit-content;
@@ -1609,6 +1615,10 @@
   padding: 0.8rem;
 }
 
+.admin-legacy-projects {
+  display: none;
+}
+
 .admin-mini-head,
 .admin-mini-row {
   display: flex;
@@ -1686,6 +1696,211 @@
   opacity: 0.42;
 }
 
+.admin-workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.admin-workflow-grid article,
+.admin-workflow-card,
+.admin-project-inspector,
+.admin-project-row,
+.admin-project-live,
+.admin-live-tile,
+.admin-live-empty {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.admin-workflow-grid article {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 118px;
+  padding: 0.95rem;
+  border-radius: 1.1rem;
+}
+
+.admin-workflow-grid span,
+.admin-workflow-card span,
+.admin-workflow-card small,
+.admin-live-summary small,
+.admin-live-tile small,
+.admin-live-empty span,
+.admin-project-row small,
+.admin-project-list p {
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.admin-workflow-grid strong {
+  overflow: hidden;
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+  text-overflow: ellipsis;
+}
+
+.admin-workflow-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.admin-workflow-card {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.95rem;
+  border-radius: 1.1rem;
+}
+
+.admin-workflow-card strong,
+.admin-workflow-card span,
+.admin-workflow-card small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-project-inspector {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.34fr) minmax(0, 1fr);
+  gap: 0.9rem;
+  padding: 0.9rem;
+  border-radius: 1.25rem;
+}
+
+.admin-project-list {
+  display: grid;
+  align-content: start;
+  gap: 0.55rem;
+}
+
+.admin-project-row {
+  display: grid;
+  gap: 0.25rem;
+  width: 100%;
+  padding: 0.85rem;
+  border-radius: 0.95rem;
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-project-row:hover,
+.admin-project-row.active {
+  border-color: rgba(116, 217, 255, 0.42);
+  background: rgba(116, 217, 255, 0.11);
+}
+
+.admin-project-row span,
+.admin-project-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-project-live {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  padding: 0.95rem;
+  border-radius: 1.15rem;
+}
+
+.admin-live-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.admin-live-summary h3 {
+  margin: 0.25rem 0;
+  font-size: clamp(1.2rem, 2vw, 1.8rem);
+}
+
+.admin-live-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.admin-live-stats span {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 0.4rem 0.65rem;
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.admin-live-section {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.admin-live-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.admin-live-tile {
+  position: relative;
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.55rem;
+  border-radius: 1rem;
+  color: #fff;
+  text-decoration: none;
+}
+
+.admin-live-tile.failed {
+  border-color: rgba(255, 106, 106, 0.32);
+}
+
+.admin-live-tile.processing {
+  border-color: rgba(116, 217, 255, 0.32);
+}
+
+.admin-live-tile img,
+.admin-live-placeholder {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 0.75rem;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.admin-live-placeholder {
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.52);
+  font-weight: 800;
+}
+
+.admin-live-tile span,
+.admin-live-tile small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-live-empty {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  border-radius: 1rem;
+  text-align: center;
+}
+
 @media (max-width: 960px) {
   .admin-header,
   .admin-hero-card {
@@ -1711,7 +1926,11 @@
   .admin-adjust-card,
   .admin-activation-editor,
   .admin-activation-grid,
-  .admin-filter-bar {
+  .admin-filter-bar,
+  .admin-workflow-grid,
+  .admin-workflow-list,
+  .admin-project-inspector,
+  .admin-live-grid {
     grid-template-columns: 1fr;
   }
 }

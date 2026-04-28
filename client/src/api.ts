@@ -258,6 +258,35 @@ export interface AdminSystemSettings {
   runpodHdrBatchSize: number;
 }
 
+export interface AdminWorkflowSummary {
+  executor: {
+    provider: string;
+    workflowEngine?: string;
+    location?: string;
+    root?: string;
+  };
+  apiKeyConfigured: boolean;
+  active: string;
+  settings: {
+    inputMode: string;
+    groupMode: string;
+    saveHDR: boolean;
+    saveGroups: boolean;
+    workflowMaxInFlight: number;
+  };
+  items: Array<{
+    name: string;
+    type: string;
+    purpose: string | null;
+    colorCardNo: string | number | null;
+    workflowId: string | null;
+    instanceType: string | null;
+    inputCount: number;
+    outputCount: number;
+    promptNodeId: string | null;
+  }>;
+}
+
 export interface AdminActivationCodeInput {
   code: string;
   label: string;
@@ -570,6 +599,10 @@ export async function fetchAdminSettings() {
   return await jsonRequest<{ settings: AdminSystemSettings }>('/api/admin/settings');
 }
 
+export async function fetchAdminWorkflows() {
+  return await jsonRequest<{ workflows: AdminWorkflowSummary; settings: AdminSystemSettings }>('/api/admin/workflows');
+}
+
 export async function updateAdminSettings(input: AdminSystemSettings) {
   return await jsonRequest<{ settings: AdminSystemSettings }>('/api/admin/settings', {
     method: 'PATCH',
@@ -729,27 +762,25 @@ export async function retryFailedProcessing(projectId: string) {
   });
 }
 
-export async function downloadProjectArchive(projectId: string, input: DownloadRequestPayload) {
-  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/download`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
-    },
-    body: JSON.stringify(input)
-  });
-
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
+function encodeDownloadOptions(input: DownloadRequestPayload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(input));
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
   }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
 
-  const blob = await response.blob();
-  const disposition = response.headers.get('Content-Disposition') ?? '';
-  const match = disposition.match(/filename="?([^";]+)"?/i);
+export function buildProjectDownloadUrl(projectId: string, input: DownloadRequestPayload) {
+  return `${API_ROOT}/api/projects/${encodeURIComponent(projectId)}/download?options=${encodeURIComponent(
+    encodeDownloadOptions(input)
+  )}`;
+}
+
+export async function downloadProjectArchive(projectId: string, input: DownloadRequestPayload) {
   return {
-    blob,
-    fileName: match?.[1] ?? `${projectId}.zip`
+    downloadUrl: buildProjectDownloadUrl(projectId, input),
+    fileName: `${projectId}.zip`
   };
 }
 

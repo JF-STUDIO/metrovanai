@@ -30,7 +30,7 @@ import {
   sanitizeReturnTo,
   verifyPassword
 } from './auth.js';
-import { buildProjectDownloadArchive, getDefaultDownloadOptions } from './downloads.js';
+import { getDefaultDownloadOptions, getProjectDownloadFileName, streamProjectDownloadArchive } from './downloads.js';
 import { buildHdrItemsFromFrontendLayout } from './importer.js';
 import { extractPreviewOrConvertToJpeg } from './images.js';
 import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js';
@@ -72,6 +72,7 @@ import { createCorsMiddleware } from './middleware/cors.js';
 import { createHelmetMiddleware, createSecurityHeadersMiddleware } from './middleware/security-headers.js';
 import { traceIdMiddleware } from './middleware/trace-id.js';
 import { captureServerError, initServerObservability, logServerEvent } from './observability.js';
+import { loadWorkflowConfig } from './workflows.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -898,6 +899,37 @@ function buildProjectAssetRoute(projectId: string, segments: string[]) {
   return `/api/projects/${encodeURIComponent(projectId)}/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
 }
 
+function getProjectForAuthenticatedRead(user: UserRecord, projectId: string) {
+  return isAdminUser(user) ? store.getProject(projectId) : store.getProjectForUser(projectId, user.userKey);
+}
+
+function buildAdminWorkflowPayload() {
+  const workflowConfig = loadWorkflowConfig(repoRoot);
+  return {
+    executor: processor.getExecutionInfo(),
+    apiKeyConfigured: Boolean(workflowConfig.apiKey?.trim()),
+    active: workflowConfig.active,
+    settings: {
+      inputMode: workflowConfig.settings.inputMode,
+      groupMode: workflowConfig.settings.groupMode,
+      saveHDR: workflowConfig.settings.saveHDR,
+      saveGroups: workflowConfig.settings.saveGroups,
+      workflowMaxInFlight: workflowConfig.settings.workflowMaxInFlight
+    },
+    items: workflowConfig.items.map((item) => ({
+      name: item.name,
+      type: item.type,
+      purpose: item.purpose ?? null,
+      colorCardNo: item.colorCardNo ?? item.colorCard ?? item.cardNo ?? item.card ?? null,
+      workflowId: item.workflowId ?? null,
+      instanceType: item.instanceType ?? null,
+      inputCount: item.inputs?.length ?? 0,
+      outputCount: item.outputs?.length ?? 0,
+      promptNodeId: item.prompt?.nodeId ?? null
+    }))
+  };
+}
+
 function appendAssetVersion(url: string | null, version: string | null | undefined) {
   if (!url || !version) {
     return url;
@@ -1418,7 +1450,7 @@ function getOwnedProjectFromRequest(req: express.Request, res: express.Response)
     return null;
   }
 
-  const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
+  const project = getProjectForAuthenticatedRead(user, String(req.params.id ?? ''));
   if (!project) {
     res.status(404).json({ error: 'Project not found.' });
     return null;
@@ -2467,6 +2499,17 @@ app.get('/api/admin/settings', (req, res) => {
   });
 });
 
+app.get('/api/admin/workflows', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  res.json({
+    workflows: buildAdminWorkflowPayload(),
+    settings: store.getSystemSettings()
+  });
+});
+
 app.patch('/api/admin/settings', (req, res) => {
   const actor = requireAdminApiAccess(req, res);
   if (!actor) {
@@ -3287,7 +3330,7 @@ app.get('/api/projects/:id', (req, res) => {
     return;
   }
 
-  const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
+  const project = getProjectForAuthenticatedRead(user, String(req.params.id ?? ''));
   if (!project) {
     res.status(404).json({ error: 'Project not found.' });
     return;
@@ -3477,6 +3520,49 @@ app.delete('/api/projects/:id', async (req, res) => {
   }
 });
 
+function parseDownloadQueryOptions(rawOptions: unknown) {
+  if (!rawOptions) {
+    return getDefaultDownloadOptions();
+  }
+
+  const encoded = Array.isArray(rawOptions) ? rawOptions[0] : String(rawOptions);
+  try {
+    const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const decoded = Buffer.from(padded, 'base64').toString('utf8');
+    const parsed = downloadRequestSchema.safeParse(JSON.parse(decoded));
+    if (!parsed.success) {
+      throw new Error('Invalid download options.');
+    }
+    return {
+      ...getDefaultDownloadOptions(),
+      ...parsed.data
+    };
+  } catch {
+    throw new Error('Invalid download options.');
+  }
+}
+
+function setArchiveDownloadHeaders(res: express.Response, fileName: string) {
+  const asciiFallback = sanitizeSegment(fileName).replace(/[^\x20-\x7e]/g, '_') || 'metrovan-download.zip';
+  res.status(200);
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${asciiFallback.replace(/["\\]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+  );
+}
+
+async function sendProjectDownloadArchive(
+  project: ProjectRecord,
+  options: ReturnType<typeof getDefaultDownloadOptions>,
+  res: express.Response
+) {
+  setArchiveDownloadHeaders(res, getProjectDownloadFileName(project));
+  await streamProjectDownloadArchive(project, res, options);
+}
+
 app.get('/api/projects/:id/download', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
@@ -3490,10 +3576,13 @@ app.get('/api/projects/:id/download', async (req, res) => {
   }
 
   try {
-    const archive = await buildProjectDownloadArchive(project, getDefaultDownloadOptions());
-    res.download(archive.zipPath, archive.downloadName);
+    await sendProjectDownloadArchive(project, parseDownloadQueryOptions(req.query.options), res);
   } catch (error) {
-    res.status(400).json({ error: getPublicErrorMessage(error, '下载生成失败，请稍后再试。') });
+    if (!res.headersSent) {
+      res.status(400).json({ error: getPublicErrorMessage(error, '下载生成失败，请稍后再试。') });
+    } else {
+      res.destroy(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 });
 
@@ -3516,13 +3605,16 @@ app.post('/api/projects/:id/download', async (req, res) => {
   }
 
   try {
-    const archive = await buildProjectDownloadArchive(project, {
+    await sendProjectDownloadArchive(project, {
       ...getDefaultDownloadOptions(),
       ...parsed.data
-    });
-    res.download(archive.zipPath, archive.downloadName);
+    }, res);
   } catch (error) {
-    res.status(400).json({ error: getPublicErrorMessage(error, '下载生成失败，请稍后再试。') });
+    if (!res.headersSent) {
+      res.status(400).json({ error: getPublicErrorMessage(error, '下载生成失败，请稍后再试。') });
+    } else {
+      res.destroy(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 });
 

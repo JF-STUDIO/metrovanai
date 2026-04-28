@@ -197,11 +197,84 @@ export class ProjectProcessor {
       }
     }));
 
-    const promise = this.run(projectId, options).finally(() => {
+    const promise = this.run(projectId, options).catch((error) => {
+      this.handleRunFailure(projectId, error);
+    }).finally(() => {
       this.activeJobs.delete(projectId);
     });
     this.activeJobs.set(projectId, promise);
     return this.store.getProject(projectId);
+  }
+
+  private handleRunFailure(projectId: string, error: unknown) {
+    const project = this.store.getProject(projectId);
+    if (!project) {
+      return;
+    }
+
+    const completedCount = this.countCompletedHdrItems(project);
+    const failedCount = Math.max(0, project.hdrItems.length - completedCount);
+    const message = error instanceof Error ? error.message : String(error);
+    captureServerError(error, {
+      event: 'project.processor.failed',
+      projectId,
+      phase: 'workflow_running',
+      details: {
+        completedCount,
+        failedCount,
+        message
+      }
+    });
+
+    for (const item of project.hdrItems) {
+      if (this.isHdrItemCompleted(item) || item.status === 'error') {
+        continue;
+      }
+
+      this.store.setHdrItemState(projectId, item.id, (entry) => ({
+        ...entry,
+        status: 'error',
+        statusText: createProcessingText('error'),
+        errorMessage: '处理被中断，请重试这张照片。',
+        workflow: {
+          ...createEmptyWorkflowState(),
+          ...(entry.workflow ?? {}),
+          stage: 'failed',
+          updatedAt: new Date().toISOString(),
+          errorMessage: '处理被中断，请重试这张照片。'
+        }
+      }));
+    }
+
+    this.store.updateProject(projectId, (current) => ({
+      ...current,
+      status: completedCount > 0 ? 'completed' : 'failed',
+      currentStep: completedCount > 0 ? 4 : 3,
+      pointsSpent: completedCount
+    }));
+    this.store.settleProjectProcessingCredits(projectId, POINT_PRICE_USD);
+    this.store.setJobState(projectId, (job) => ({
+      ...job,
+      status: completedCount > 0 ? 'completed' : 'failed',
+      phase: completedCount > 0 ? 'completed' : 'failed',
+      label: completedCount > 0 ? '部分完成' : '处理失败',
+      detail:
+        completedCount > 0
+          ? `已完成 ${completedCount} 张，未完成 ${failedCount} 张可重新处理。`
+          : '照片暂时未能完成，请检查后重试。',
+      currentHdrItemId: null,
+      completedAt: new Date().toISOString(),
+      percent: completedCount > 0 ? 100 : Math.max(job.percent, 1),
+      workflowRealtime: {
+        ...job.workflowRealtime,
+        active: 0,
+        failed: Math.max(job.workflowRealtime.failed, failedCount),
+        succeeded: Math.max(job.workflowRealtime.succeeded, completedCount),
+        returned: Math.max(job.workflowRealtime.returned, completedCount),
+        monitorState: completedCount > 0 ? 'partial-completed' : 'failed',
+        detail: message
+      }
+    }));
   }
 
   async recoverInterruptedProjects() {
@@ -399,7 +472,7 @@ export class ProjectProcessor {
             completedAt: null,
             errorMessage: null
           }),
-          freeUsed: true,
+          freeUsed: creditReservation.free,
           status: 'completed',
           colorCardNo,
           completedAt,

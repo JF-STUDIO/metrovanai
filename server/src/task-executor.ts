@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { HdrItem, ProjectRecord } from './types.js';
 import type { LocalStore } from './store.js';
 import { normalizeHex, sanitizeSegment } from './utils.js';
@@ -372,6 +374,15 @@ async function readRemoteJson<T>(response: Response, fallbackMessage: string): P
   }
 
   return (parsed ?? {}) as T;
+}
+
+async function writeResponseBodyToFile(response: Response, targetPath: string, fallbackMessage: string) {
+  if (!response.ok || !response.body) {
+    throw new Error(`${fallbackMessage} (${response.status})`);
+  }
+
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]), fs.createWriteStream(targetPath));
 }
 
 function createRunpodHeaders(config: RunpodNativeTaskExecutorConfig) {
@@ -979,40 +990,34 @@ class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
           throw new Error('Remote executor completed without returning a result artifact.');
         }
 
-        let outputBuffer: Buffer;
         let outputExtension = path.extname(result.fileName ?? '');
-
-        if (result.base64Data) {
-          outputBuffer = Buffer.from(result.base64Data, 'base64');
-        } else if (result.storageKey) {
-          const objectDownloadResponse = await fetch(createObjectDownloadUrl(result.storageKey));
-          if (!objectDownloadResponse.ok) {
-            throw new Error(`Failed to download remote object result (${objectDownloadResponse.status}).`);
-          }
-          outputBuffer = Buffer.from(await objectDownloadResponse.arrayBuffer());
-          if (!outputExtension) {
-            outputExtension = path.extname(result.storageKey);
-          }
-        } else {
-          const downloadResponse = await fetch(result.downloadUrl as string, {
-            headers: config.token ? { Authorization: `Bearer ${config.token}` } : undefined
-          });
-          if (!downloadResponse.ok) {
-            throw new Error(`Failed to download remote result (${downloadResponse.status}).`);
-          }
-          outputBuffer = Buffer.from(await downloadResponse.arrayBuffer());
-          if (!outputExtension) {
+        if (!outputExtension && result.storageKey) {
+          outputExtension = path.extname(result.storageKey);
+        } else if (!outputExtension && result.downloadUrl) {
+          try {
             outputExtension = path.extname(new URL(result.downloadUrl as string).pathname);
+          } catch {
+            // Keep the fallback extension.
           }
         }
-
         const tempDownloadPath = path.join(
           process.env.TEMP ?? process.cwd(),
           'metrovan_remote_results',
           `${created.jobId}${outputExtension || '.png'}`
         );
-        fs.mkdirSync(path.dirname(tempDownloadPath), { recursive: true });
-        fs.writeFileSync(tempDownloadPath, outputBuffer);
+
+        if (result.base64Data) {
+          fs.mkdirSync(path.dirname(tempDownloadPath), { recursive: true });
+          fs.writeFileSync(tempDownloadPath, Buffer.from(result.base64Data, 'base64'));
+        } else if (result.storageKey) {
+          const objectDownloadResponse = await fetch(createObjectDownloadUrl(result.storageKey));
+          await writeResponseBodyToFile(objectDownloadResponse, tempDownloadPath, 'Failed to download remote object result');
+        } else {
+          const downloadResponse = await fetch(result.downloadUrl as string, {
+            headers: config.token ? { Authorization: `Bearer ${config.token}` } : undefined
+          });
+          await writeResponseBodyToFile(downloadResponse, tempDownloadPath, 'Failed to download remote result');
+        }
 
         const resultPath = buildWorkflowResultTargetPath(this.store, project, mergedFileName, options);
         await extractPreviewOrConvertToJpeg(tempDownloadPath, resultPath, 95);
@@ -1198,49 +1203,44 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
       resultPath: string;
       outputStorageKey: string;
     }) => {
-      let outputBuffer: Buffer;
-      let outputExtension = path.extname(input.result.fileName ?? '') || '.jpg';
+      let outputExtension = path.extname(input.result.fileName ?? '');
       let mirroredStorageKey: string | null = null;
-
-      if (input.result.base64Data) {
-        outputBuffer = Buffer.from(input.result.base64Data, 'base64');
-      } else if (input.result.storageKey) {
-        const objectDownloadResponse = await fetch(
-          createObjectDownloadUrl(input.result.storageKey, config.objectUrlExpiresSeconds)
-        );
-        if (!objectDownloadResponse.ok) {
-          throw new Error(`Failed to download cloud result (${objectDownloadResponse.status}).`);
-        }
-        outputBuffer = Buffer.from(await objectDownloadResponse.arrayBuffer());
+      if (!outputExtension && input.result.storageKey) {
         outputExtension = path.extname(input.result.storageKey) || outputExtension;
-        mirroredStorageKey = input.result.storageKey;
-      } else if (input.result.downloadUrl) {
-        const downloadResponse = await fetch(input.result.downloadUrl);
-        if (!downloadResponse.ok) {
-          throw new Error(`Failed to download cloud result (${downloadResponse.status}).`);
-        }
-        outputBuffer = Buffer.from(await downloadResponse.arrayBuffer());
+      } else if (!outputExtension && input.result.downloadUrl) {
         try {
           outputExtension = path.extname(new URL(input.result.downloadUrl).pathname) || outputExtension;
         } catch {
           // Keep the fallback extension.
         }
-      } else {
-        const objectDownloadResponse = await fetch(createObjectDownloadUrl(input.outputStorageKey, config.objectUrlExpiresSeconds));
-        if (!objectDownloadResponse.ok) {
-          throw new Error('Runpod job completed without returning a result artifact.');
-        }
-        outputBuffer = Buffer.from(await objectDownloadResponse.arrayBuffer());
-        mirroredStorageKey = input.outputStorageKey;
       }
-
       const tempDownloadPath = path.join(
         process.env.TEMP ?? process.cwd(),
         'metrovan_runpod_results',
         `${input.jobId}${outputExtension || '.jpg'}`
       );
-      fs.mkdirSync(path.dirname(tempDownloadPath), { recursive: true });
-      fs.writeFileSync(tempDownloadPath, outputBuffer);
+
+      if (input.result.base64Data) {
+        fs.mkdirSync(path.dirname(tempDownloadPath), { recursive: true });
+        fs.writeFileSync(tempDownloadPath, Buffer.from(input.result.base64Data, 'base64'));
+      } else if (input.result.storageKey) {
+        const objectDownloadResponse = await fetch(
+          createObjectDownloadUrl(input.result.storageKey, config.objectUrlExpiresSeconds)
+        );
+        await writeResponseBodyToFile(objectDownloadResponse, tempDownloadPath, 'Failed to download cloud result');
+        mirroredStorageKey = input.result.storageKey;
+      } else if (input.result.downloadUrl) {
+        const downloadResponse = await fetch(input.result.downloadUrl);
+        await writeResponseBodyToFile(downloadResponse, tempDownloadPath, 'Failed to download cloud result');
+      } else {
+        const objectDownloadResponse = await fetch(createObjectDownloadUrl(input.outputStorageKey, config.objectUrlExpiresSeconds));
+        await writeResponseBodyToFile(
+          objectDownloadResponse,
+          tempDownloadPath,
+          'Runpod job completed without returning a result artifact'
+        );
+        mirroredStorageKey = input.outputStorageKey;
+      }
 
       await extractPreviewOrConvertToJpeg(tempDownloadPath, input.resultPath, 95);
 

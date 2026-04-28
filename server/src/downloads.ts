@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import { Readable, Writable } from 'node:stream';
 import { writeJpegVariant } from './images.js';
-import { restoreObjectToFileIfAvailable } from './object-storage.js';
+import { createObjectDownloadUrl, restoreObjectToFileIfAvailable } from './object-storage.js';
 import type { ProjectRecord } from './types.js';
 import { sanitizeSegment } from './utils.js';
 
@@ -31,6 +32,14 @@ export function getDefaultDownloadOptions(): ProjectDownloadOptions {
   };
 }
 
+function getProjectDownloadBaseName(project: ProjectRecord) {
+  return sanitizeSegment(project.name || project.id) || project.id;
+}
+
+export function getProjectDownloadFileName(project: ProjectRecord) {
+  return `${getProjectDownloadBaseName(project)}.zip`;
+}
+
 export async function buildProjectDownloadArchive(project: ProjectRecord, input?: ProjectDownloadOptions) {
   const options = normalizeDownloadOptions(input);
   const orderedAssets = [...project.resultAssets].sort((left, right) => left.sortOrder - right.sortOrder);
@@ -38,7 +47,7 @@ export async function buildProjectDownloadArchive(project: ProjectRecord, input?
     throw new Error('Project does not have downloadable results yet.');
   }
 
-  const baseName = sanitizeSegment(project.name || project.id) || project.id;
+  const baseName = getProjectDownloadBaseName(project);
   const tempRoot = path.join(os.tmpdir(), 'metrovan-ai-downloads');
   const stagingRoot = path.join(tempRoot, project.id, baseName);
   const zipPath = path.join(tempRoot, `${project.id}-${baseName}.zip`);
@@ -94,7 +103,7 @@ export async function buildProjectDownloadArchive(project: ProjectRecord, input?
 
   return {
     zipPath,
-    downloadName: `${baseName}.zip`
+    downloadName: getProjectDownloadFileName(project)
   };
 }
 
@@ -150,7 +159,7 @@ function assertZip32Limit(value: number, label: string) {
 class ZipWriteCursor {
   offset = 0;
 
-  constructor(private readonly output: fs.WriteStream) {}
+  constructor(private readonly output: Writable) {}
 
   async write(chunk: Buffer) {
     if (!this.output.write(chunk)) {
@@ -165,6 +174,23 @@ class ZipWriteCursor {
     }
   }
 
+  async copyFromReadable(source: AsyncIterable<Buffer | Uint8Array | string>) {
+    let value = 0xffffffff;
+    let size = 0;
+
+    for await (const chunk of source) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      value = crc32Update(value, buffer);
+      await this.write(buffer);
+    }
+
+    return {
+      checksum: crc32Finalize(value),
+      size
+    };
+  }
+
   async close() {
     const finished = once(this.output, 'finish');
     const failed = once(this.output, 'error').then(([error]) => {
@@ -172,6 +198,214 @@ class ZipWriteCursor {
     });
     this.output.end();
     await Promise.race([finished, failed]);
+  }
+}
+
+type DownloadAsset = ProjectRecord['resultAssets'][number];
+
+type PreparedDownloadSource = {
+  stream: AsyncIterable<Buffer | Uint8Array | string>;
+  mtime: Date;
+};
+
+async function prepareAssetDownloadSource(
+  project: ProjectRecord,
+  asset: DownloadAsset,
+  variant: DownloadVariantOption
+): Promise<PreparedDownloadSource | null> {
+  const resize = resolveVariantResize(variant);
+  if (resize) {
+    if (!fs.existsSync(asset.storagePath)) {
+      try {
+        await restoreObjectToFileIfAvailable(asset.storageKey, asset.storagePath);
+      } catch (error) {
+        console.warn(
+          `[download] result restore failed: project=${project.id} asset=${asset.id} key=${asset.storageKey ?? 'none'} ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+
+    if (!fs.existsSync(asset.storagePath)) {
+      console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
+      return null;
+    }
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), `metrovan-download-${project.id}-`));
+    const variantPath = path.join(tempRoot, `${sanitizeSegment(path.basename(asset.fileName, path.extname(asset.fileName))) || asset.id}.jpg`);
+    await writeJpegVariant(asset.storagePath, variantPath, 95, resize);
+    return {
+      stream: fs.createReadStream(variantPath),
+      mtime: fs.statSync(asset.storagePath).mtime
+    };
+  }
+
+  if (fs.existsSync(asset.storagePath)) {
+    return {
+      stream: fs.createReadStream(asset.storagePath),
+      mtime: fs.statSync(asset.storagePath).mtime
+    };
+  }
+
+  if (!asset.storageKey) {
+    console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
+    return null;
+  }
+
+  const response = await fetch(createObjectDownloadUrl(asset.storageKey, 60 * 60));
+  if (!response.ok || !response.body) {
+    console.warn(`[download] object fetch failed: project=${project.id} asset=${asset.id} status=${response.status}`);
+    return null;
+  }
+
+  return {
+    stream: Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+    mtime: new Date(project.updatedAt ?? Date.now())
+  };
+}
+
+async function writeZipStreamEntry(input: {
+  writer: ZipWriteCursor;
+  centralChunks: Buffer[];
+  relativeName: string;
+  mtime: Date;
+  source: AsyncIterable<Buffer | Uint8Array | string>;
+}) {
+  const name = Buffer.from(input.relativeName, 'utf8');
+  const { dosTime, dosDate } = toDosDateTime(input.mtime);
+  const offset = input.writer.offset;
+  assertZip32Limit(offset, `${input.relativeName} offset`);
+
+  const localHeader = Buffer.alloc(30 + name.length);
+  localHeader.writeUInt32LE(0x04034b50, 0);
+  localHeader.writeUInt16LE(20, 4);
+  localHeader.writeUInt16LE(0x0808, 6);
+  localHeader.writeUInt16LE(0, 8);
+  localHeader.writeUInt16LE(dosTime, 10);
+  localHeader.writeUInt16LE(dosDate, 12);
+  localHeader.writeUInt32LE(0, 14);
+  localHeader.writeUInt32LE(0, 18);
+  localHeader.writeUInt32LE(0, 22);
+  localHeader.writeUInt16LE(name.length, 26);
+  localHeader.writeUInt16LE(0, 28);
+  name.copy(localHeader, 30);
+
+  await input.writer.write(localHeader);
+  const { checksum, size } = await input.writer.copyFromReadable(input.source);
+  assertZip32Limit(size, input.relativeName);
+
+  const descriptor = Buffer.alloc(16);
+  descriptor.writeUInt32LE(0x08074b50, 0);
+  descriptor.writeUInt32LE(checksum, 4);
+  descriptor.writeUInt32LE(size, 8);
+  descriptor.writeUInt32LE(size, 12);
+  await input.writer.write(descriptor);
+
+  const centralHeader = Buffer.alloc(46 + name.length);
+  centralHeader.writeUInt32LE(0x02014b50, 0);
+  centralHeader.writeUInt16LE(20, 4);
+  centralHeader.writeUInt16LE(20, 6);
+  centralHeader.writeUInt16LE(0x0808, 8);
+  centralHeader.writeUInt16LE(0, 10);
+  centralHeader.writeUInt16LE(dosTime, 12);
+  centralHeader.writeUInt16LE(dosDate, 14);
+  centralHeader.writeUInt32LE(checksum, 16);
+  centralHeader.writeUInt32LE(size, 20);
+  centralHeader.writeUInt32LE(size, 24);
+  centralHeader.writeUInt16LE(name.length, 28);
+  centralHeader.writeUInt16LE(0, 30);
+  centralHeader.writeUInt16LE(0, 32);
+  centralHeader.writeUInt16LE(0, 34);
+  centralHeader.writeUInt16LE(0, 36);
+  centralHeader.writeUInt32LE(0, 38);
+  centralHeader.writeUInt32LE(offset, 42);
+  name.copy(centralHeader, 46);
+  input.centralChunks.push(centralHeader);
+}
+
+export async function streamProjectDownloadArchive(
+  project: ProjectRecord,
+  output: Writable,
+  input?: ProjectDownloadOptions
+) {
+  const options = normalizeDownloadOptions(input);
+  const orderedAssets = [...project.resultAssets].sort((left, right) => left.sortOrder - right.sortOrder);
+  if (!orderedAssets.length) {
+    throw new Error('Project does not have downloadable results yet.');
+  }
+
+  const baseName = getProjectDownloadBaseName(project);
+  const addVariantSuffix = options.folderMode === 'flat' && options.variants.length > 1;
+  const writer = new ZipWriteCursor(output);
+  const centralChunks: Buffer[] = [];
+  let writtenEntries = 0;
+
+  try {
+    for (const variant of options.variants) {
+      const variantFolder = options.folderMode === 'grouped' ? getVariantFolderName(variant) : '';
+      for (const [index, asset] of orderedAssets.entries()) {
+        const source = await prepareAssetDownloadSource(project, asset, variant);
+        if (!source) {
+          continue;
+        }
+
+        const targetFileName = buildOutputFileName({
+          originalFileName: asset.fileName,
+          index,
+          projectBaseName: baseName,
+          namingMode: options.namingMode,
+          customPrefix: options.customPrefix,
+          variant,
+          addVariantSuffix
+        });
+        const relativeName = path
+          .join(baseName, variantFolder, targetFileName)
+          .split(path.sep)
+          .join('/');
+
+        await writeZipStreamEntry({
+          writer,
+          centralChunks,
+          relativeName,
+          mtime: source.mtime,
+          source: source.stream
+        });
+        writtenEntries += 1;
+      }
+    }
+
+    if (!writtenEntries) {
+      throw new Error('No files were prepared for download.');
+    }
+    if (writtenEntries > 0xffff) {
+      throw new Error('Too many files for a single download archive.');
+    }
+
+    const centralOffset = writer.offset;
+    const centralSize = centralChunks.reduce((total, chunk) => total + chunk.length, 0);
+    assertZip32Limit(centralOffset, 'central directory offset');
+    assertZip32Limit(centralSize, 'central directory size');
+
+    for (const centralHeader of centralChunks) {
+      await writer.write(centralHeader);
+    }
+
+    const endRecord = Buffer.alloc(22);
+    endRecord.writeUInt32LE(0x06054b50, 0);
+    endRecord.writeUInt16LE(0, 4);
+    endRecord.writeUInt16LE(0, 6);
+    endRecord.writeUInt16LE(writtenEntries, 8);
+    endRecord.writeUInt16LE(writtenEntries, 10);
+    endRecord.writeUInt32LE(centralSize, 12);
+    endRecord.writeUInt32LE(centralOffset, 16);
+    endRecord.writeUInt16LE(0, 20);
+
+    await writer.write(endRecord);
+    await writer.close();
+  } catch (error) {
+    output.destroy(error instanceof Error ? error : new Error(String(error)));
+    throw error;
   }
 }
 

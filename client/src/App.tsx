@@ -40,6 +40,7 @@ import {
   fetchAdminSettings,
   fetchAdminUserDetail,
   fetchAdminUsers,
+  fetchAdminWorkflows,
   fetchAuthProviders,
   fetchBilling,
   fetchProject,
@@ -72,6 +73,7 @@ import type {
   AdminSystemSettings,
   AdminUserListQuery,
   AdminUserSummary,
+  AdminWorkflowSummary,
   UploadedObjectReference,
   UploadProgressSnapshot
 } from './api';
@@ -1561,6 +1563,14 @@ function generateActivationCode() {
   return `BETA-${code.slice(0, 4)}-${code.slice(4)}`;
 }
 
+function getBillingOverdrawnPoints(summary: BillingSummary | null | undefined) {
+  if (!summary) {
+    return 0;
+  }
+
+  return Math.max(0, summary.totalChargedPoints - summary.totalCreditedPoints);
+}
+
 const DEMO_BILLING_SUMMARY: BillingSummary = {
   availablePoints: 408,
   totalCreditedPoints: 420,
@@ -2442,6 +2452,10 @@ function App() {
   const [adminSystemLoaded, setAdminSystemLoaded] = useState(false);
   const [adminSystemBusy, setAdminSystemBusy] = useState(false);
   const [adminSystemDraft, setAdminSystemDraft] = useState({ runpodHdrBatchSize: '10' });
+  const [adminWorkflowSummary, setAdminWorkflowSummary] = useState<AdminWorkflowSummary | null>(null);
+  const [adminWorkflowLoaded, setAdminWorkflowLoaded] = useState(false);
+  const [adminWorkflowBusy, setAdminWorkflowBusy] = useState(false);
+  const [adminSelectedProjectId, setAdminSelectedProjectId] = useState<string | null>(null);
   const [adminActivationDraft, setAdminActivationDraft] = useState({
     code: '',
     label: '',
@@ -2541,7 +2555,7 @@ function App() {
             ? copy.authModeResetConfirm
             : copy.authModeVerifyEmail;
   const currentProject = useMemo(
-    () => visibleProjects.find((project) => project.id === currentProjectId) ?? visibleProjects[0] ?? null,
+    () => (currentProjectId ? visibleProjects.find((project) => project.id === currentProjectId) ?? null : null),
     [visibleProjects, currentProjectId]
   );
   const displayResultAssets = useMemo(() => {
@@ -2662,6 +2676,15 @@ function App() {
     }),
     [adminTotalUsers, adminUsers]
   );
+  const adminSelectedProject = useMemo(
+    () => adminDetailProjects.find((project) => project.id === adminSelectedProjectId) ?? adminDetailProjects[0] ?? null,
+    [adminDetailProjects, adminSelectedProjectId]
+  );
+  const adminSelectedProjectResults = adminSelectedProject?.resultAssets ?? [];
+  const adminSelectedProjectFailedItems =
+    adminSelectedProject?.hdrItems.filter((item) => item.status === 'error') ?? [];
+  const adminSelectedProjectProcessingItems =
+    adminSelectedProject?.hdrItems.filter((item) => isHdrItemProcessing(item.status)) ?? [];
   const hasAdminSession = session?.role === 'admin' && session.accountStatus === 'active';
   const adminUserQuery = useMemo<AdminUserListQuery>(
     () => ({
@@ -2928,6 +2951,40 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [activeRoute, adminSystemLoaded, hasAdminSession, locale]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || !hasAdminSession || adminWorkflowLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setAdminWorkflowBusy(true);
+      fetchAdminWorkflows()
+        .then((response) => {
+          if (cancelled) return;
+          setAdminWorkflowSummary(response.workflows);
+          setAdminSystemSettings(response.settings);
+          setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+          setAdminWorkflowLoaded(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setAdminWorkflowLoaded(true);
+          setAdminMessage(getUserFacingErrorMessage(error, '工作流配置读取失败。', locale));
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setAdminWorkflowBusy(false);
+          }
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeRoute, adminWorkflowLoaded, hasAdminSession, locale]);
 
   useEffect(() => {
     if (!userMenuOpen) {
@@ -3211,7 +3268,7 @@ function App() {
           if (current && response.items.some((item) => item.id === current)) {
             return current;
           }
-          return response.items[0]?.id ?? null;
+          return null;
         });
       })
       .catch((error) => {
@@ -3390,6 +3447,37 @@ function App() {
     return () => window.clearInterval(timer);
   }, [isDemoMode, currentProject, session]);
 
+  useEffect(() => {
+    if (isDemoMode || activeRoute !== 'admin' || !hasAdminSession || !adminSelectedProject) {
+      return;
+    }
+
+    const shouldPoll =
+      adminSelectedProject.status === 'importing' ||
+      adminSelectedProject.status === 'uploading' ||
+      adminSelectedProject.status === 'processing' ||
+      adminSelectedProject.resultAssets.some((asset) => asset.regeneration?.status === 'running') ||
+      adminSelectedProject.hdrItems.some((item) => isHdrItemProcessing(item.status)) ||
+      adminSelectedProject.job?.status === 'pending' ||
+      adminSelectedProject.job?.status === 'processing';
+
+    if (!shouldPoll) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void fetchProject(adminSelectedProject.id)
+        .then((response) => {
+          setAdminDetailProjects((current) =>
+            current.map((project) => (project.id === response.project.id ? response.project : project))
+          );
+        })
+        .catch(() => undefined);
+    }, 2500);
+
+    return () => window.clearInterval(timer);
+  }, [activeRoute, adminSelectedProject, hasAdminSession, isDemoMode]);
+
   function navigateToRoute(nextRoute: AppRoute) {
     const nextPath = getPathForRoute(nextRoute);
     const nextUrl = `${nextPath}${window.location.hash}`;
@@ -3447,10 +3535,31 @@ function App() {
       const response = await fetchAdminUserDetail(userId);
       setAdminSelectedUser(response.user);
       setAdminDetailProjects(response.projects);
+      setAdminSelectedProjectId(response.projects[0]?.id ?? null);
       setAdminDetailBillingEntries(response.billingEntries);
       setAdminAuditLogs(response.auditLogs);
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '用户详情读取失败。', locale));
+    } finally {
+      setAdminDetailBusy(false);
+    }
+  }
+
+  async function handleAdminSelectProject(projectId: string) {
+    setAdminSelectedProjectId(projectId);
+    setAdminDetailBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchProject(projectId);
+      setAdminDetailProjects((current) => {
+        const exists = current.some((project) => project.id === response.project.id);
+        if (!exists) {
+          return [response.project, ...current];
+        }
+        return current.map((project) => (project.id === response.project.id ? response.project : project));
+      });
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '项目读取失败。', locale));
     } finally {
       setAdminDetailBusy(false);
     }
@@ -3623,11 +3732,44 @@ function App() {
       setAdminSystemSettings(response.settings);
       setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
       setAdminSystemLoaded(true);
+      setAdminWorkflowSummary((current) =>
+        current
+          ? {
+              ...current,
+              settings: {
+                ...current.settings,
+                workflowMaxInFlight: response.settings.runpodHdrBatchSize
+              }
+            }
+          : current
+      );
       setAdminMessage('系统设置已刷新。');
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '系统设置读取失败。', locale));
     } finally {
       setAdminSystemBusy(false);
+    }
+  }
+
+  async function handleAdminLoadWorkflows() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminWorkflowBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminWorkflows();
+      setAdminWorkflowSummary(response.workflows);
+      setAdminSystemSettings(response.settings);
+      setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
+      setAdminWorkflowLoaded(true);
+      setAdminMessage('工作流配置已刷新。');
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '工作流配置读取失败。', locale));
+    } finally {
+      setAdminWorkflowBusy(false);
     }
   }
 
@@ -3651,6 +3793,17 @@ function App() {
       setAdminSystemSettings(response.settings);
       setAdminSystemDraft({ runpodHdrBatchSize: String(response.settings.runpodHdrBatchSize) });
       setAdminSystemLoaded(true);
+      setAdminWorkflowSummary((current) =>
+        current
+          ? {
+              ...current,
+              settings: {
+                ...current.settings,
+                workflowMaxInFlight: response.settings.runpodHdrBatchSize
+              }
+            }
+          : current
+      );
       setAdminMessage(`已更新：每个云处理任务 ${response.settings.runpodHdrBatchSize} 组 HDR。`);
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '系统设置保存失败。', locale));
@@ -3797,15 +3950,14 @@ function App() {
     setDownloadBusy(true);
     try {
       const payload = buildDownloadPayload();
-      const { blob, fileName } = await downloadProjectArchive(downloadProject.id, payload);
-      const downloadUrl = URL.createObjectURL(blob);
+      const { downloadUrl, fileName } = await downloadProjectArchive(downloadProject.id, payload);
       const anchor = document.createElement('a');
       anchor.href = downloadUrl;
       anchor.download = fileName;
+      anchor.rel = 'noopener';
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(downloadUrl);
       closeDownloadDialog(true);
     } catch (error) {
       setMessage(getUserFacingErrorMessage(error, copy.downloadFailed, locale));
@@ -4277,8 +4429,7 @@ function App() {
       setProjects((current) => current.filter((item) => item.id !== project.id));
       setCurrentProjectId((current) => {
         if (current !== project.id) return current;
-        const remaining = projects.filter((item) => item.id !== project.id);
-        return remaining[0]?.id ?? null;
+        return null;
       });
       setMessage('');
     } catch (error) {
@@ -5309,6 +5460,78 @@ function App() {
           <section className="admin-panel">
             <div className="admin-panel-head">
               <div>
+                <span className="admin-kicker">Workflow Control</span>
+                <h2>工作流管理</h2>
+              </div>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => void handleAdminLoadWorkflows()}
+                disabled={adminWorkflowBusy}
+              >
+                {adminWorkflowBusy ? '刷新中...' : '刷新工作流'}
+              </button>
+            </div>
+
+            {adminWorkflowSummary ? (
+              <>
+                <div className="admin-workflow-grid">
+                  <article>
+                    <span>执行器</span>
+                    <strong>{adminWorkflowSummary.executor.provider}</strong>
+                    <small>{adminWorkflowSummary.executor.workflowEngine ?? adminWorkflowSummary.executor.location ?? 'production'}</small>
+                  </article>
+                  <article>
+                    <span>当前主流程</span>
+                    <strong>{adminWorkflowSummary.active}</strong>
+                    <small>{adminWorkflowSummary.apiKeyConfigured ? 'API 已配置' : 'API 未配置'}</small>
+                  </article>
+                  <article>
+                    <span>Runpod 批量</span>
+                    <strong>{adminSystemSettings?.runpodHdrBatchSize ?? adminWorkflowSummary.settings.workflowMaxInFlight} 组</strong>
+                    <small>每个云端任务包含的 HDR 组数</small>
+                  </article>
+                  <article>
+                    <span>工作流并发</span>
+                    <strong>{adminWorkflowSummary.settings.workflowMaxInFlight}</strong>
+                    <small>回传后进入后续修图队列</small>
+                  </article>
+                </div>
+
+                <div className="admin-workflow-list">
+                  {adminWorkflowSummary.items.length ? (
+                    adminWorkflowSummary.items.map((item) => (
+                      <article key={`${item.name}-${item.workflowId ?? item.type}`} className="admin-workflow-card">
+                        <div>
+                          <strong>{item.name}</strong>
+                          <span>{item.type}{item.purpose ? ` · ${item.purpose}` : ''}</span>
+                        </div>
+                        <small>Workflow ID: {item.workflowId ?? '未配置'}</small>
+                        <small>
+                          输入 {item.inputCount} · 输出 {item.outputCount}
+                          {item.colorCardNo ? ` · 色卡 ${item.colorCardNo}` : ''}
+                        </small>
+                      </article>
+                    ))
+                  ) : (
+                    <div className="admin-empty compact">
+                      <strong>暂无工作流条目</strong>
+                      <span>请检查服务器工作流配置文件。</span>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="admin-empty compact">
+                <strong>{adminWorkflowBusy ? '正在读取工作流...' : '尚未加载工作流配置'}</strong>
+                <span>点击“刷新工作流”查看当前执行器、主流程、批量和工作流 ID。</span>
+              </div>
+            )}
+          </section>
+
+          <section className="admin-panel">
+            <div className="admin-panel-head">
+              <div>
                 <span className="admin-kicker">Activation Codes</span>
                 <h2>充值优惠码</h2>
               </div>
@@ -5580,10 +5803,13 @@ function App() {
                         <td>
                           <strong>{user.billingSummary.availablePoints}</strong>
                           <span>已用 {user.billingSummary.totalChargedPoints}</span>
+                          {getBillingOverdrawnPoints(user.billingSummary) > 0 && (
+                            <small className="admin-debt-text">超扣 {getBillingOverdrawnPoints(user.billingSummary)} pts</small>
+                          )}
                         </td>
                         <td>
                           <strong>${user.billingSummary.totalTopUpUsd.toFixed(2)}</strong>
-                          <span>累计 {user.billingSummary.totalCreditedPoints} pts</span>
+                          <span>累计获得 {user.billingSummary.totalCreditedPoints} pts</span>
                         </td>
                         <td>
                           <span>{formatAdminDate(user.lastLoginAt)}</span>
@@ -5721,6 +5947,9 @@ function App() {
                     <div>
                       <span>积分余额</span>
                       <strong>{adminSelectedUser.billingSummary.availablePoints} pts</strong>
+                      {getBillingOverdrawnPoints(adminSelectedUser.billingSummary) > 0 && (
+                        <small className="admin-debt-text">超扣 {getBillingOverdrawnPoints(adminSelectedUser.billingSummary)} pts</small>
+                      )}
                     </div>
                   </div>
 
@@ -5759,7 +5988,7 @@ function App() {
                     </button>
                   </div>
 
-                  <div className="admin-mini-table">
+                  <div className="admin-mini-table admin-legacy-projects">
                     <div className="admin-mini-head">
                       <strong>最近项目</strong>
                       <span>{adminDetailProjects.length} 个</span>
@@ -5776,6 +6005,134 @@ function App() {
                     ) : (
                       <p>暂无项目。</p>
                     )}
+                  </div>
+
+                  <div className="admin-project-inspector">
+                    <div className="admin-project-list">
+                      <div className="admin-mini-head">
+                        <strong>用户项目</strong>
+                        <span>{adminDetailProjects.length} 个</span>
+                      </div>
+                      {adminDetailBusy && !adminDetailProjects.length ? (
+                        <p>正在读取项目...</p>
+                      ) : adminDetailProjects.length ? (
+                        adminDetailProjects.map((project) => (
+                          <button
+                            key={project.id}
+                            className={`admin-project-row${adminSelectedProject?.id === project.id ? ' active' : ''}`}
+                            type="button"
+                            onClick={() => void handleAdminSelectProject(project.id)}
+                          >
+                            <span>{project.name}</span>
+                            <small>
+                              {getProjectStatusLabel(project, locale)} · {project.photoCount} 张 · {project.resultAssets.length} 结果 ·{' '}
+                              {formatAdminDate(project.updatedAt)}
+                            </small>
+                          </button>
+                        ))
+                      ) : (
+                        <p>暂无项目。</p>
+                      )}
+                    </div>
+
+                    <div className="admin-project-live">
+                      {adminSelectedProject ? (
+                        <>
+                          <div className="admin-live-summary">
+                            <div>
+                              <span className="admin-kicker">Live Project</span>
+                              <h3>{adminSelectedProject.name}</h3>
+                              <small>
+                                {getProjectStatusLabel(adminSelectedProject, locale)} · {adminSelectedProject.photoCount} 张照片 ·{' '}
+                                {adminSelectedProject.resultAssets.length} 张结果
+                              </small>
+                            </div>
+                            <div className="admin-live-stats">
+                              <span>失败 {adminSelectedProjectFailedItems.length}</span>
+                              <span>处理中 {adminSelectedProjectProcessingItems.length}</span>
+                              <span>结果 {adminSelectedProjectResults.length}</span>
+                            </div>
+                          </div>
+
+                          {adminSelectedProjectResults.length ? (
+                            <div className="admin-live-section">
+                              <strong>处理结果</strong>
+                              <div className="admin-live-grid">
+                                {adminSelectedProjectResults.slice(0, 12).map((asset) => (
+                                  <a
+                                    key={asset.id}
+                                    className="admin-live-tile"
+                                    href={resolveMediaUrl(asset.storageUrl)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <img
+                                      src={resolveMediaUrl(asset.previewUrl ?? asset.storageUrl)}
+                                      alt={asset.fileName}
+                                      loading="lazy"
+                                      decoding="async"
+                                    />
+                                    <span>{asset.fileName}</span>
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {adminSelectedProjectFailedItems.length ? (
+                            <div className="admin-live-section">
+                              <strong>失败照片</strong>
+                              <div className="admin-live-grid">
+                                {adminSelectedProjectFailedItems.slice(0, 12).map((item) => (
+                                  <article key={item.id} className="admin-live-tile failed">
+                                    {item.previewUrl ? (
+                                      <img src={resolveMediaUrl(item.previewUrl)} alt={item.title} loading="lazy" decoding="async" />
+                                    ) : (
+                                      <div className="admin-live-placeholder">无预览</div>
+                                    )}
+                                    <span>{item.title}</span>
+                                    <small>{item.errorMessage ?? getHdrItemStatusLabel(item, locale)}</small>
+                                  </article>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {adminSelectedProjectProcessingItems.length ? (
+                            <div className="admin-live-section">
+                              <strong>处理中照片</strong>
+                              <div className="admin-live-grid">
+                                {adminSelectedProjectProcessingItems.slice(0, 12).map((item) => (
+                                  <article key={item.id} className="admin-live-tile processing">
+                                    {item.previewUrl ? (
+                                      <img src={resolveMediaUrl(item.previewUrl)} alt={item.title} loading="lazy" decoding="async" />
+                                    ) : (
+                                      <div className="admin-live-placeholder">等待预览</div>
+                                    )}
+                                    <span>{item.title}</span>
+                                    <small>{getHdrItemStatusLabel(item, locale)}</small>
+                                  </article>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {!adminSelectedProjectResults.length &&
+                            !adminSelectedProjectFailedItems.length &&
+                            !adminSelectedProjectProcessingItems.length && (
+                              <div className="admin-live-empty">
+                                <strong>暂无实时照片</strong>
+                                <span>项目开始上传或处理后，这里会显示预览、结果和失败项。</span>
+                              </div>
+                            )}
+                        </>
+                      ) : (
+                        <div className="admin-live-empty">
+                          <strong>请选择项目</strong>
+                          <span>点击左侧项目后可查看结果、失败项和处理中照片。</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -6009,13 +6366,6 @@ function App() {
                     <h1>新建项目</h1>
                     <p>选择最贴合您拍摄场景的修图功能。每张功能卡片对应一条经过调校的处理流程，所需积分实时显示。</p>
                   </div>
-                  <div className="feature-filter-row" aria-label="Feature categories">
-                    <span className="active">全部</span>
-                    <span>室内</span>
-                    <span>室外</span>
-                    <span>特殊场景</span>
-                    <span>新功能</span>
-                  </div>
                 </div>
                 <div className="feature-card-grid">
                   {STUDIO_FEATURES.map((feature) => {
@@ -6045,7 +6395,6 @@ function App() {
                           <strong>{feature.title[locale]}</strong>
                           <p>{feature.description[locale]}</p>
                           <div className="studio-feature-meta">
-                            <span>{feature.exposureLabel[locale]}</span>
                             <em>{feature.pointLabel[locale]}</em>
                           </div>
                         </div>
@@ -6065,6 +6414,18 @@ function App() {
                     <span className="muted">{copy.currentProject}</span>
                     <div className="project-head-title-row">
                       <h2>{currentProject.name}</h2>
+                      {!isDemoMode && (
+                        <button
+                          className="ghost-button compact project-head-back"
+                          type="button"
+                          onClick={() => {
+                            setCurrentProjectId(null);
+                            setMessage('');
+                          }}
+                        >
+                          {locale === 'en' ? 'Back to tools' : '返回功能卡片'}
+                        </button>
+                      )}
                       {!isDemoMode && (
                         <button className="ghost-button compact project-head-rename" type="button" onClick={() => void handleRenameProject(currentProject)}>
                           {copy.rename}
