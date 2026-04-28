@@ -658,6 +658,15 @@ export async function updateAdminSettings(input: AdminSystemSettings) {
   });
 }
 
+export async function uploadAdminStudioFeatureImage(file: File) {
+  const formData = new FormData();
+  formData.set('file', file);
+  return await jsonRequest<{ url: string; fileName: string }>('/api/admin/studio-feature-image', {
+    method: 'POST',
+    body: formData
+  });
+}
+
 export async function fetchAdminActivationCodes() {
   return await jsonRequest<AdminActivationCodesPayload>('/api/admin/activation-codes');
 }

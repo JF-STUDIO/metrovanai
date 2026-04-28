@@ -66,6 +66,7 @@ import {
   updateAdminSettings,
   updateAdminUser,
   updateGroup,
+  uploadAdminStudioFeatureImage,
   uploadFiles,
   logoutAdminUserSessions
 } from './api';
@@ -99,6 +100,7 @@ type UiLocale = 'zh' | 'en';
 type AppRoute = 'home' | 'plans' | 'studio' | 'admin';
 type StudioFeatureId = string;
 type StudioFeatureStatus = 'available' | 'beta' | 'locked';
+type StudioFeatureImageField = 'beforeImageUrl' | 'afterImageUrl';
 
 const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
 const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
@@ -482,6 +484,27 @@ function studioFeatureConfigToDefinition(feature: StudioFeatureConfig): StudioFe
 function normalizeStudioFeatureDrafts(features: StudioFeatureConfig[] | undefined) {
   return Array.isArray(features) ? features : [];
 }
+
+const ADMIN_FEATURE_CATEGORY_OPTIONS: Array<{ value: StudioFeatureConfig['category']; label: string }> = [
+  { value: 'interior', label: '室内精修' },
+  { value: 'exterior', label: '室外风格' },
+  { value: 'special', label: '其它功能' },
+  { value: 'new', label: '新功能' },
+  { value: 'all', label: '全部展示' }
+];
+
+const ADMIN_FEATURE_STATUS_OPTIONS: Array<{ value: StudioFeatureConfig['status']; label: string }> = [
+  { value: 'available', label: '可用' },
+  { value: 'beta', label: '测试' }
+];
+
+const ADMIN_FEATURE_TONE_OPTIONS: Array<{ value: StudioFeatureConfig['tone']; label: string }> = [
+  { value: 'warm', label: '暖色' },
+  { value: 'white', label: '白墙' },
+  { value: 'dusk', label: '暮色' },
+  { value: 'blue', label: '蓝调' },
+  { value: 'season', label: '季节' }
+];
 
 const DEFAULT_REGENERATION_COLOR = '#F2E8D8';
 const RESULT_COLOR_CARD_STORAGE_KEY = 'metrovanai_result_color_cards';
@@ -2478,6 +2501,8 @@ function App() {
   const [adminSystemBusy, setAdminSystemBusy] = useState(false);
   const [adminSystemDraft, setAdminSystemDraft] = useState({ runpodHdrBatchSize: '10' });
   const [adminFeatureDrafts, setAdminFeatureDrafts] = useState<StudioFeatureConfig[]>([]);
+  const [adminExpandedFeatureIds, setAdminExpandedFeatureIds] = useState<Record<string, boolean>>({});
+  const [adminFeatureImageBusy, setAdminFeatureImageBusy] = useState<string | null>(null);
   const [adminWorkflowSummary, setAdminWorkflowSummary] = useState<AdminWorkflowSummary | null>(null);
   const [adminWorkflowLoaded, setAdminWorkflowLoaded] = useState(false);
   const [adminWorkflowBusy, setAdminWorkflowBusy] = useState(false);
@@ -3874,6 +3899,63 @@ function App() {
         return { ...feature, ...resolvedPatch };
       })
     );
+  }
+
+  function toggleAdminFeatureDraft(featureId: string) {
+    setAdminExpandedFeatureIds((current) => ({
+      ...current,
+      [featureId]: !current[featureId]
+    }));
+  }
+
+  function handleAddAdminFeatureCard() {
+    const sequence = adminFeatureDrafts.length + 1;
+    const id = `custom-${Date.now().toString(36)}`;
+    const draft: StudioFeatureConfig = {
+      id,
+      enabled: false,
+      category: 'interior',
+      status: 'beta',
+      titleZh: `新功能 ${sequence}`,
+      titleEn: `New Feature ${sequence}`,
+      descriptionZh: '填写这个功能的前台短描述。',
+      descriptionEn: 'Describe what this workflow does.',
+      detailZh: '填写点开卡片后的流程说明。',
+      detailEn: 'Add the detailed workflow description.',
+      tagZh: '自定义',
+      tagEn: 'Custom',
+      beforeImageUrl: '',
+      afterImageUrl: '',
+      workflowId: '',
+      inputNodeId: '',
+      outputNodeId: '',
+      pointsPerPhoto: 1,
+      tone: 'warm'
+    };
+    setAdminFeatureDrafts((current) => [...current, draft]);
+    setAdminExpandedFeatureIds((current) => ({ ...current, [id]: true }));
+    setAdminMessage('已添加新功能卡片，配置工作流、节点、图片和积分后保存。');
+  }
+
+  async function handleAdminFeatureImageUpload(featureId: string, field: StudioFeatureImageField, file: File) {
+    const hasImageExtension = /\.(jpe?g|png|webp)$/i.test(file.name);
+    if (!file.type.startsWith('image/') && !hasImageExtension) {
+      setAdminMessage('请上传 JPG、PNG 或 WebP 图片。');
+      return;
+    }
+
+    const busyKey = `${featureId}:${field}`;
+    setAdminFeatureImageBusy(busyKey);
+    setAdminMessage('');
+    try {
+      const response = await uploadAdminStudioFeatureImage(file);
+      updateAdminFeatureDraft(featureId, { [field]: response.url } as Partial<Pick<StudioFeatureConfig, StudioFeatureImageField>>);
+      setAdminMessage('对比图已上传，保存卡片配置后前台生效。');
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '对比图上传失败。', locale));
+    } finally {
+      setAdminFeatureImageBusy(null);
+    }
   }
 
   async function handleAdminSaveSystemSettings() {
@@ -5595,113 +5677,283 @@ function App() {
                 <span className="admin-kicker">Studio Cards</span>
                 <h2>功能卡片配置</h2>
               </div>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => void handleAdminLoadSystemSettings()}
-                disabled={adminSystemBusy}
-              >
-                刷新卡片
-              </button>
+              <div className="admin-panel-actions">
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={handleAddAdminFeatureCard}
+                  disabled={adminSystemBusy}
+                >
+                  添加卡片
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => void handleAdminLoadSystemSettings()}
+                  disabled={adminSystemBusy}
+                >
+                  刷新卡片
+                </button>
+              </div>
             </div>
-            <div className="admin-workflow-list">
+            <div className="admin-workflow-list admin-feature-list">
               {adminFeatureDrafts.length ? (
-                adminFeatureDrafts.map((feature) => (
-                  <article key={feature.id} className="admin-workflow-card admin-feature-editor-card">
-                    <label className="admin-toggle-field">
-                      <span>启用前台显示</span>
-                      <input
-                        type="checkbox"
-                        checked={feature.enabled}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { enabled: event.target.checked })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>功能 ID</span>
-                      <input value={feature.id} disabled />
-                    </label>
-                    <label>
-                      <span>中文名字</span>
-                      <input
-                        value={feature.titleZh}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { titleZh: event.target.value })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>英文名字</span>
-                      <input
-                        value={feature.titleEn}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { titleEn: event.target.value })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>中文描述</span>
-                      <input
-                        value={feature.descriptionZh}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionZh: event.target.value })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>对比图 Before URL</span>
-                      <input
-                        value={feature.beforeImageUrl}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { beforeImageUrl: event.target.value })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>对比图 After URL</span>
-                      <input
-                        value={feature.afterImageUrl}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { afterImageUrl: event.target.value })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>工作流 ID</span>
-                      <input
-                        value={feature.workflowId}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>输入节点</span>
-                      <input
-                        value={feature.inputNodeId}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { inputNodeId: event.target.value })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>输出节点</span>
-                      <input
-                        value={feature.outputNodeId}
-                        onChange={(event) => updateAdminFeatureDraft(feature.id, { outputNodeId: event.target.value })}
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>每张积分</span>
-                      <input
-                        type="number"
-                        min="0"
-                        max="1000"
-                        value={feature.pointsPerPhoto}
-                        onChange={(event) =>
-                          updateAdminFeatureDraft(feature.id, {
-                            pointsPerPhoto: Math.max(0, Math.round(Number(event.target.value) || 0))
-                          })
-                        }
-                        disabled={adminSystemBusy}
-                      />
-                    </label>
-                  </article>
-                ))
+                adminFeatureDrafts.map((feature) => {
+                  const expanded = Boolean(adminExpandedFeatureIds[feature.id]);
+                  const beforeBusy = adminFeatureImageBusy === `${feature.id}:beforeImageUrl`;
+                  const afterBusy = adminFeatureImageBusy === `${feature.id}:afterImageUrl`;
+
+                  return (
+                    <article key={feature.id} className="admin-workflow-card admin-feature-editor-card">
+                      <button
+                        className="admin-feature-summary"
+                        type="button"
+                        onClick={() => toggleAdminFeatureDraft(feature.id)}
+                        aria-expanded={expanded}
+                      >
+                        <div className="admin-feature-summary-main">
+                          <span className="admin-feature-chip">
+                            {feature.enabled ? '前台显示' : '已隐藏'} · {feature.status === 'available' ? '可用' : '测试'}
+                          </span>
+                          <strong>{feature.titleZh || feature.id}</strong>
+                          <small>{feature.id}</small>
+                        </div>
+                        <div className="admin-feature-summary-meta">
+                          <span>Workflow: {feature.workflowId || '未设置'}</span>
+                          <span>Input: {feature.inputNodeId || '未设置'}</span>
+                          <span>Output: {feature.outputNodeId || '未设置'}</span>
+                          <span>{feature.pointsPerPhoto} 积分 / 张</span>
+                        </div>
+                        <div className="admin-feature-summary-images" aria-hidden="true">
+                          <span>{feature.beforeImageUrl ? <img src={feature.beforeImageUrl} alt="" /> : 'Before'}</span>
+                          <span>{feature.afterImageUrl ? <img src={feature.afterImageUrl} alt="" /> : 'After'}</span>
+                        </div>
+                        <span className="admin-feature-summary-toggle">{expanded ? '收起' : '展开'}</span>
+                      </button>
+
+                      {expanded ? (
+                        <div className="admin-feature-editor-body">
+                          <label className="admin-toggle-field">
+                            <span>启用前台显示</span>
+                            <input
+                              type="checkbox"
+                              checked={feature.enabled}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { enabled: event.target.checked })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>功能 ID</span>
+                            <input value={feature.id} disabled />
+                          </label>
+                          <label>
+                            <span>分类</span>
+                            <select
+                              value={feature.category}
+                              onChange={(event) =>
+                                updateAdminFeatureDraft(feature.id, {
+                                  category: event.target.value as StudioFeatureConfig['category']
+                                })
+                              }
+                              disabled={adminSystemBusy}
+                            >
+                              {ADMIN_FEATURE_CATEGORY_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>状态</span>
+                            <select
+                              value={feature.status}
+                              onChange={(event) =>
+                                updateAdminFeatureDraft(feature.id, {
+                                  status: event.target.value as StudioFeatureConfig['status']
+                                })
+                              }
+                              disabled={adminSystemBusy}
+                            >
+                              {ADMIN_FEATURE_STATUS_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>中文名字</span>
+                            <input
+                              value={feature.titleZh}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { titleZh: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>英文名字</span>
+                            <input
+                              value={feature.titleEn}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { titleEn: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>标签中文</span>
+                            <input
+                              value={feature.tagZh}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { tagZh: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>标签英文</span>
+                            <input
+                              value={feature.tagEn}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { tagEn: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>中文描述</span>
+                            <textarea
+                              value={feature.descriptionZh}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionZh: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>英文描述</span>
+                            <textarea
+                              value={feature.descriptionEn}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionEn: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>中文详情</span>
+                            <textarea
+                              value={feature.detailZh}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { detailZh: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>英文详情</span>
+                            <textarea
+                              value={feature.detailEn}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { detailEn: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>工作流 ID</span>
+                            <input
+                              value={feature.workflowId}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>输入节点</span>
+                            <input
+                              value={feature.inputNodeId}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { inputNodeId: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>输出节点</span>
+                            <input
+                              value={feature.outputNodeId}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { outputNodeId: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>每张积分</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="1000"
+                              value={feature.pointsPerPhoto}
+                              onChange={(event) =>
+                                updateAdminFeatureDraft(feature.id, {
+                                  pointsPerPhoto: Math.max(0, Math.round(Number(event.target.value) || 0))
+                                })
+                              }
+                              disabled={adminSystemBusy}
+                            />
+                          </label>
+                          <label>
+                            <span>色调</span>
+                            <select
+                              value={feature.tone}
+                              onChange={(event) =>
+                                updateAdminFeatureDraft(feature.id, {
+                                  tone: event.target.value as StudioFeatureConfig['tone']
+                                })
+                              }
+                              disabled={adminSystemBusy}
+                            >
+                              {ADMIN_FEATURE_TONE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="admin-feature-image-field">
+                            <span>对比图 Before</span>
+                            {feature.beforeImageUrl ? <img src={feature.beforeImageUrl} alt="" /> : null}
+                            <input
+                              value={feature.beforeImageUrl}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { beforeImageUrl: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                            <input
+                              className="admin-feature-file-input"
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) => {
+                                const file = event.currentTarget.files?.[0];
+                                if (file) {
+                                  void handleAdminFeatureImageUpload(feature.id, 'beforeImageUrl', file);
+                                }
+                                event.currentTarget.value = '';
+                              }}
+                              disabled={adminSystemBusy || beforeBusy}
+                            />
+                            <small>{beforeBusy ? '上传中...' : '支持上传图片或手动填 URL'}</small>
+                          </label>
+                          <label className="admin-feature-image-field">
+                            <span>对比图 After</span>
+                            {feature.afterImageUrl ? <img src={feature.afterImageUrl} alt="" /> : null}
+                            <input
+                              value={feature.afterImageUrl}
+                              onChange={(event) => updateAdminFeatureDraft(feature.id, { afterImageUrl: event.target.value })}
+                              disabled={adminSystemBusy}
+                            />
+                            <input
+                              className="admin-feature-file-input"
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) => {
+                                const file = event.currentTarget.files?.[0];
+                                if (file) {
+                                  void handleAdminFeatureImageUpload(feature.id, 'afterImageUrl', file);
+                                }
+                                event.currentTarget.value = '';
+                              }}
+                              disabled={adminSystemBusy || afterBusy}
+                            />
+                            <small>{afterBusy ? '上传中...' : '支持上传图片或手动填 URL'}</small>
+                          </label>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })
               ) : (
                 <div className="admin-empty compact">
                   <strong>功能卡片尚未加载</strong>

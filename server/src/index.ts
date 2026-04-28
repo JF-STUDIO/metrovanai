@@ -1,6 +1,7 @@
 import './env.js';
 import express from 'express';
 import multer from 'multer';
+import { nanoid } from 'nanoid';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,15 +38,19 @@ import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js'
 import { MAX_RUNPOD_HDR_BATCH_SIZE, MIN_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
 import {
   assertDirectObjectUploadConfigured,
+  createObjectDownloadUrl,
   createDirectObjectUploadTarget,
+  createPersistentObjectKey,
   deleteObjectsFromStorage,
   deleteProjectIncomingObjects,
   deleteProjectPersistentObjects,
   downloadDirectObjectToFile,
   getDirectObjectUploadCapabilities,
   getObjectStorageMetadata,
+  isObjectStorageConfigured,
   isDirectUploadKeyForProject,
-  restoreObjectToFileIfAvailable
+  restoreObjectToFileIfAvailable,
+  uploadFileToObjectStorage
 } from './object-storage.js';
 import {
   constructStripeWebhookEvent,
@@ -69,7 +74,7 @@ import type {
   ResultAsset,
   UserRecord
 } from './types.js';
-import { isImageExtension, isRawExtension, sanitizeSegment } from './utils.js';
+import { ensureDir, isImageExtension, isRawExtension, sanitizeSegment } from './utils.js';
 import { buildDeploymentReadiness } from './deployment-readiness.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { createHelmetMiddleware, createSecurityHeadersMiddleware } from './middleware/security-headers.js';
@@ -2040,6 +2045,78 @@ const upload = multer({
   })
 });
 
+const ADMIN_FEATURE_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
+const ADMIN_FEATURE_IMAGE_ROOT = 'admin-feature-images';
+const ADMIN_FEATURE_IMAGE_SOURCE_DIR = 'source';
+const ADMIN_FEATURE_IMAGE_PREVIEW_DIR = 'preview';
+const ADMIN_FEATURE_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+
+function isSupportedFeatureImageFileName(fileName: string) {
+  return ADMIN_FEATURE_IMAGE_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+}
+
+function getFeatureImagePreviewPath(fileName: string) {
+  return path.join(store.getStorageRoot(), ADMIN_FEATURE_IMAGE_ROOT, ADMIN_FEATURE_IMAGE_PREVIEW_DIR, sanitizeSegment(fileName));
+}
+
+function buildAbsoluteApiUrl(req: express.Request, routePath: string) {
+  const forwardedProto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim();
+  const protocol = forwardedProto || req.protocol || 'https';
+  const forwardedHost = String(req.headers['x-forwarded-host'] ?? '').split(',')[0]?.trim();
+  const host = forwardedHost || req.get('host');
+  return host ? `${protocol}://${host}${routePath}` : routePath;
+}
+
+function encodeStorageKeyForRoute(storageKey: string) {
+  return Buffer.from(storageKey, 'utf8').toString('base64url');
+}
+
+function decodeStorageKeyFromRoute(encodedKey: string) {
+  try {
+    return Buffer.from(encodedKey, 'base64url').toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+function isStudioFeatureImageStorageKey(storageKey: string) {
+  return storageKey.toLowerCase().includes(ADMIN_FEATURE_IMAGE_ROOT);
+}
+
+function sendPublicFeatureImageFile(res: express.Response, filePath: string | null) {
+  if (!filePath) {
+    res.status(404).json({ error: 'Feature image not found.' });
+    return;
+  }
+
+  const resolvedPath = path.resolve(filePath);
+  if (!isPathInsideDirectory(resolvedPath, store.getStorageRoot()) || !fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+    res.status(404).json({ error: 'Feature image not found.' });
+    return;
+  }
+
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.sendFile(resolvedPath);
+}
+
+const featureImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: ADMIN_FEATURE_IMAGE_MAX_BYTES,
+    files: 1
+  },
+  fileFilter(_req, file, callback) {
+    const mimeType = String(file.mimetype ?? '');
+    const supportedMimeType = mimeType.startsWith('image/') || mimeType === 'application/octet-stream';
+    if (!isSupportedFeatureImageFileName(file.originalname) || !supportedMimeType) {
+      callback(new Error('Only JPG, PNG, and WebP images are supported.'));
+      return;
+    }
+    callback(null, true);
+  }
+});
+
 app.use(createHelmetMiddleware());
 app.use(traceIdMiddleware);
 app.use(createSecurityHeadersMiddleware(shouldUseSecureCookies));
@@ -2567,6 +2644,38 @@ app.get('/api/studio/features', (_req, res) => {
   });
 });
 
+app.get('/api/studio/feature-images/local/:fileName', (req, res) => {
+  const fileName = sanitizeSegment(String(req.params.fileName ?? ''));
+  sendPublicFeatureImageFile(res, fileName ? getFeatureImagePreviewPath(fileName) : null);
+});
+
+app.get('/api/studio/feature-images/object/:encodedKey', async (req, res) => {
+  const storageKey = decodeStorageKeyFromRoute(String(req.params.encodedKey ?? ''));
+  if (!storageKey || !isStudioFeatureImageStorageKey(storageKey) || !isObjectStorageConfigured()) {
+    res.status(404).json({ error: 'Feature image not found.' });
+    return;
+  }
+
+  try {
+    const objectResponse = await fetch(createObjectDownloadUrl(storageKey, 3600));
+    if (!objectResponse.ok) {
+      res.status(404).json({ error: 'Feature image not found.' });
+      return;
+    }
+
+    const body = Buffer.from(await objectResponse.arrayBuffer());
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Content-Type', objectResponse.headers.get('content-type') || 'image/jpeg');
+    res.send(body);
+  } catch (error) {
+    captureServerError(error, {
+      event: 'studio.feature_image.object.load_failed',
+      details: { storageKey }
+    });
+    res.status(500).json({ error: 'Feature image could not be loaded.' });
+  }
+});
+
 app.get('/api/admin/workflows', (req, res) => {
   if (!requireAdminApiAccess(req, res)) {
     return;
@@ -2575,6 +2684,81 @@ app.get('/api/admin/workflows', (req, res) => {
   res.json({
     workflows: buildAdminWorkflowPayload(),
     settings: store.getSystemSettings()
+  });
+});
+
+app.post('/api/admin/studio-feature-image', (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  featureImageUpload.single('file')(req, res, async (error) => {
+    if (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Feature image upload failed.' });
+      return;
+    }
+
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: 'Image file is required.' });
+      return;
+    }
+
+    const originalExtension = path.extname(file.originalname).toLowerCase() || '.jpg';
+    const baseName = sanitizeSegment(path.basename(file.originalname, originalExtension)) || 'comparison';
+    const sourceFileName = `${Date.now()}-${nanoid(8)}-${baseName}${originalExtension}`;
+    const outputFileName = `${Date.now()}-${nanoid(8)}-${baseName}.jpg`;
+    const sourceDir = path.join(store.getStorageRoot(), ADMIN_FEATURE_IMAGE_ROOT, ADMIN_FEATURE_IMAGE_SOURCE_DIR);
+    const previewDir = path.join(store.getStorageRoot(), ADMIN_FEATURE_IMAGE_ROOT, ADMIN_FEATURE_IMAGE_PREVIEW_DIR);
+    const sourcePath = path.join(sourceDir, sourceFileName);
+    const previewPath = path.join(previewDir, outputFileName);
+
+    try {
+      ensureDir(sourceDir);
+      ensureDir(previewDir);
+      fs.writeFileSync(sourcePath, file.buffer);
+      await extractPreviewOrConvertToJpeg(sourcePath, previewPath, 84, 1600);
+
+      let routePath = `/api/studio/feature-images/local/${encodeURIComponent(outputFileName)}`;
+      let storageKey: string | null = null;
+      if (isObjectStorageConfigured()) {
+        storageKey = createPersistentObjectKey({
+          userKey: 'admin',
+          userDisplayName: 'Admin',
+          projectId: ADMIN_FEATURE_IMAGE_ROOT,
+          projectName: 'Studio Feature Images',
+          category: 'previews',
+          fileName: outputFileName
+        });
+        await uploadFileToObjectStorage({
+          sourcePath: previewPath,
+          storageKey,
+          contentType: 'image/jpeg'
+        });
+        routePath = `/api/studio/feature-images/object/${encodeStorageKeyForRoute(storageKey)}`;
+      }
+
+      writeAdminAuditLog(req, actor, {
+        action: 'admin.studio_feature_image.upload',
+        details: {
+          fileName: outputFileName,
+          storageKey,
+          size: file.size
+        }
+      });
+
+      res.json({
+        url: buildAbsoluteApiUrl(req, routePath),
+        fileName: outputFileName
+      });
+    } catch (uploadError) {
+      captureServerError(uploadError, {
+        event: 'admin.studio_feature_image.upload_failed',
+        details: { fileName: file.originalname }
+      });
+      res.status(500).json({ error: uploadError instanceof Error ? uploadError.message : 'Feature image upload failed.' });
+    }
   });
 });
 

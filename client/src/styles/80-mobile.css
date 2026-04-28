@@ -658,6 +658,23 @@ body {
     flex-direction: column;
   }
 
+  .admin-panel-actions {
+    justify-content: stretch;
+  }
+
+  .admin-panel-actions .ghost-button {
+    width: 100%;
+  }
+
+  .admin-feature-summary,
+  .admin-feature-editor-body {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-feature-summary-images {
+    justify-content: flex-start;
+  }
+
   .admin-table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
