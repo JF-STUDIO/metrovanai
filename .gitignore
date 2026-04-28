@@ -17,3 +17,5 @@ deployment/cloudflare-tunnel/config.yml
 .env.local
 .env.production
 .env.development
+admin-preview*.png
+codex-download-app-hunks.patch
