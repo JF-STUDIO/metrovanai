@@ -21,6 +21,11 @@ function isEnabledEnv(name: string) {
   return value === '1' || value === 'true' || value === 'yes';
 }
 
+function parsePositiveIntEnv(name: string, fallback: number) {
+  const parsed = Number(process.env[name] ?? '');
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : fallback;
+}
+
 function describeProvider(info: ProviderInfo) {
   return info.workflowEngine ? `${info.provider}/${info.workflowEngine}` : info.provider;
 }
@@ -43,7 +48,34 @@ export function buildDeploymentReadiness(input: {
   const remoteObjectTransportReady =
     (remoteObjectIoEnabled || runpodNativeExecutorEnvReady) && objectStorageEnvReady && objectStorageEndpointReady;
   const stripeEnvReady = hasEnv('METROVAN_STRIPE_SECRET_KEY') && hasEnv('METROVAN_STRIPE_WEBHOOK_SECRET');
+  const cspDisabled = isEnabledEnv('METROVAN_DISABLE_CSP');
+  const cspReportOnly = isEnabledEnv('METROVAN_CSP_REPORT_ONLY');
+  const uploadExpiresSeconds = parsePositiveIntEnv('METROVAN_OBJECT_UPLOAD_EXPIRES_SECONDS', 60 * 60);
+  const directUploadTargetMaxFiles = parsePositiveIntEnv('METROVAN_DIRECT_UPLOAD_TARGET_MAX_FILES', 300);
+  const directUploadTargetMaxBatchBytes = parsePositiveIntEnv(
+    'METROVAN_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES',
+    30 * 1024 * 1024 * 1024
+  );
+  const distributedRateLimitReady = hasEnv('METROVAN_RATE_LIMIT_REDIS_URL') || hasEnv('UPSTASH_REDIS_REST_URL');
   const checks: DeploymentReadinessCheck[] = [
+    {
+      id: 'security.csp',
+      status: cspDisabled ? 'action-required' : cspReportOnly ? 'planned' : 'ready',
+      current: cspDisabled ? 'disabled' : cspReportOnly ? 'report-only' : 'enforced',
+      next: cspDisabled
+        ? 'Enable Content-Security-Policy before paid traffic.'
+        : cspReportOnly
+          ? 'Switch CSP from report-only to enforced after checking browser reports.'
+          : 'Content-Security-Policy is enforced.'
+    },
+    {
+      id: 'security.distributed_rate_limit',
+      status: distributedRateLimitReady ? 'planned' : 'action-required',
+      current: distributedRateLimitReady ? 'configured env, app fallback still in-memory' : 'in-memory per instance',
+      next: distributedRateLimitReady
+        ? 'Wire the configured Redis/Upstash backend into runtime rate limiting so limits survive restarts and multi-instance traffic.'
+        : 'Add Redis/Upstash backed rate limits for auth, billing, upload signing, processing start, downloads and admin writes.'
+    },
     {
       id: 'metadata.provider',
       status: input.metadata.provider === 'json-file' ? 'action-required' : 'ready',
@@ -84,6 +116,27 @@ export function buildDeploymentReadiness(input: {
         directUploadEnabled && objectStorageEnvReady && objectStorageEndpointReady
           ? 'Browser direct upload is enabled.'
           : 'Enable METROVAN_DIRECT_UPLOAD_ENABLED and configure R2/S3 before production traffic.'
+    },
+    {
+      id: 'storage.direct_upload_expiry',
+      status: uploadExpiresSeconds >= 1800 ? 'ready' : 'action-required',
+      current: `${uploadExpiresSeconds}s`,
+      next:
+        uploadExpiresSeconds >= 1800
+          ? 'Direct upload signed URLs are long enough for large photo batches.'
+          : 'Use METROVAN_OBJECT_UPLOAD_EXPIRES_SECONDS=3600 or resumable multipart uploads for 100 x 120MB batches.'
+    },
+    {
+      id: 'storage.direct_upload_target_limits',
+      status:
+        directUploadTargetMaxFiles <= 500 && directUploadTargetMaxBatchBytes <= 50 * 1024 * 1024 * 1024
+          ? 'ready'
+          : 'planned',
+      current: `${directUploadTargetMaxFiles} files, ${Math.round(directUploadTargetMaxBatchBytes / (1024 * 1024 * 1024))}GB`,
+      next:
+        directUploadTargetMaxFiles <= 500 && directUploadTargetMaxBatchBytes <= 50 * 1024 * 1024 * 1024
+          ? 'Direct upload target creation has abuse-resistant batch caps.'
+          : 'Keep signed target batches capped to a commercial-safe file count and total size.'
     },
     {
       id: 'executor.provider',

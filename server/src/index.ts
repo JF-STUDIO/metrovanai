@@ -159,6 +159,9 @@ const POINT_PRICE_USD = 0.25;
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 60;
 const EMAIL_VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24;
 const TRASH_CLEANUP_INTERVAL_MS = 1000 * 60 * 60 * 6;
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 1000 * 60 * 10;
+const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
+const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
 
 const trashCleanupTimer = setInterval(() => {
   try {
@@ -175,6 +178,15 @@ interface RateLimitBucket {
 }
 
 const rateLimitBuckets = new Map<string, RateLimitBucket>();
+const rateLimitCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    if (bucket.resetAt <= now) {
+      rateLimitBuckets.delete(key);
+    }
+  }
+}, RATE_LIMIT_CLEANUP_INTERVAL_MS);
+rateLimitCleanupTimer.unref?.();
 const MIN_CUSTOM_TOP_UP_USD = 1;
 const MAX_CUSTOM_TOP_UP_USD = 50000;
 const clientEventSchema = z.object({
@@ -482,6 +494,34 @@ function isStrongPassword(password: string) {
   return password.length >= 10 && /[A-Za-z]/.test(password) && /\d/.test(password);
 }
 
+function parsePositiveIntEnv(name: string, fallback: number) {
+  const parsed = Number(process.env[name] ?? '');
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : fallback;
+}
+
+function getDirectUploadTargetLimits() {
+  return {
+    maxFiles: parsePositiveIntEnv('METROVAN_DIRECT_UPLOAD_TARGET_MAX_FILES', DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES),
+    maxBatchBytes: parsePositiveIntEnv(
+      'METROVAN_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES',
+      DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES
+    )
+  };
+}
+
+function checkDirectUploadTargetLimits(files: Array<{ size: number }>) {
+  const limits = getDirectUploadTargetLimits();
+  if (files.length > limits.maxFiles) {
+    throw new Error(`Too many files in one upload request. Select at most ${limits.maxFiles} files per batch.`);
+  }
+
+  const totalBytes = files.reduce((total, file) => total + Math.max(0, file.size), 0);
+  if (totalBytes > limits.maxBatchBytes) {
+    const maxGb = Math.floor(limits.maxBatchBytes / (1024 * 1024 * 1024));
+    throw new Error(`This upload batch is too large. Keep each batch under ${maxGb} GB.`);
+  }
+}
+
 function checkRateLimit(
   req: express.Request,
   res: express.Response,
@@ -508,6 +548,18 @@ function checkRateLimit(
   res.setHeader('Retry-After', String(retryAfterSeconds));
   res.status(429).json({ error: input.message ?? 'Too many attempts. Please try again later.' });
   return false;
+}
+
+function checkUserRateLimit(
+  req: express.Request,
+  res: express.Response,
+  user: UserRecord,
+  input: { scope: string; limit: number; windowMs: number; message?: string }
+) {
+  return checkRateLimit(req, res, {
+    ...input,
+    scope: `${input.scope}:user:${user.userKey}`
+  });
 }
 
 async function sendVerificationForUser(req: express.Request, user: NonNullable<ReturnType<typeof store.getUserById>>) {
@@ -2283,6 +2335,7 @@ app.get('/api/auth/session', (req, res) => {
 
 app.get('/api/upload/capabilities', (_req, res) => {
   const localProxyEnabled = isLocalProxyUploadEnabled();
+  const directUploadTargetLimits = getDirectUploadTargetLimits();
   res.json({
     localProxy: {
       enabled: localProxyEnabled,
@@ -2290,7 +2343,8 @@ app.get('/api/upload/capabilities', (_req, res) => {
       maxBatchFiles: 16,
       recommendedConcurrency: localProxyEnabled ? 24 : 0
     },
-    directObject: getDirectObjectUploadCapabilities()
+    directObject: getDirectObjectUploadCapabilities(),
+    directUploadTargets: directUploadTargetLimits
   });
 });
 
@@ -2332,6 +2386,15 @@ app.get('/api/billing', (req, res) => {
 app.post('/api/billing/checkout', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
+    return;
+  }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'billing-checkout',
+      limit: 20,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
     return;
   }
 
@@ -2417,6 +2480,15 @@ app.post('/api/billing/checkout/confirm', async (req, res) => {
   if (!user) {
     return;
   }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'billing-checkout-confirm',
+      limit: 60,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
+    return;
+  }
 
   if (!isStripeConfigured()) {
     res.status(503).json({ error: '支付服务暂时不可用，请稍后再试。' });
@@ -2455,6 +2527,15 @@ app.post('/api/billing/checkout/confirm', async (req, res) => {
 app.post('/api/billing/activation-code/redeem', (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
+    return;
+  }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'billing-activation-code-redeem',
+      limit: 10,
+      windowMs: 1000 * 60 * 60
+    })
+  ) {
     return;
   }
 
@@ -2518,6 +2599,15 @@ app.post('/api/billing/top-up', (req, res) => {
   if (!user) {
     return;
   }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'billing-internal-top-up',
+      limit: 10,
+      windowMs: 1000 * 60 * 60
+    })
+  ) {
+    return;
+  }
 
   if (!isInternalTopUpAllowed()) {
     res.status(410).json({ error: 'Direct top-up is disabled. Use secure Stripe checkout.' });
@@ -2574,6 +2664,20 @@ app.post('/api/billing/top-up', (req, res) => {
   }
 
   res.status(201).json(buildBillingPayload(user.userKey));
+});
+
+app.use('/api/admin', (req, res, next) => {
+  const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
+  if (
+    !checkRateLimit(req, res, {
+      scope: isMutation ? 'admin-api-write' : 'admin-api-read',
+      limit: isMutation ? 120 : 600,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
+    return;
+  }
+  next();
 });
 
 app.get('/api/admin/users', (req, res) => {
@@ -3866,6 +3970,15 @@ app.get('/api/projects/:id/download', async (req, res) => {
   if (!user) {
     return;
   }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'project-download',
+      limit: 30,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
+    return;
+  }
 
   const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
   if (!project) {
@@ -3887,6 +4000,15 @@ app.get('/api/projects/:id/download', async (req, res) => {
 app.post('/api/projects/:id/download', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
+    return;
+  }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'project-download',
+      limit: 30,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
     return;
   }
 
@@ -3921,6 +4043,15 @@ app.post('/api/projects/:id/direct-upload/targets', (req, res) => {
   if (!user) {
     return;
   }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'direct-upload-targets',
+      limit: 120,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
+    return;
+  }
 
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
@@ -3943,6 +4074,7 @@ app.post('/api/projects/:id/direct-upload/targets', (req, res) => {
   }
 
   try {
+    checkDirectUploadTargetLimits(parsed.data.files);
     const targets = parsed.data.files.map((file) => {
       if (!isSupportedUploadFileName(file.originalName)) {
         throw new Error('Only RAW and JPG files are supported.');
@@ -3970,6 +4102,15 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
   if (!user) {
     return;
   }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'direct-upload-complete',
+      limit: 120,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
+    return;
+  }
 
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
@@ -3989,6 +4130,12 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
   const parsed = directUploadCompleteSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    checkDirectUploadTargetLimits(parsed.data.files);
+  } catch (error) {
+    res.status(400).json({ error: getPublicErrorMessage(error, 'Direct upload batch is too large.') });
     return;
   }
 
@@ -4366,6 +4513,15 @@ app.post('/api/projects/:id/hdr-items/:hdrItemId/regenerate', async (req, res) =
   if (!user) {
     return;
   }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'project-result-regenerate',
+      limit: 30,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
+    return;
+  }
 
   const projectId = String(req.params.id ?? '');
   if (!store.getProjectForUser(projectId, user.userKey)) {
@@ -4407,6 +4563,15 @@ app.post('/api/projects/:id/hdr-items/:hdrItemId/regenerate', async (req, res) =
 app.post('/api/projects/:id/start', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
+    return;
+  }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'project-processing-start',
+      limit: 20,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
     return;
   }
 
@@ -4478,6 +4643,15 @@ app.post('/api/projects/:id/start', async (req, res) => {
 app.post('/api/projects/:id/retry-failed', async (req, res) => {
   const user = requireAuthenticatedUser(req, res);
   if (!user) {
+    return;
+  }
+  if (
+    !checkUserRateLimit(req, res, user, {
+      scope: 'project-processing-retry',
+      limit: 20,
+      windowMs: 1000 * 60 * 15
+    })
+  ) {
     return;
   }
 

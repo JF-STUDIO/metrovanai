@@ -1,5 +1,6 @@
 const apiRoot = (process.env.METROVAN_CHECK_API_ROOT || 'https://api.metrovanai.com').replace(/\/+$/, '');
 const adminKey = process.env.METROVAN_CHECK_ADMIN_KEY || '';
+const strictChecks = ['1', 'true', 'yes'].includes(String(process.env.METROVAN_CHECK_STRICT || '').toLowerCase());
 
 const checks = [];
 
@@ -47,6 +48,26 @@ async function checkHead(id, path) {
   }
 }
 
+async function checkSecurityHeaders() {
+  try {
+    const response = await fetch(`${apiRoot}/home`, { method: 'HEAD' });
+    const csp =
+      response.headers.get('content-security-policy') ||
+      response.headers.get('content-security-policy-report-only') ||
+      '';
+    const frameOptions = response.headers.get('x-frame-options') || '';
+    const contentTypeOptions = response.headers.get('x-content-type-options') || '';
+    record('security_headers', Boolean(csp) && frameOptions.toUpperCase() === 'DENY' && contentTypeOptions === 'nosniff', {
+      status: response.status,
+      csp: Boolean(csp),
+      xFrameOptions: frameOptions,
+      xContentTypeOptions: contentTypeOptions
+    });
+  } catch (error) {
+    record('security_headers', false, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 async function main() {
   await checkJson('health', '/api/health', { includePayload: true });
   await checkHead('home_route', '/home');
@@ -58,6 +79,11 @@ async function main() {
       enabled: Boolean(upload.payload.directObject.enabled),
       requiredEnv: upload.payload.directObject.requiredEnv
     });
+    if (strictChecks) {
+      record('direct_object_upload_expiry', Number(upload.payload.directObject.uploadExpiresSeconds ?? 0) >= 1800, {
+        uploadExpiresSeconds: upload.payload.directObject.uploadExpiresSeconds
+      });
+    }
   }
   if (upload.payload?.localProxy) {
     record('no_production_local_proxy_upload', upload.payload.localProxy.enabled === false, {
@@ -82,6 +108,10 @@ async function main() {
       skipped: true,
       reason: 'Set METROVAN_CHECK_ADMIN_KEY to include authenticated readiness checks.'
     });
+  }
+
+  if (strictChecks) {
+    await checkSecurityHeaders();
   }
 
   const failed = checks.filter((check) => !check.ok);

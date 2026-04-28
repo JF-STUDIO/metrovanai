@@ -7,7 +7,7 @@ import type { ReadableStream } from 'node:stream/web';
 import { nanoid } from 'nanoid';
 import { ensureDir, sanitizeSegment, toUnixPath } from './utils.js';
 
-const DEFAULT_UPLOAD_EXPIRES_SECONDS = 15 * 60;
+const DEFAULT_UPLOAD_EXPIRES_SECONDS = 60 * 60;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 
 interface ObjectStorageConfig {
