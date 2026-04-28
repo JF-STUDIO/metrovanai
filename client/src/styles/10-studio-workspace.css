@@ -78,6 +78,14 @@
   flex-direction: column;
 }
 
+.results-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
 .hero-preview {
   border-radius: 1rem;
   overflow: hidden;
@@ -661,6 +669,20 @@
 
 .result-card.drag-over::before {
   opacity: 1;
+}
+
+.failed-results-block {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.failed-result-card {
+  cursor: default;
+}
+
+.failed-result-card .result-frame img {
+  filter: saturate(0.74) brightness(0.78);
 }
 
 .asset-frame,

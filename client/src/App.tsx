@@ -2454,6 +2454,7 @@ function App() {
   });
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const showLegacyCreateDialog = import.meta.env.VITE_ENABLE_LEGACY_CREATE_DIALOG === 'true';
   const [downloadDialogProjectId, setDownloadDialogProjectId] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [downloadDraft, setDownloadDraft] = useState<DownloadDraft>(DEFAULT_DOWNLOAD_DRAFT);
@@ -2611,6 +2612,10 @@ function App() {
   );
   const hasReviewContent = workspaceHdrItems.length > 0;
   const hasResultContent = displayResultAssets.length > 0;
+  const failedResultHdrItems = workspaceHdrItems.filter(
+    (item) => item.status === 'error' && !displayResultAssets.some((asset) => asset.hdrItemId === item.id)
+  );
+  const hasFailedResultHdrItems = failedResultHdrItems.length > 0;
   const showUploadStepContent = currentWorkspaceStep === 1 && !activeLocalDraft;
   const showUploadProgress = showUploadStepContent && uploadActive;
   const uploadProgressLabel = formatUploadProgressLabel(uploadSnapshot, uploadPercent, copy);
@@ -2636,9 +2641,7 @@ function App() {
   const jobActivelyProcessing = isProjectJobActivelyProcessing(currentProject?.job);
   const jobFailedWhileItemsActive = Boolean(currentProject?.job?.status === 'failed' && (hasActiveProcessingItems || jobActivelyProcessing));
   const showRetryProcessingAction =
-    Boolean(currentProject && currentProject.status === 'failed' && !hasActiveProcessingItems && !jobActivelyProcessing) &&
-    showProcessingStepContent &&
-    !uploadActive;
+    Boolean(currentProject && hasFailedResultHdrItems && !hasActiveProcessingItems && !jobActivelyProcessing) && !uploadActive;
   const processingPanelTitle = showProcessingUploadProgress
     ? copy.uploadOriginalsTitle
     : jobFailedWhileItemsActive
@@ -2649,7 +2652,7 @@ function App() {
     : jobFailedWhileItemsActive
       ? copy.processingGroupsHint
     : currentProject?.job?.detail || copy.waitingProcessingHint;
-  const showResultsStepContent = currentWorkspaceStep === 4 && hasResultContent;
+  const showResultsStepContent = currentWorkspaceStep === 4 && (hasResultContent || hasFailedResultHdrItems);
   const adminTotals = useMemo(
     () => ({
       users: adminTotalUsers || adminUsers.length,
@@ -6447,7 +6450,19 @@ function App() {
                         <strong>{copy.results}</strong>
                         <span className="muted">{copy.resultsHint}</span>
                       </div>
-                      <span className="meta-pill">{formatPhotoCount(currentProject.resultAssets.length, locale)}</span>
+                      <div className="results-head-actions">
+                        <span className="meta-pill">{formatPhotoCount(currentProject.resultAssets.length, locale)}</span>
+                        {showRetryProcessingAction && (
+                          <button
+                            className="ghost-button compact"
+                            type="button"
+                            onClick={() => void handleStartProcessing({ retryFailed: true })}
+                            disabled={busy}
+                          >
+                            {copy.retryProcessing}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {displayResultAssets.length ? (
                       <div className={`result-grid${draggedResultHdrItemId ? ' is-reordering' : ''}`}>
@@ -6597,6 +6612,37 @@ function App() {
                       <div className="empty-state">
                         <strong>{copy.noResults}</strong>
                         <span>{copy.noResultsHint}</span>
+                      </div>
+                    )}
+                    {hasFailedResultHdrItems && (
+                      <div className="failed-results-block">
+                        <div className="panel-head compact">
+                          <div>
+                            <strong>{copy.hdrItemFailed}</strong>
+                            <span className="muted">{copy.retryProcessing}</span>
+                          </div>
+                        </div>
+                        <div className="result-grid failed-result-grid">
+                          {failedResultHdrItems.map((hdrItem) => {
+                            const previewUrl = getHdrPreviewUrl(hdrItem);
+                            const selectedExposure = getSelectedExposure(hdrItem);
+                            return (
+                              <article key={hdrItem.id} className="result-card failed-result-card">
+                                <div className="result-frame">
+                                  {previewUrl ? (
+                                    <img src={previewUrl} alt={selectedExposure?.originalName ?? hdrItem.title} loading="lazy" decoding="async" />
+                                  ) : (
+                                    <div className="asset-empty">{copy.noPreview}</div>
+                                  )}
+                                </div>
+                                <div className="result-body">
+                                  <strong>{selectedExposure?.originalName ?? hdrItem.title}</strong>
+                                  <span>{getHdrItemStatusLabel(hdrItem, locale)}</span>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </section>
@@ -7081,7 +7127,7 @@ function App() {
         </div>
       )}
 
-      {false && createDialogOpen && (
+      {showLegacyCreateDialog && createDialogOpen && (
         <div className="modal-backdrop" onClick={() => setCreateDialogOpen(false)}>
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">

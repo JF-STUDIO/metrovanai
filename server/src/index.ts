@@ -1147,16 +1147,21 @@ function buildPublicHdrItem(project: ProjectRecord, hdrItem: HdrItem) {
 }
 
 function buildPublicResultAsset(projectId: string, asset: ResultAsset) {
+  const version = getRegeneratedAssetVersion(asset.regeneration);
   const fileUrl = appendAssetVersion(
     buildProjectAssetRoute(projectId, ['results', asset.id, 'file']),
-    getRegeneratedAssetVersion(asset.regeneration)
+    version
+  );
+  const previewUrl = appendAssetVersion(
+    buildProjectAssetRoute(projectId, ['results', asset.id, 'preview']),
+    version
   );
   return {
     id: asset.id,
     hdrItemId: asset.hdrItemId,
     fileName: asset.fileName,
     storageUrl: fileUrl,
-    previewUrl: fileUrl,
+    previewUrl,
     sortOrder: asset.sortOrder,
     regeneration: asset.regeneration ?? null
   };
@@ -1345,6 +1350,66 @@ async function ensureExposurePreviewFile(exposure: ExposureFile) {
   } catch {
     return null;
   }
+}
+
+async function ensureResultAssetPreviewFile(project: ProjectRecord, asset: ResultAsset) {
+  try {
+    const storageRoot = store.getStorageRoot();
+    const sourcePath = path.resolve(asset.storagePath);
+    if (!isPathInsideDirectory(sourcePath, storageRoot)) {
+      return null;
+    }
+
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      await restoreObjectToFileIfAvailable(asset.storageKey, sourcePath);
+    }
+
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      return null;
+    }
+
+    const version = sanitizeSegment(getRegeneratedAssetVersion(asset.regeneration) ?? 'base') || 'base';
+    const previewFileName = `${sanitizeSegment(asset.id) || 'result'}-${version}.jpg`;
+    const previewPath = path.resolve(path.join(store.getProjectDirectories(project).previews, 'results', previewFileName));
+    if (!isPathInsideDirectory(previewPath, storageRoot)) {
+      return null;
+    }
+
+    if (fs.existsSync(previewPath) && fs.statSync(previewPath).isFile()) {
+      return previewPath;
+    }
+
+    await extractPreviewOrConvertToJpeg(sourcePath, previewPath, 82, 900);
+    return previewPath;
+  } catch (error) {
+    logServerEvent({
+      level: 'warning',
+      event: 'project.result_preview.failed',
+      projectId: project.id,
+      details: {
+        resultAssetId: asset.id,
+        message: error instanceof Error ? error.message : String(error)
+      }
+    });
+    return null;
+  }
+}
+
+function sendCachedPreviewFile(res: express.Response, filePath: string | null) {
+  if (!filePath) {
+    res.status(404).json({ error: 'Preview not found.' });
+    return;
+  }
+
+  const resolvedPath = path.resolve(filePath);
+  if (!isPathInsideDirectory(resolvedPath, store.getStorageRoot()) || !fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+    res.status(404).json({ error: 'Preview not found.' });
+    return;
+  }
+
+  res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.sendFile(resolvedPath);
 }
 
 function getOwnedProjectFromRequest(req: express.Request, res: express.Response) {
@@ -3354,6 +3419,27 @@ app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
   const asset = owned.project.resultAssets.find((item) => item.id === String(req.params.resultAssetId ?? ''));
   if (!asset) {
     res.status(404).json({ error: 'File not found.' });
+    return;
+  }
+
+  sendProtectedStorageFile(res, asset.storagePath, asset.storageKey);
+});
+
+app.get('/api/projects/:id/results/:resultAssetId/preview', async (req, res) => {
+  const owned = getOwnedProjectFromRequest(req, res);
+  if (!owned) {
+    return;
+  }
+
+  const asset = owned.project.resultAssets.find((item) => item.id === String(req.params.resultAssetId ?? ''));
+  if (!asset) {
+    res.status(404).json({ error: 'File not found.' });
+    return;
+  }
+
+  const previewPath = await ensureResultAssetPreviewFile(owned.project, asset);
+  if (previewPath) {
+    sendCachedPreviewFile(res, previewPath);
     return;
   }
 
