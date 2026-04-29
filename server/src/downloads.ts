@@ -257,7 +257,7 @@ async function prepareAssetDownloadSource(
 
     if (!fs.existsSync(asset.storagePath)) {
       console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
-      return null;
+      throw new DownloadIncompleteError([asset.fileName]);
     }
 
     return {
@@ -275,13 +275,13 @@ async function prepareAssetDownloadSource(
 
   if (!asset.storageKey) {
     console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
-    return null;
+    throw new DownloadIncompleteError([asset.fileName]);
   }
 
   const response = await fetch(createObjectDownloadUrl(asset.storageKey, 60 * 60));
   if (!response.ok || !response.body) {
     console.warn(`[download] object fetch failed: project=${project.id} asset=${asset.id} status=${response.status}`);
-    return null;
+    throw new DownloadIncompleteError([asset.fileName]);
   }
 
   return {
