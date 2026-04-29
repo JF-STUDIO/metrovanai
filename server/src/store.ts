@@ -10,6 +10,7 @@ import type {
   HdrItem,
   HdrItemWorkflowState,
   PaymentOrderRecord,
+  PaymentOrderRefundPreview,
   PasswordResetTokenRecord,
   ProjectGroup,
   ProjectDownloadJobRecord,
@@ -330,7 +331,9 @@ export class LocalStore {
     return {
       projects: Array.isArray(raw.projects) ? raw.projects : [],
       billing: Array.isArray(raw.billing) ? raw.billing : [],
-      paymentOrders: Array.isArray(raw.paymentOrders) ? raw.paymentOrders : [],
+      paymentOrders: Array.isArray(raw.paymentOrders)
+        ? raw.paymentOrders.map((order) => this.normalizePaymentOrder(order as PaymentOrderRecord))
+        : [],
       processedStripeEvents: Array.isArray(raw.processedStripeEvents) ? raw.processedStripeEvents : [],
       activationCodes: Array.isArray(raw.activationCodes) ? raw.activationCodes : [],
       downloadJobs: Array.isArray(raw.downloadJobs) ? raw.downloadJobs : [],
@@ -472,6 +475,27 @@ export class LocalStore {
       totalCreditedPoints,
       totalChargedPoints,
       totalTopUpUsd: Number(totalTopUpUsd.toFixed(2))
+    };
+  }
+
+  private getRawBillingBalanceFromEntries(entries: BillingEntry[]) {
+    const totalCreditedPoints = entries
+      .filter((entry) => entry.type === 'credit')
+      .reduce((sum, entry) => sum + entry.points, 0);
+    const totalChargedPoints = entries
+      .filter((entry) => entry.type === 'charge')
+      .reduce((sum, entry) => sum + entry.points, 0);
+    return totalCreditedPoints - totalChargedPoints;
+  }
+
+  private normalizePaymentOrder(order: PaymentOrderRecord): PaymentOrderRecord {
+    return {
+      ...order,
+      stripeRefundId: order.stripeRefundId ?? null,
+      refundedAmountUsd: Number(Math.max(0, order.refundedAmountUsd ?? 0).toFixed(2)),
+      refundedPoints: Math.max(0, Math.round(order.refundedPoints ?? 0)),
+      refundBillingEntryId: order.refundBillingEntryId ?? null,
+      refundedAt: order.refundedAt ?? null
     };
   }
 
@@ -995,6 +1019,193 @@ export class LocalStore {
     return this.loadDb().paymentOrders.find((order) => order.stripeCheckoutSessionId === sessionId) ?? null;
   }
 
+  getPaymentOrderByStripePaymentIntentId(paymentIntentId: string) {
+    const normalizedPaymentIntentId = paymentIntentId.trim();
+    if (!normalizedPaymentIntentId) {
+      return null;
+    }
+    return (
+      this.loadDb().paymentOrders.find((order) => order.stripePaymentIntentId === normalizedPaymentIntentId) ?? null
+    );
+  }
+
+  getPaymentOrderRefundPreview(orderId: string) {
+    const db = this.loadDb();
+    const order = db.paymentOrders.find((item) => item.id === orderId);
+    if (!order) {
+      return null;
+    }
+    return this.buildPaymentOrderRefundPreview(db.billing, order);
+  }
+
+  private buildPaymentOrderRefundPreview(
+    billingEntries: BillingEntry[],
+    order: PaymentOrderRecord,
+    input?: { refundAmountUsd?: number; refundPoints?: number }
+  ): PaymentOrderRefundPreview {
+    const normalizedOrder = this.normalizePaymentOrder(order);
+    const userEntries = billingEntries.filter((entry) => entry.userKey === normalizedOrder.userKey);
+    const rawBalance = this.getRawBillingBalanceFromEntries(userEntries);
+    const alreadyRefundedAmountUsd = Number(Math.max(0, normalizedOrder.refundedAmountUsd).toFixed(2));
+    const alreadyRefundedPoints = Math.max(0, Math.round(normalizedOrder.refundedPoints));
+    const maxRefundAmountUsd = Number(Math.max(0, normalizedOrder.amountUsd - alreadyRefundedAmountUsd).toFixed(2));
+    const maxRefundPoints = Math.max(0, normalizedOrder.points - alreadyRefundedPoints);
+    const requestedAmountUsd =
+      input?.refundAmountUsd === undefined
+        ? maxRefundAmountUsd
+        : Number(Math.max(0, Math.min(maxRefundAmountUsd, input.refundAmountUsd)).toFixed(2));
+    const proportionalPoints =
+      normalizedOrder.amountUsd > 0
+        ? Math.round((normalizedOrder.points * requestedAmountUsd) / normalizedOrder.amountUsd)
+        : maxRefundPoints;
+    const requestedPoints =
+      input?.refundPoints === undefined
+        ? requestedAmountUsd > 0
+          ? Math.min(maxRefundPoints, Math.max(1, proportionalPoints))
+          : 0
+        : Math.max(0, Math.min(maxRefundPoints, Math.round(input.refundPoints)));
+    const refundablePoints = input?.refundAmountUsd === undefined && input?.refundPoints === undefined ? maxRefundPoints : requestedPoints;
+    const refundableAmountUsd = requestedAmountUsd;
+
+    return {
+      orderId: normalizedOrder.id,
+      orderAmountUsd: Number(Math.max(0, normalizedOrder.amountUsd).toFixed(2)),
+      creditedPoints: Math.max(0, Math.round(normalizedOrder.points)),
+      currentBalance: rawBalance,
+      consumedPoints: Math.max(0, refundablePoints - Math.max(0, rawBalance)),
+      alreadyRefundedAmountUsd,
+      alreadyRefundedPoints,
+      refundableAmountUsd,
+      refundablePoints,
+      balanceAfterRefund: rawBalance - refundablePoints
+    };
+  }
+
+  refundPaymentOrderCredits(
+    orderId: string,
+    input: {
+      stripeRefundId?: string | null;
+      refundAmountUsd?: number;
+      refundPoints?: number;
+      note?: string;
+    }
+  ) {
+    const db = this.loadDb();
+    const index = db.paymentOrders.findIndex((order) => order.id === orderId);
+    if (index === -1) {
+      return null;
+    }
+
+    const order = this.normalizePaymentOrder(db.paymentOrders[index]!);
+    const stripeRefundId = input.stripeRefundId?.trim() || null;
+    if (stripeRefundId && order.stripeRefundId === stripeRefundId && order.refundBillingEntryId) {
+      return {
+        order,
+        entry: db.billing.find((entry) => entry.id === order.refundBillingEntryId) ?? null,
+        preview: this.buildPaymentOrderRefundPreview(db.billing, order),
+        created: false
+      };
+    }
+
+    const preview = this.buildPaymentOrderRefundPreview(db.billing, order, {
+      refundAmountUsd: input.refundAmountUsd,
+      refundPoints: input.refundPoints
+    });
+    if (preview.refundableAmountUsd <= 0 || preview.refundablePoints <= 0) {
+      return {
+        order,
+        entry: null,
+        preview,
+        created: false
+      };
+    }
+
+    const now = new Date().toISOString();
+    const entry: BillingEntry = {
+      id: nanoid(12),
+      userKey: order.userKey,
+      type: 'charge',
+      points: preview.refundablePoints,
+      amountUsd: preview.refundableAmountUsd,
+      note: input.note?.trim() || `Stripe退款扣回积分：${order.packageName} [${order.id}]`,
+      projectId: null,
+      projectName: '',
+      createdAt: now
+    };
+
+    db.billing.unshift(entry);
+    const nextRefundedAmountUsd = Number((order.refundedAmountUsd + preview.refundableAmountUsd).toFixed(2));
+    const nextRefundedPoints = order.refundedPoints + preview.refundablePoints;
+    const isFullyRefunded =
+      nextRefundedAmountUsd >= Number(Math.max(0, order.amountUsd - 0.01).toFixed(2)) ||
+      nextRefundedPoints >= order.points;
+    const updated: PaymentOrderRecord = {
+      ...order,
+      status: isFullyRefunded ? 'refunded' : order.status,
+      errorMessage: null,
+      stripeRefundId: stripeRefundId ?? order.stripeRefundId,
+      refundedAmountUsd: nextRefundedAmountUsd,
+      refundedPoints: nextRefundedPoints,
+      refundBillingEntryId: entry.id,
+      refundedAt: now,
+      updatedAt: now
+    };
+    db.paymentOrders[index] = updated;
+    this.saveDb(db);
+    return {
+      order: updated,
+      entry,
+      preview: this.buildPaymentOrderRefundPreview(db.billing, updated),
+      created: true
+    };
+  }
+
+  reversePaymentOrderRefund(orderId: string, input: { stripeRefundId?: string | null; note?: string }) {
+    const db = this.loadDb();
+    const index = db.paymentOrders.findIndex((order) => order.id === orderId);
+    if (index === -1) {
+      return null;
+    }
+
+    const order = this.normalizePaymentOrder(db.paymentOrders[index]!);
+    const stripeRefundId = input.stripeRefundId?.trim() || null;
+    if (stripeRefundId && order.stripeRefundId && order.stripeRefundId !== stripeRefundId) {
+      return { order, entry: null, created: false };
+    }
+    if (order.refundedAmountUsd <= 0 || order.refundedPoints <= 0) {
+      return { order, entry: null, created: false };
+    }
+
+    const now = new Date().toISOString();
+    const entry: BillingEntry = {
+      id: nanoid(12),
+      userKey: order.userKey,
+      type: 'credit',
+      points: order.refundedPoints,
+      amountUsd: order.refundedAmountUsd,
+      note: input.note?.trim() || `Stripe退款失败返还积分：${order.packageName} [${order.id}]`,
+      projectId: null,
+      projectName: '',
+      createdAt: now
+    };
+    db.billing.unshift(entry);
+
+    const updated: PaymentOrderRecord = {
+      ...order,
+      status: order.fulfilledAt ? 'paid' : order.status === 'refunded' ? 'paid' : order.status,
+      stripeRefundId: null,
+      refundedAmountUsd: 0,
+      refundedPoints: 0,
+      refundBillingEntryId: null,
+      refundedAt: null,
+      errorMessage: 'Stripe refund failed; refunded points were restored.',
+      updatedAt: now
+    };
+    db.paymentOrders[index] = updated;
+    this.saveDb(db);
+    return { order: updated, entry, created: true };
+  }
+
   hasProcessedStripeEvent(eventId: string) {
     if (!eventId.trim()) {
       return false;
@@ -1059,6 +1270,11 @@ export class LocalStore {
       stripeReceiptUrl: null,
       stripeInvoiceUrl: null,
       stripeInvoicePdfUrl: null,
+      stripeRefundId: null,
+      refundedAmountUsd: 0,
+      refundedPoints: 0,
+      refundBillingEntryId: null,
+      refundedAt: null,
       checkoutUrl: null,
       status: 'pending',
       errorMessage: null,

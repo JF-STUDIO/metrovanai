@@ -27,6 +27,7 @@ import {
   fetchAdminActivationCodes,
   fetchAdminAuditLogs,
   fetchAdminOpsHealth,
+  fetchAdminOrderRefundPreview,
   fetchAdminOrders,
   fetchAdminProjects,
   fetchAdminSettings,
@@ -49,6 +50,7 @@ import {
   reorderResults,
   registerWithEmail,
   redeemActivationCode,
+  refundAdminOrder,
   requestPasswordReset,
   regenerateResult,
   recoverAdminProjectRunningHubResults,
@@ -87,6 +89,7 @@ import type {
   HdrItem,
   LocalImportReviewState,
   PaymentOrderRecord,
+  PaymentOrderRefundPreview,
   ProjectGroup,
   ProjectJobState,
   ProjectRecord,
@@ -2561,6 +2564,9 @@ function App() {
   const [adminProjectsBusy, setAdminProjectsBusy] = useState(false);
   const [adminOrdersLoaded, setAdminOrdersLoaded] = useState(false);
   const [adminOrdersBusy, setAdminOrdersBusy] = useState(false);
+  const [adminRefundOrder, setAdminRefundOrder] = useState<PaymentOrderRecord | null>(null);
+  const [adminRefundPreview, setAdminRefundPreview] = useState<PaymentOrderRefundPreview | null>(null);
+  const [adminRefundBusy, setAdminRefundBusy] = useState(false);
   const [adminOpsHealth, setAdminOpsHealth] = useState<AdminOpsHealthPayload | null>(null);
   const [adminOpsBusy, setAdminOpsBusy] = useState(false);
   const [adminSearch, setAdminSearch] = useState('');
@@ -2614,7 +2620,7 @@ function App() {
   const [adminSettingsTab, setAdminSettingsTab] = useState<'basic' | 'api' | 'account'>('basic');
   const [adminWorksSearch, setAdminWorksSearch] = useState('');
   const [adminOrdersSearch, setAdminOrdersSearch] = useState('');
-  const [adminOrdersStatusFilter, setAdminOrdersStatusFilter] = useState<'all' | 'paid' | 'checkout_created' | 'failed'>('all');
+  const [adminOrdersStatusFilter, setAdminOrdersStatusFilter] = useState<'all' | 'paid' | 'checkout_created' | 'failed' | 'refunded'>('all');
   const [adminLogsSearch, setAdminLogsSearch] = useState('');
   const [adminCodesStatusFilter, setAdminCodesStatusFilter] = useState<'all' | 'available' | 'used' | 'expired' | 'inactive'>('all');
   const [adminSingleCodeOpen, setAdminSingleCodeOpen] = useState(false);
@@ -3968,6 +3974,60 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '订单列表读取失败。', locale));
     } finally {
       setAdminOrdersBusy(false);
+    }
+  }
+
+  async function handleAdminOpenRefund(order: PaymentOrderRecord) {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminRefundBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminOrderRefundPreview(order.id);
+      setAdminRefundOrder(response.order);
+      setAdminRefundPreview(response.preview);
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '退款预览读取失败。', locale));
+    } finally {
+      setAdminRefundBusy(false);
+    }
+  }
+
+  function closeAdminRefundDialog() {
+    if (adminRefundBusy) {
+      return;
+    }
+    setAdminRefundOrder(null);
+    setAdminRefundPreview(null);
+  }
+
+  async function handleAdminConfirmRefund() {
+    if (!adminRefundOrder || !adminRefundPreview) {
+      return;
+    }
+
+    setAdminRefundBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await refundAdminOrder(adminRefundOrder.id);
+      setAdminOrders((current) => current.map((order) => (order.id === response.order.id ? response.order : order)));
+      if (response.billing && response.order.userKey === session?.userKey) {
+        syncBilling(response.billing);
+      }
+      setAdminMessage(
+        response.refundStatus === 'succeeded'
+          ? `订单 #${response.order.id} 已通过 Stripe 退款，并已扣回 ${adminRefundPreview.refundablePoints} 积分。`
+          : response.message ?? `订单 #${response.order.id} 退款状态：${response.refundStatus}`
+      );
+      setAdminRefundOrder(null);
+      setAdminRefundPreview(null);
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, 'Stripe 退款失败。', locale));
+    } finally {
+      setAdminRefundBusy(false);
     }
   }
 
@@ -6309,6 +6369,8 @@ function App() {
         return '已过期';
       case 'cancelled':
         return '已取消';
+      case 'refunded':
+        return '已退款';
       default:
         return status;
     }
@@ -6481,6 +6543,9 @@ function App() {
       if (['failed', 'disabled', 'cancelled'].includes(status)) {
         return 'tag tag-red';
       }
+      if (status === 'refunded') {
+        return 'tag tag-purple';
+      }
       if (['processing', 'uploading', 'checkout_created', 'pending'].includes(status)) {
         return 'tag tag-orange';
       }
@@ -6629,7 +6694,22 @@ function App() {
                   <span className={tagClassForStatus(order.status)}>{formatPaymentOrderStatus(order.status)}</span>
                 </td>
                 <td className="cell-id">{compact ? formatAdminShortDate(order.createdAt) : formatAdminDate(order.paidAt ?? order.createdAt)}</td>
-                {!compact ? <td><div className="tbl-icon">⋯</div></td> : null}
+                {!compact ? (
+                  <td>
+                    {order.status === 'paid' && order.stripePaymentIntentId ? (
+                      <button
+                        className="btn btn-ghost btn-xs"
+                        type="button"
+                        onClick={() => void handleAdminOpenRefund(order)}
+                        disabled={adminRefundBusy}
+                      >
+                        退款
+                      </button>
+                    ) : (
+                      <div className="tbl-icon">⋯</div>
+                    )}
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>
@@ -7007,7 +7087,7 @@ function App() {
       <div className="page-content active">
         {adminPageTitle(
           '订单管理',
-          <>本月营收 <span className="mono accent-text">${paidOrderRevenue.toFixed(2)}</span> · 退款 <span className="mono danger-text">{adminOrders.filter((order) => order.status === 'cancelled').length}</span></>,
+          <>本月营收 <span className="mono accent-text">${paidOrderRevenue.toFixed(2)}</span> · 退款 <span className="mono danger-text">{adminOrders.filter((order) => order.status === 'refunded').length}</span></>,
           <>
             <button className="btn btn-ghost" type="button" onClick={exportAdminOrdersCSV} disabled={!adminOrders.length}>导出账单 CSV</button>
             <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadOrders()} disabled={adminOrdersBusy}>{adminOrdersBusy ? '刷新中...' : '刷新订单'}</button>
@@ -7034,6 +7114,7 @@ function App() {
               <option value="paid">已支付</option>
               <option value="checkout_created">处理中</option>
               <option value="failed">失败</option>
+              <option value="refunded">已退款</option>
             </select>
           </div>
           {adminOrders.length ? (() => {
@@ -7645,6 +7726,65 @@ function App() {
       }
     };
 
+    const renderAdminRefundDialog = () => {
+      if (!adminRefundOrder || !adminRefundPreview) {
+        return null;
+      }
+
+      return (
+        <div className="modal-backdrop admin-refund-backdrop" onClick={closeAdminRefundDialog}>
+          <div className="modal-card admin-refund-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="modal-head">
+              <div>
+                <strong>退款订单</strong>
+                <span className="muted">
+                  #{adminRefundOrder.id} · {adminRefundOrder.email}
+                </span>
+              </div>
+              <button className="close-button" type="button" onClick={closeAdminRefundDialog} disabled={adminRefundBusy}>
+                ×
+              </button>
+            </div>
+            <div className="admin-refund-grid">
+              <article>
+                <span>订单金额</span>
+                <strong>{formatUsd(adminRefundPreview.orderAmountUsd, locale)}</strong>
+              </article>
+              <article>
+                <span>到账积分</span>
+                <strong>{adminRefundPreview.creditedPoints.toLocaleString()} pts</strong>
+              </article>
+              <article>
+                <span>已消费积分</span>
+                <strong>{adminRefundPreview.consumedPoints.toLocaleString()} pts</strong>
+              </article>
+              <article>
+                <span>可退金额</span>
+                <strong>{formatUsd(adminRefundPreview.refundableAmountUsd, locale)}</strong>
+              </article>
+              <article>
+                <span>退款后余额</span>
+                <strong className={adminRefundPreview.balanceAfterRefund < 0 ? 'danger-text' : ''}>
+                  {adminRefundPreview.balanceAfterRefund.toLocaleString()} pts
+                </strong>
+              </article>
+            </div>
+            <p className="admin-refund-note">
+              确认后会先调用 Stripe Refund API。Stripe 返回成功后，系统再写入积分扣回流水；如果余额不足，会显示为负债并抵扣后续充值。
+            </p>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" type="button" onClick={closeAdminRefundDialog} disabled={adminRefundBusy}>
+                取消
+              </button>
+              <button className="btn btn-primary" type="button" onClick={() => void handleAdminConfirmRefund()} disabled={adminRefundBusy}>
+                {adminRefundBusy ? '退款中...' : '确认 Stripe 退款并扣回积分'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
     return (
         <>
           <main className="admin-prototype app">
@@ -7716,6 +7856,7 @@ function App() {
               {adminMessage ? <div className="global-message admin-message">{adminMessage}</div> : null}
               {renderActiveAdminPage()}
             </section>
+            {renderAdminRefundDialog()}
           </main>
         </>
       );

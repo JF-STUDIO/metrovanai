@@ -167,7 +167,14 @@ export interface BillingPackage {
   bonusPoints: number;
 }
 
-export type PaymentOrderStatus = 'pending' | 'checkout_created' | 'paid' | 'failed' | 'expired' | 'cancelled';
+export type PaymentOrderStatus =
+  | 'pending'
+  | 'checkout_created'
+  | 'paid'
+  | 'failed'
+  | 'expired'
+  | 'cancelled'
+  | 'refunded';
 
 export interface PaymentOrderRecord {
   id: string;
@@ -188,6 +195,11 @@ export interface PaymentOrderRecord {
   stripeReceiptUrl: string | null;
   stripeInvoiceUrl: string | null;
   stripeInvoicePdfUrl: string | null;
+  stripeRefundId: string | null;
+  refundedAmountUsd: number;
+  refundedPoints: number;
+  refundBillingEntryId: string | null;
+  refundedAt: string | null;
   checkoutUrl: string | null;
   status: PaymentOrderStatus;
   errorMessage: string | null;
@@ -196,6 +208,19 @@ export interface PaymentOrderRecord {
   updatedAt: string;
   paidAt: string | null;
   fulfilledAt: string | null;
+}
+
+export interface PaymentOrderRefundPreview {
+  orderId: string;
+  orderAmountUsd: number;
+  creditedPoints: number;
+  currentBalance: number;
+  consumedPoints: number;
+  alreadyRefundedAmountUsd: number;
+  alreadyRefundedPoints: number;
+  refundableAmountUsd: number;
+  refundablePoints: number;
+  balanceAfterRefund: number;
 }
 
 export interface ProjectRecord {

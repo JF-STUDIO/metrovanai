@@ -92,6 +92,7 @@ import type {
   BillingPackage,
   ExposureFile,
   HdrItem,
+  PaymentOrderRecord,
   ProjectJobState,
   ProjectRecord,
   ResultAsset,
@@ -918,6 +919,114 @@ function getOrderFromStripeSession(session: Stripe.Checkout.Session) {
     }
   }
   return store.getPaymentOrderByStripeSessionId(session.id);
+}
+
+function getOrderFromStripePaymentIntent(paymentIntentId: string | null) {
+  return paymentIntentId ? store.getPaymentOrderByStripePaymentIntentId(paymentIntentId) : null;
+}
+
+function getOrderFromStripeRefund(refund: Stripe.Refund) {
+  const orderId = refund.metadata?.metrovanOrderId || '';
+  if (orderId) {
+    const order = store.getPaymentOrderById(orderId);
+    if (order) {
+      return order;
+    }
+  }
+  return getOrderFromStripePaymentIntent(getStripeObjectId(refund.payment_intent));
+}
+
+function calculateRefundPointsDelta(order: PaymentOrderRecord, refundAmountUsd: number) {
+  const remainingPoints = Math.max(0, order.points - Math.max(0, Math.round(order.refundedPoints ?? 0)));
+  if (remainingPoints <= 0 || refundAmountUsd <= 0) {
+    return 0;
+  }
+  if (order.amountUsd <= 0) {
+    return remainingPoints;
+  }
+  return Math.min(remainingPoints, Math.max(1, Math.round((order.points * refundAmountUsd) / order.amountUsd)));
+}
+
+function syncStripeRefundToOrder(req: express.Request, order: PaymentOrderRecord, input: {
+  stripeRefundId?: string | null;
+  refundAmountUsd: number;
+  source: 'admin' | 'webhook-refund' | 'webhook-charge';
+}) {
+  const refundAmountUsd = Number(Math.max(0, input.refundAmountUsd).toFixed(2));
+  const refundPoints = calculateRefundPointsDelta(order, refundAmountUsd);
+  if (refundAmountUsd <= 0 || refundPoints <= 0) {
+    return { ok: true as const, order, entry: null, created: false };
+  }
+
+  const result = store.refundPaymentOrderCredits(order.id, {
+    stripeRefundId: input.stripeRefundId,
+    refundAmountUsd,
+    refundPoints,
+    note: `Stripe退款扣回积分：${order.packageName} [${order.id}]`
+  });
+  if (!result) {
+    return { ok: false as const, status: 404, error: 'Payment order not found.' };
+  }
+
+  if (result.created) {
+    writeSecurityAuditLog(req, {
+      action: 'billing.stripe.refunded',
+      targetUserId: order.userId,
+      details: {
+        source: input.source,
+        orderId: order.id,
+        stripeRefundId: input.stripeRefundId ?? null,
+        refundAmountUsd,
+        refundPoints
+      }
+    });
+  }
+
+  return { ok: true as const, order: result.order, entry: result.entry, created: result.created };
+}
+
+function syncStripeRefundObject(req: express.Request, refund: Stripe.Refund) {
+  const order = getOrderFromStripeRefund(refund);
+  if (!order) {
+    return { ok: false as const, status: 404, error: 'Payment order not found.' };
+  }
+
+  if (refund.status === 'failed' || refund.status === 'canceled') {
+    const reversed = store.reversePaymentOrderRefund(order.id, {
+      stripeRefundId: refund.id,
+      note: `Stripe退款失败返还积分：${order.packageName} [${order.id}]`
+    });
+    return { ok: true as const, order: reversed?.order ?? order, entry: reversed?.entry ?? null, created: false };
+  }
+
+  if (refund.status !== 'succeeded') {
+    return { ok: true as const, order, entry: null, created: false };
+  }
+
+  const refundedAmountUsd = Number(Math.max(0, (refund.amount ?? 0) / 100).toFixed(2));
+  const alreadyRefundedAmountUsd = Number(Math.max(0, order.refundedAmountUsd ?? 0).toFixed(2));
+  const refundAmountUsd = Number(Math.max(0, refundedAmountUsd - alreadyRefundedAmountUsd).toFixed(2));
+  return syncStripeRefundToOrder(req, order, {
+    stripeRefundId: refund.id,
+    refundAmountUsd,
+    source: 'webhook-refund'
+  });
+}
+
+function syncStripeChargeRefund(req: express.Request, charge: Stripe.Charge) {
+  const order = getOrderFromStripePaymentIntent(getStripeObjectId(charge.payment_intent));
+  if (!order) {
+    return { ok: false as const, status: 404, error: 'Payment order not found.' };
+  }
+
+  const stripeRefundedAmountUsd = Number(Math.max(0, (charge.amount_refunded ?? 0) / 100).toFixed(2));
+  const alreadyRefundedAmountUsd = Number(Math.max(0, order.refundedAmountUsd ?? 0).toFixed(2));
+  const refundAmountUsd = Number(Math.max(0, stripeRefundedAmountUsd - alreadyRefundedAmountUsd).toFixed(2));
+  return syncStripeRefundToOrder(req, order, {
+    stripeRefundId: `charge:${charge.id}:${charge.amount_refunded ?? 0}`,
+    refundAmountUsd,
+    source: 'webhook-charge'
+  });
 }
 
 function settlePaidStripeCheckoutSession(
@@ -2666,6 +2775,20 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
           errorMessage: 'Stripe checkout session expired.'
         });
       }
+    } else if (event.type === 'charge.refunded') {
+      const charge = event.data.object as Stripe.Charge;
+      const result = syncStripeChargeRefund(req, charge);
+      if (!result.ok && result.status !== 404) {
+        res.status(result.status).json({ error: result.error });
+        return;
+      }
+    } else if (event.type === 'refund.updated') {
+      const refund = event.data.object as Stripe.Refund;
+      const result = syncStripeRefundObject(req, refund);
+      if (!result.ok && result.status !== 404) {
+        res.status(result.status).json({ error: result.error });
+        return;
+      }
     }
 
     store.markStripeEventProcessed(event.id, event.type);
@@ -3262,6 +3385,129 @@ app.get('/api/admin/orders', (req, res) => {
     total: orders.length,
     items: orders.slice(0, limit)
   });
+});
+
+app.get('/api/admin/orders/:id/refund-preview', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const orderId = String(req.params.id ?? '').trim();
+  const order = orderId ? store.getPaymentOrderById(orderId) : null;
+  if (!order) {
+    res.status(404).json({ error: '找不到该订单。' });
+    return;
+  }
+  if (!order.fulfilledAt || !order.billingEntryId || order.status !== 'paid') {
+    res.status(409).json({ error: '只有已支付且未退款的订单可以退款。' });
+    return;
+  }
+
+  const preview = store.getPaymentOrderRefundPreview(order.id);
+  if (!preview) {
+    res.status(404).json({ error: '找不到该订单。' });
+    return;
+  }
+
+  res.json({ order, preview });
+});
+
+app.post('/api/admin/orders/:id/refund', async (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  if (!isStripeConfigured()) {
+    res.status(503).json({ error: 'Stripe is not configured.' });
+    return;
+  }
+
+  const orderId = String(req.params.id ?? '').trim();
+  const order = orderId ? store.getPaymentOrderById(orderId) : null;
+  if (!order) {
+    res.status(404).json({ error: '找不到该订单。' });
+    return;
+  }
+  if (!order.fulfilledAt || !order.billingEntryId || order.status !== 'paid') {
+    res.status(409).json({ error: '只有已支付且未退款的订单可以退款。' });
+    return;
+  }
+  if (!order.stripePaymentIntentId) {
+    res.status(409).json({ error: '该订单缺少 Stripe payment intent，不能自动退款。' });
+    return;
+  }
+
+  const preview = store.getPaymentOrderRefundPreview(order.id);
+  if (!preview || preview.refundableAmountUsd <= 0 || preview.refundablePoints <= 0) {
+    res.status(409).json({ error: '该订单没有可退金额或可扣回积分。' });
+    return;
+  }
+
+  try {
+    const refund = await getStripeClient().refunds.create({
+      payment_intent: order.stripePaymentIntentId,
+      amount: Math.round(preview.refundableAmountUsd * 100),
+      reason: 'requested_by_customer',
+      metadata: {
+        metrovanOrderId: order.id,
+        userId: order.userId,
+        userKey: order.userKey
+      }
+    });
+
+    if (refund.status !== 'succeeded') {
+      writeAdminAuditLog(req, actor, {
+        action: 'billing.stripe.refund_pending',
+        targetUserId: order.userId,
+        details: {
+          orderId: order.id,
+          stripeRefundId: refund.id,
+          status: refund.status,
+          refundAmountUsd: preview.refundableAmountUsd,
+          refundPoints: preview.refundablePoints
+        }
+      });
+      res.status(202).json({
+        order,
+        preview,
+        refundStatus: refund.status,
+        message: 'Stripe退款已提交，等待 Stripe 成功回调后再扣回积分。'
+      });
+      return;
+    }
+
+    const result = syncStripeRefundToOrder(req, order, {
+      stripeRefundId: refund.id,
+      refundAmountUsd: preview.refundableAmountUsd,
+      source: 'admin'
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+
+    writeAdminAuditLog(req, actor, {
+      action: 'billing.stripe.refund',
+      targetUserId: order.userId,
+      details: {
+        orderId: order.id,
+        stripeRefundId: refund.id,
+        refundAmountUsd: preview.refundableAmountUsd,
+        refundPoints: preview.refundablePoints,
+        balanceAfterRefund: preview.balanceAfterRefund
+      }
+    });
+
+    res.json({
+      order: result.order,
+      preview,
+      refundStatus: refund.status,
+      billing: buildBillingPayload(order.userKey)
+    });
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : 'Stripe refund failed.' });
+  }
 });
 
 app.get('/api/studio/features', (_req, res) => {

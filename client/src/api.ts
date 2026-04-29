@@ -1,4 +1,11 @@
-import type { BillingEntry, BillingPackage, BillingSummary, PaymentOrderRecord, ProjectRecord } from './types';
+import type {
+  BillingEntry,
+  BillingPackage,
+  BillingSummary,
+  PaymentOrderRecord,
+  PaymentOrderRefundPreview,
+  ProjectRecord
+} from './types';
 import { sendClientEvent } from './observability';
 import {
   appendPersistedCompleted,
@@ -299,6 +306,19 @@ export interface AdminProjectRecoverySummary {
 export interface AdminOrdersPayload {
   total: number;
   items: PaymentOrderRecord[];
+}
+
+export interface AdminOrderRefundPreviewPayload {
+  order: PaymentOrderRecord;
+  preview: PaymentOrderRefundPreview;
+}
+
+export interface AdminOrderRefundPayload {
+  order: PaymentOrderRecord;
+  preview: PaymentOrderRefundPreview;
+  refundStatus: string;
+  message?: string;
+  billing?: BillingPayload;
 }
 
 export interface AdminOpsHealthPayload {
@@ -742,6 +762,19 @@ export async function recoverAdminProjectRunningHubResults(projectId: string) {
 export async function fetchAdminOrders(limit = 120) {
   const params = new URLSearchParams({ limit: String(limit) });
   return await jsonRequest<AdminOrdersPayload>(`/api/admin/orders?${params.toString()}`);
+}
+
+export async function fetchAdminOrderRefundPreview(orderId: string) {
+  return await jsonRequest<AdminOrderRefundPreviewPayload>(
+    `/api/admin/orders/${encodeURIComponent(orderId)}/refund-preview`
+  );
+}
+
+export async function refundAdminOrder(orderId: string) {
+  return await jsonRequest<AdminOrderRefundPayload>(`/api/admin/orders/${encodeURIComponent(orderId)}/refund`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  });
 }
 
 export async function fetchAdminOpsHealth() {
