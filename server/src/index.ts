@@ -155,7 +155,7 @@ function assertCloudProductionRuntime() {
     }
   }
 
-  if (!['runpod-native', 'runpod-serverless', 'runpod-http', 'remote-http'].includes(taskExecutor)) {
+  if (!['runpod-native', 'runpod-serverless'].includes(taskExecutor)) {
     missing.push('METROVAN_TASK_EXECUTOR=runpod-native');
   }
   if (taskExecutor === 'runpod-native' || taskExecutor === 'runpod-serverless') {

@@ -174,37 +174,6 @@ function getRunningHubWorkflowSemaphore(key: string, capacity: number) {
   return semaphore;
 }
 
-interface RemoteHttpTaskExecutorConfig {
-  baseUrl: string;
-  token: string;
-  pollMs: number;
-  timeoutSeconds: number;
-  maxInFlight: number;
-}
-
-interface RemoteHttpJobCreateResponse {
-  jobId: string;
-  status?: string;
-  detail?: string;
-}
-
-interface RemoteHttpJobResultPayload {
-  downloadUrl?: string;
-  base64Data?: string;
-  storageKey?: string;
-  fileName?: string;
-}
-
-interface RemoteHttpJobStatusResponse {
-  jobId: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
-  progress?: number;
-  detail?: string;
-  queuePosition?: number;
-  workflowName?: string;
-  result?: RemoteHttpJobResultPayload;
-}
-
 interface RunpodNativeTaskExecutorConfig {
   apiBaseUrl: string;
   endpointId: string;
@@ -265,11 +234,6 @@ function resolveLocalMergeMaxInFlight() {
   return parsePositiveIntEnv(process.env.METROVAN_LOCAL_MERGE_MAX_IN_FLIGHT, 2);
 }
 
-function shouldUseObjectStorageForRemoteExecutor() {
-  const value = String(process.env.METROVAN_REMOTE_EXECUTOR_OBJECT_IO ?? '').trim().toLowerCase();
-  return (value === 'true' || value === '1' || value === 'yes') && isObjectStorageConfigured();
-}
-
 function shouldRunpodPostWorkflow() {
   const value = String(process.env.METROVAN_RUNPOD_POST_WORKFLOW_ENABLED ?? 'false').trim().toLowerCase();
   return value === 'true' || value === '1' || value === 'yes';
@@ -281,21 +245,6 @@ function isLikelyObjectStorageKey(storageKey: string | null | undefined) {
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, '');
-}
-
-function resolveRemoteHttpTaskExecutorConfig(): RemoteHttpTaskExecutorConfig {
-  const baseUrl = trimTrailingSlash(String(process.env.METROVAN_REMOTE_EXECUTOR_URL ?? '').trim());
-  if (!baseUrl) {
-    throw new Error('METROVAN_REMOTE_EXECUTOR_URL is required when task executor is runpod-http.');
-  }
-
-  return {
-    baseUrl,
-    token: String(process.env.METROVAN_REMOTE_EXECUTOR_TOKEN ?? '').trim(),
-    pollMs: parsePositiveIntEnv(process.env.METROVAN_REMOTE_EXECUTOR_POLL_MS, 2500),
-    timeoutSeconds: parsePositiveIntEnv(process.env.METROVAN_REMOTE_EXECUTOR_TIMEOUT_SECONDS, 1800),
-    maxInFlight: parsePositiveIntEnv(process.env.METROVAN_REMOTE_EXECUTOR_MAX_IN_FLIGHT, 2)
-  };
 }
 
 function resolveRunpodNativeTaskExecutorConfig(): RunpodNativeTaskExecutorConfig {
@@ -318,18 +267,9 @@ function resolveRunpodNativeTaskExecutorConfig(): RunpodNativeTaskExecutorConfig
     apiBaseUrl: trimTrailingSlash(String(process.env.METROVAN_RUNPOD_API_BASE_URL ?? 'https://api.runpod.ai/v2').trim()),
     endpointId,
     apiKey,
-    pollMs: parsePositiveIntEnv(
-      process.env.METROVAN_RUNPOD_POLL_MS ?? process.env.METROVAN_REMOTE_EXECUTOR_POLL_MS,
-      2500
-    ),
-    timeoutSeconds: parsePositiveIntEnv(
-      process.env.METROVAN_RUNPOD_TIMEOUT_SECONDS ?? process.env.METROVAN_REMOTE_EXECUTOR_TIMEOUT_SECONDS,
-      3600
-    ),
-    maxInFlight: parsePositiveIntEnv(
-      process.env.METROVAN_RUNPOD_MAX_IN_FLIGHT ?? process.env.METROVAN_REMOTE_EXECUTOR_MAX_IN_FLIGHT,
-      5
-    ),
+    pollMs: parsePositiveIntEnv(process.env.METROVAN_RUNPOD_POLL_MS, 2500),
+    timeoutSeconds: parsePositiveIntEnv(process.env.METROVAN_RUNPOD_TIMEOUT_SECONDS, 3600),
+    maxInFlight: parsePositiveIntEnv(process.env.METROVAN_RUNPOD_MAX_IN_FLIGHT, 5),
     batchSize: Math.max(
       1,
       Math.min(MAX_RUNPOD_HDR_BATCH_SIZE, parsePositiveIntEnv(process.env.METROVAN_RUNPOD_BATCH_SIZE, 10))
@@ -867,202 +807,6 @@ class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
           onProgress,
           options
         })
-    };
-  }
-}
-
-class RemoteHttpTaskExecutionProvider implements TaskExecutionProvider {
-  constructor(private readonly store: LocalStore) {}
-
-  getInfo(): TaskExecutionProviderInfo {
-    return {
-      provider: 'runpod-http',
-      workflowEngine: 'remote-http'
-    };
-  }
-
-  createRunContext(): TaskExecutionRunContext {
-    const config = resolveRemoteHttpTaskExecutorConfig();
-    const localMerge = createLocalHdrMergeContext(this.store);
-
-    const createHeaders = () => {
-      const headers = new Headers();
-      headers.set('Content-Type', 'application/json');
-      if (config.token) {
-        headers.set('Authorization', `Bearer ${config.token}`);
-      }
-      return headers;
-    };
-
-    const executeWorkflowTask = async (
-      project: ProjectRecord,
-      hdrItem: HdrItem,
-      mergedPath: string,
-      mergedFileName: string,
-      onProgress?: (update: WorkflowExecutionProgress) => void,
-      options?: WorkflowExecutionOptions
-    ) => {
-      const group = project.groups.find((entry) => entry.id === hdrItem.groupId);
-      if (!group) {
-        throw new Error(`Missing project group for HDR item ${hdrItem.id}.`);
-      }
-
-      const objectIo = shouldUseObjectStorageForRemoteExecutor();
-      const remoteInput = objectIo
-        ? await mirrorLocalFileToObjectStorage({
-            userKey: project.userKey,
-            projectId: project.id,
-            userDisplayName: project.userDisplayName,
-            projectName: project.name,
-            category: 'work',
-            sourcePath: mergedPath,
-            fileName: mergedFileName,
-            contentType: 'image/jpeg'
-          })
-        : null;
-      const mergedBuffer = remoteInput ? null : fs.readFileSync(mergedPath);
-      const createResponse = await fetch(`${config.baseUrl}/jobs`, {
-        method: 'POST',
-        headers: createHeaders(),
-        body: JSON.stringify({
-          projectId: project.id,
-          hdrItemId: hdrItem.id,
-          title: hdrItem.title,
-          studioFeatureId: project.studioFeatureId ?? null,
-          workflowId: project.workflowId ?? undefined,
-          inputNodeId: project.workflowInputNodeId ?? undefined,
-          outputNodeId: project.workflowOutputNodeId ?? undefined,
-          sceneType: group.sceneType,
-          colorMode: group.colorMode,
-          replacementColor: normalizeHex(group.replacementColor),
-          workflowMode: options?.mode ?? 'default',
-          colorCardNo: options?.colorCardNo ?? null,
-          inputFileName: mergedFileName,
-          inputMimeType: 'image/jpeg',
-          inputImageBase64: mergedBuffer ? mergedBuffer.toString('base64') : undefined,
-          inputStorageKey: remoteInput?.storageKey,
-          inputDownloadUrl: remoteInput?.storageKey ? createObjectDownloadUrl(remoteInput.storageKey) : undefined
-        })
-      });
-      const created = await readRemoteJson<RemoteHttpJobCreateResponse>(
-        createResponse,
-        'Remote executor job submission failed.'
-      );
-
-      if (!created.jobId) {
-        throw new Error('Remote executor did not return a job id.');
-      }
-
-      onProgress?.({
-        monitorState: created.status ?? 'submitted',
-        detail: created.detail ?? `remote job ${created.jobId} submitted`,
-        remoteProgress: 0,
-        queuePosition: 0,
-        workflowName: 'runpod-http',
-        taskId: created.jobId
-      });
-
-      const deadline = Date.now() + config.timeoutSeconds * 1000;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, config.pollMs));
-
-        const statusResponse = await fetch(`${config.baseUrl}/jobs/${encodeURIComponent(created.jobId)}`, {
-          headers: createHeaders()
-        });
-        const statusPayload = await readRemoteJson<RemoteHttpJobStatusResponse>(
-          statusResponse,
-          'Remote executor status check failed.'
-        );
-
-        const remoteProgress = Math.max(0, Math.min(100, Math.round(statusPayload.progress ?? 0)));
-        onProgress?.({
-          monitorState: statusPayload.status,
-          detail: statusPayload.detail ?? `remote job ${created.jobId} ${statusPayload.status}`,
-          remoteProgress,
-          queuePosition: Math.max(0, Math.round(statusPayload.queuePosition ?? 0)),
-          workflowName: statusPayload.workflowName ?? 'runpod-http',
-          taskId: created.jobId
-        });
-
-        if (statusPayload.status === 'failed') {
-          throw new Error(statusPayload.detail || `Remote executor job ${created.jobId} failed.`);
-        }
-
-        if (statusPayload.status !== 'completed') {
-          continue;
-        }
-
-        const result = statusPayload.result;
-        if (!result?.downloadUrl && !result?.base64Data && !result?.storageKey) {
-          throw new Error('Remote executor completed without returning a result artifact.');
-        }
-
-        let outputExtension = path.extname(result.fileName ?? '');
-        if (!outputExtension && result.storageKey) {
-          outputExtension = path.extname(result.storageKey);
-        } else if (!outputExtension && result.downloadUrl) {
-          try {
-            outputExtension = path.extname(new URL(result.downloadUrl as string).pathname);
-          } catch {
-            // Keep the fallback extension.
-          }
-        }
-        const tempDownloadPath = path.join(
-          process.env.TEMP ?? process.cwd(),
-          'metrovan_remote_results',
-          `${created.jobId}${outputExtension || '.png'}`
-        );
-
-        if (result.base64Data) {
-          fs.mkdirSync(path.dirname(tempDownloadPath), { recursive: true });
-          fs.writeFileSync(tempDownloadPath, Buffer.from(result.base64Data, 'base64'));
-        } else if (result.storageKey) {
-          const objectDownloadResponse = await fetch(createObjectDownloadUrl(result.storageKey));
-          await writeResponseBodyToFile(objectDownloadResponse, tempDownloadPath, 'Failed to download remote object result');
-        } else {
-          const downloadResponse = await fetch(result.downloadUrl as string, {
-            headers: config.token ? { Authorization: `Bearer ${config.token}` } : undefined
-          });
-          await writeResponseBodyToFile(downloadResponse, tempDownloadPath, 'Failed to download remote result');
-        }
-
-        const resultPath = buildWorkflowResultTargetPath(this.store, project, mergedFileName, options);
-        await extractPreviewOrConvertToJpeg(tempDownloadPath, resultPath, 95);
-        const mirrored = await mirrorLocalFileToObjectStorage({
-          userKey: project.userKey,
-          projectId: project.id,
-          userDisplayName: project.userDisplayName,
-          projectName: project.name,
-          category: 'results',
-          sourcePath: resultPath,
-          fileName: path.basename(resultPath),
-          contentType: 'image/jpeg'
-        });
-        try {
-          fs.rmSync(tempDownloadPath, { force: true });
-        } catch {
-          // ignore
-        }
-
-        return {
-          resultPath,
-          resultFileName: path.basename(resultPath),
-          resultStorageKey: mirrored?.storageKey ?? result.storageKey ?? null
-        };
-      }
-
-      throw new Error(`Remote executor timed out after ${config.timeoutSeconds} seconds.`);
-    };
-
-    return {
-      getMergeConcurrency(totalPendingItems: number) {
-        return Math.max(1, Math.min(resolveLocalMergeMaxInFlight(), totalPendingItems));
-      },
-      getMaxConcurrency(totalPendingItems: number) {
-        return Math.max(1, Math.min(config.maxInFlight, totalPendingItems));
-      },
-      ensureMergedHdrItem: localMerge.ensureMergedHdrItem,
-      executeWorkflowTask
     };
   }
 }
@@ -1814,115 +1558,19 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
   }
 }
 
-class MockTaskExecutionProvider implements TaskExecutionProvider {
-  constructor(private readonly store: LocalStore) {}
-
-  getInfo(): TaskExecutionProviderInfo {
-    return {
-      provider: 'mock',
-      workflowEngine: 'mock'
-    };
-  }
-
-  createRunContext(): TaskExecutionRunContext {
-    const localMerge = createLocalHdrMergeContext(this.store);
-    const maxInFlight = parsePositiveIntEnv(process.env.METROVAN_MOCK_WORKFLOW_MAX_IN_FLIGHT, 24);
-    const latencyMs = Math.max(0, parsePositiveIntEnv(process.env.METROVAN_MOCK_WORKFLOW_LATENCY_MS, 250));
-
-    const executeWorkflowTask = async (
-      project: ProjectRecord,
-      hdrItem: HdrItem,
-      mergedPath: string,
-      mergedFileName: string,
-      onProgress?: (update: WorkflowExecutionProgress) => void,
-      options?: WorkflowExecutionOptions
-    ): Promise<WorkflowExecutionArtifact> => {
-      const dirs = this.store.getProjectDirectories(project);
-      fs.mkdirSync(dirs.results, { recursive: true });
-      const suffix = options?.outputSuffix ? `_${sanitizeSegment(options.outputSuffix)}` : '';
-      const resultFileName = `${path.basename(mergedFileName, path.extname(mergedFileName))}${suffix}_mock.jpg`;
-      const resultPath = path.join(dirs.results, resultFileName);
-
-      onProgress?.({
-        stage: 'runninghub',
-        monitorState: 'mock-running',
-        detail: `${hdrItem.title} mock processing`,
-        remoteProgress: 30,
-        queuePosition: 0,
-        workflowName: 'mock',
-        taskId: `mock-${hdrItem.id}`
-      });
-
-      if (latencyMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, latencyMs));
-      }
-
-      await extractPreviewOrConvertToJpeg(mergedPath, resultPath, 95);
-      const mirrored = await mirrorLocalFileToObjectStorage({
-        userKey: project.userKey,
-        projectId: project.id,
-        userDisplayName: project.userDisplayName,
-        projectName: project.name,
-        category: 'results',
-        sourcePath: resultPath,
-        fileName: resultFileName,
-        contentType: 'image/jpeg'
-      });
-
-      onProgress?.({
-        stage: 'runninghub',
-        monitorState: 'mock-completed',
-        detail: `${hdrItem.title} mock completed`,
-        remoteProgress: 100,
-        queuePosition: 0,
-        workflowName: 'mock',
-        taskId: `mock-${hdrItem.id}`
-      });
-
-      return {
-        resultPath,
-        resultFileName,
-        resultStorageKey: mirrored?.storageKey ?? null,
-        mergedPath,
-        mergedFileName,
-        mergedStorageKey: hdrItem.mergedKey ?? null
-      };
-    };
-
-    return {
-      getMergeConcurrency(totalPendingItems: number) {
-        return Math.max(1, Math.min(resolveLocalMergeMaxInFlight(), totalPendingItems));
-      },
-      getMaxConcurrency(totalPendingItems: number) {
-        return Math.max(1, Math.min(maxInFlight, totalPendingItems));
-      },
-      ensureMergedHdrItem: localMerge.ensureMergedHdrItem,
-      executeWorkflowTask
-    };
-  }
-}
-
 export function createTaskExecutionProvider(
   provider: string | undefined,
   options: { repoRoot: string; store: LocalStore }
 ): TaskExecutionProvider {
-  const defaultProvider = process.env.NODE_ENV === 'production' ? 'runpod-native' : 'local-runninghub';
+  const defaultProvider = 'runpod-native';
   const normalizedProvider = (provider ?? defaultProvider).trim().toLowerCase();
-  if (normalizedProvider === 'local-runninghub') {
+  if (normalizedProvider === 'local-runninghub' && process.env.NODE_ENV !== 'production') {
     return new LocalRunningHubTaskExecutionProvider(options.repoRoot, options.store);
-  }
-
-  if (normalizedProvider === 'runpod-http' || normalizedProvider === 'remote-http') {
-    return new RemoteHttpTaskExecutionProvider(options.store);
   }
 
   if (normalizedProvider === 'runpod-native' || normalizedProvider === 'runpod-serverless') {
     return new RunpodNativeTaskExecutionProvider(options.repoRoot, options.store);
   }
 
-  if (normalizedProvider === 'mock' || normalizedProvider === 'dry-run') {
-    return new MockTaskExecutionProvider(options.store);
-  }
-
-  throw new Error(`Unsupported task execution provider: ${provider}`);
+  throw new Error('Unsupported task execution provider. Use METROVAN_TASK_EXECUTOR=runpod-native.');
 }

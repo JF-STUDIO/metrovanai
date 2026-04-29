@@ -41,12 +41,10 @@ export function buildDeploymentReadiness(input: {
     hasEnv('METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY');
   const objectStorageEndpointReady = hasEnv('METROVAN_OBJECT_STORAGE_ENDPOINT');
   const directUploadEnabled = isEnabledEnv('METROVAN_DIRECT_UPLOAD_ENABLED');
-  const remoteObjectIoEnabled = isEnabledEnv('METROVAN_REMOTE_EXECUTOR_OBJECT_IO');
-  const remoteHttpExecutorEnvReady = hasEnv('METROVAN_REMOTE_EXECUTOR_URL');
   const runpodNativeExecutorEnvReady = hasEnv('METROVAN_RUNPOD_ENDPOINT_ID') && hasEnv('METROVAN_RUNPOD_API_KEY');
-  const remoteExecutorEnvReady = remoteHttpExecutorEnvReady || runpodNativeExecutorEnvReady;
+  const remoteExecutorEnvReady = runpodNativeExecutorEnvReady;
   const remoteObjectTransportReady =
-    (remoteObjectIoEnabled || runpodNativeExecutorEnvReady) && objectStorageEnvReady && objectStorageEndpointReady;
+    runpodNativeExecutorEnvReady && objectStorageEnvReady && objectStorageEndpointReady;
   const stripeEnvReady = hasEnv('METROVAN_STRIPE_SECRET_KEY') && hasEnv('METROVAN_STRIPE_WEBHOOK_SECRET');
   const cspDisabled = isEnabledEnv('METROVAN_DISABLE_CSP');
   const cspReportOnly = isEnabledEnv('METROVAN_CSP_REPORT_ONLY');
@@ -150,12 +148,15 @@ export function buildDeploymentReadiness(input: {
     },
     {
       id: 'executor.provider',
-      status: input.executor.provider === 'local-runninghub' ? 'action-required' : 'ready',
+      status:
+        input.executor.provider === 'runpod-native' || input.executor.provider === 'runpod-serverless'
+          ? 'ready'
+          : 'action-required',
       current: describeProvider(input.executor),
       next:
-        input.executor.provider === 'local-runninghub'
-          ? 'Production must use METROVAN_TASK_EXECUTOR=runpod-native or runpod-http. Do not process customer photos on this computer.'
-          : 'Remote executor provider is active.'
+        input.executor.provider === 'runpod-native' || input.executor.provider === 'runpod-serverless'
+          ? 'Runpod native executor is active.'
+          : 'Production must use METROVAN_TASK_EXECUTOR=runpod-native. Do not process customer photos through legacy executors.'
     },
     {
       id: 'executor.remote_env',
@@ -163,16 +164,16 @@ export function buildDeploymentReadiness(input: {
       current: remoteExecutorEnvReady ? 'configured' : 'not configured',
       next: runpodNativeExecutorEnvReady
         ? 'Runpod native env is configured. Worker input contract is metrovan.runpod.v1.'
-        : 'For Runpod native set METROVAN_RUNPOD_ENDPOINT_ID and METROVAN_RUNPOD_API_KEY. For a custom adapter set METROVAN_REMOTE_EXECUTOR_URL.'
+        : 'Set METROVAN_RUNPOD_ENDPOINT_ID and METROVAN_RUNPOD_API_KEY.'
     },
     {
       id: 'executor.object_io',
       status: remoteObjectTransportReady ? 'ready' : 'planned',
-      current: runpodNativeExecutorEnvReady ? 'required by runpod-native' : remoteObjectIoEnabled ? 'enabled' : 'disabled',
+      current: runpodNativeExecutorEnvReady ? 'required by runpod-native' : 'disabled',
       next:
         remoteObjectTransportReady
           ? 'Remote executor can receive object keys/presigned URLs instead of large base64 payloads.'
-          : 'After S3/R2 is configured, use runpod-native or set METROVAN_REMOTE_EXECUTOR_OBJECT_IO=true for the custom adapter.'
+          : 'Configure R2/S3 object storage for runpod-native object transport.'
     },
     {
       id: 'payment.stripe_env',
