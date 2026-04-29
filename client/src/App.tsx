@@ -51,6 +51,7 @@ import {
   fetchSession,
   fetchStudioFeatures,
   getApiRoot,
+  isDirectUploadIntegrityError,
   loginWithEmail,
   logoutSession,
   moveHdrItem,
@@ -5587,6 +5588,13 @@ function App() {
         }
         setMessage(locale === 'en' ? 'Upload cancelled. Uploaded files were saved and can be resumed.' : '上传已取消，已上传的文件会保留记录，可继续上传。');
         return;
+      }
+      if (isDirectUploadIntegrityError(error) && currentProject) {
+        updateLocalImportDraft(currentProject.id, (draft) => ({
+          ...draft,
+          uploadStatus: 'paused',
+          uploadedObjects: []
+        }));
       }
       if (isInsufficientCreditsError(error)) {
         setBillingModalMode('topup');

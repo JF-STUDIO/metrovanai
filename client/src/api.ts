@@ -1005,6 +1005,31 @@ async function runWithOfflineRetry<T>(
   }
 }
 
+export function isDirectUploadIntegrityError(error: unknown) {
+  if (!(error instanceof ApiRequestError) || error.status !== 400) {
+    return false;
+  }
+  return /Uploaded object (was not found|size does not match)/i.test(error.message);
+}
+
+async function completeDirectObjectUploadReferencesReliably(
+  projectId: string,
+  files: UploadedObjectReference[],
+  options: { signal?: AbortSignal; onOfflinePause?: () => void } = {}
+) {
+  try {
+    return await runWithOfflineRetry(() => completeDirectObjectUploadReferences(projectId, files), {
+      signal: options.signal,
+      onPause: options.onOfflinePause
+    });
+  } catch (error) {
+    if (isDirectUploadIntegrityError(error)) {
+      await clearPersistedProject(projectId);
+    }
+    throw error;
+  }
+}
+
 function uploadRetryDelay(attempt: number) {
   return UPLOAD_RETRY_BASE_DELAY_MS * attempt + Math.round(Math.random() * UPLOAD_RETRY_JITTER_MS);
 }
@@ -1661,7 +1686,17 @@ async function uploadFilesViaDirectObject(
       uploadedFiles: files.length,
       totalFiles: files.length
     });
-    const response = await completeDirectObjectUploadReferences(projectId, completedObjects);
+    const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
+      signal: options.signal,
+      onOfflinePause: () =>
+        onProgress(96, {
+          stage: 'paused',
+          percent: 96,
+          uploadedFiles: files.length,
+          totalFiles: files.length,
+          offline: true
+        })
+    });
     await clearPersistedProject(projectId);
     onProgress(100, {
       stage: 'completed',
@@ -1854,7 +1889,17 @@ async function uploadFilesViaDirectObject(
   const completedObjects = files
     .map((file) => findCompletedObjectForFile(completedByIdentity, file))
     .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
-  const response = await completeDirectObjectUploadReferences(projectId, completedObjects);
+  const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
+    signal: options.signal,
+    onOfflinePause: () =>
+      onProgress(96, {
+        stage: 'paused',
+        percent: 96,
+        uploadedFiles: files.length,
+        totalFiles: files.length,
+        offline: true
+      })
+  });
   await clearPersistedProject(projectId);
   onProgress(100, {
     stage: 'completed',
