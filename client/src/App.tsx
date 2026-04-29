@@ -5870,7 +5870,7 @@ function App() {
         };
         const rememberGroupFailedUploadFile = (hdrItemId: string) => (failed: FailedUploadFile) => {
           const entry: FailedUploadEntry = { ...failed, hdrItemId };
-          failedUploadBuffer = [...failedUploadBuffer.filter((item) => item.fileIdentity !== failed.fileIdentity), entry].slice(-8);
+          failedUploadBuffer = [...failedUploadBuffer.filter((item) => item.fileIdentity !== failed.fileIdentity), entry];
           setFailedUploadFiles(failedUploadBuffer);
         };
         setUploadActive(true);

@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import type { ExposureFile, HdrItem, ProjectRecord } from './types.js';
 import { analyzeHdrGroups, readGroupingFrames, type GroupingFrame } from './grouping.js';
 import { extractPreviewOrConvertToJpeg } from './images.js';
+import { getObjectStorageMetadata, isDirectUploadKeyForProject } from './object-storage.js';
 import type { LocalStore } from './store.js';
 import { getFileStem, isRawExtension } from './utils.js';
 
@@ -270,7 +271,45 @@ async function createExposureFromFrame(
   } satisfies ExposureFile;
 }
 
-function createExposureFromFrontendMetadata(input: {
+async function resolveValidatedFrontendStorageKey(input: {
+  project: ProjectRecord;
+  exposure: FrontendHdrLayoutExposure;
+}) {
+  const storageKey = input.exposure.storageKey?.trim();
+  if (!storageKey) {
+    return null;
+  }
+
+  try {
+    if (
+      !isDirectUploadKeyForProject({
+        userKey: input.project.userKey,
+        projectId: input.project.id,
+        userDisplayName: input.project.userDisplayName,
+        projectName: input.project.name,
+        storageKey
+      })
+    ) {
+      return null;
+    }
+
+    const metadata = await getObjectStorageMetadata(storageKey);
+    if (!metadata) {
+      return null;
+    }
+
+    const expectedSize = input.exposure.size;
+    if (typeof expectedSize === 'number' && metadata.size !== null && metadata.size !== expectedSize) {
+      return null;
+    }
+
+    return metadata.storageKey;
+  } catch {
+    return null;
+  }
+}
+
+async function createExposureFromFrontendMetadata(input: {
   project: ProjectRecord;
   store: LocalStore;
   hdrItemId: string;
@@ -282,7 +321,8 @@ function createExposureFromFrontendMetadata(input: {
   const originalName = path.basename(input.exposure.originalName || input.fallbackOriginalName || 'source');
   const fileName = path.basename(input.exposure.fileName || originalName);
   const manifestEntry = takeDirectUploadManifestEntry(originalName, input.directUploadKeys);
-  const storageKey = manifestEntry?.storageKey ?? undefined;
+  const storageKey =
+    manifestEntry?.storageKey ?? (await resolveValidatedFrontendStorageKey({ project: input.project, exposure: input.exposure })) ?? undefined;
   const dirs = input.store.ensureProjectDirectories(input.project);
   const localPath =
     manifestEntry?.localPath ??
@@ -345,8 +385,9 @@ async function buildHdrItemsFromFrontendMetadata(
     const itemPreviewDir = path.join(dirs.previews, hdrItemId);
     fs.mkdirSync(itemPreviewDir, { recursive: true });
 
-    const exposures = metadataExposures.map((exposure, index) =>
-      createExposureFromFrontendMetadata({
+    const exposures = await Promise.all(
+      metadataExposures.map((exposure, index) =>
+        createExposureFromFrontendMetadata({
         project,
         store,
         hdrItemId,
@@ -355,6 +396,7 @@ async function buildHdrItemsFromFrontendMetadata(
         itemPreviewDir,
         directUploadKeys
       })
+      )
     );
     const selectedName = normalizeFileIdentity(item.selectedOriginalName ?? '');
     const selectedExposure =
