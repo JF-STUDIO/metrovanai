@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -78,17 +79,60 @@ def bucket_name() -> str:
     return bucket
 
 
+def download_retry_count() -> int:
+    try:
+        value = int(env("METROVAN_DOWNLOAD_RETRIES", "4"))
+    except ValueError:
+        value = 4
+    return max(1, min(8, value))
+
+
+def sleep_before_download_retry(attempt: int, error: Exception) -> None:
+    delay = min(8.0, float(2 ** max(0, attempt - 1)))
+    message = str(error).replace("\r", " ").replace("\n", " ").strip()[:300]
+    print(f"Download attempt {attempt} failed: {message}; retrying in {delay:.0f}s.", flush=True)
+    time.sleep(delay)
+
+
 def download_url(url: str, target_path: Path) -> None:
-    with requests.get(url, stream=True, timeout=120) as response:
-        response.raise_for_status()
-        with target_path.open("wb") as output:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    output.write(chunk)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    attempts = download_retry_count()
+    for attempt in range(1, attempts + 1):
+        try:
+            target_path.unlink(missing_ok=True)
+            with requests.get(url, stream=True, timeout=120) as response:
+                response.raise_for_status()
+                with target_path.open("wb") as output:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            output.write(chunk)
+            return
+        except (requests.RequestException, OSError) as error:
+            try:
+                target_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt >= attempts:
+                raise
+            sleep_before_download_retry(attempt, error)
 
 
 def download_object(storage_key: str, target_path: Path) -> None:
-    s3_client().download_file(bucket_name(), storage_key, str(target_path))
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    attempts = download_retry_count()
+    for attempt in range(1, attempts + 1):
+        try:
+            target_path.unlink(missing_ok=True)
+            s3_client().download_file(bucket_name(), storage_key, str(target_path))
+            return
+        except Exception as error:
+            try:
+                target_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt >= attempts:
+                raise
+            sleep_before_download_retry(attempt, error)
 
 
 def download_source(source: dict[str, Any], target_dir: Path) -> Path:

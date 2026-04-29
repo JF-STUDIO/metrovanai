@@ -395,6 +395,23 @@ function shouldFallbackToIndividualRunpodJobs(error: unknown) {
   return lower.includes('job output contract is missing') || lower.includes('output contract is missing');
 }
 
+function isTransientCloudTransferError(message: string) {
+  const lower = message.toLowerCase();
+  return [
+    'temporary failure in name resolution',
+    'name resolution',
+    'getaddrinfo',
+    'eai_again',
+    'connection reset',
+    'connection aborted',
+    'connection refused',
+    'network is unreachable',
+    'timed out',
+    'timeout',
+    'failed to download cloud result'
+  ].some((token) => lower.includes(token));
+}
+
 function getNestedString(value: unknown, pathSegments: string[]) {
   let current = value;
   for (const segment of pathSegments) {
@@ -1683,6 +1700,33 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
               return { hdrItemId: batchItem.hdrItem.id, errorMessage: 'Batch result is missing.' };
             }
             if (artifact.errorMessage) {
+              if (isTransientCloudTransferError(artifact.errorMessage)) {
+                onProgress?.({
+                  stage: 'runpod',
+                  monitorState: 'retrying',
+                  detail: `cloud batch item ${batchItem.hdrItem.id} had a transient transfer error; retrying individually`,
+                  remoteProgress: 0,
+                  queuePosition: 0,
+                  workflowName: 'runpod-native',
+                  taskId: `${jobId}-${batchItem.hdrItem.id}-retry`
+                });
+                try {
+                  const retriedArtifact = await executeWorkflowTaskWithRunpodLimit(
+                    project,
+                    batchItem.hdrItem,
+                    batchItem.mergedPath,
+                    batchItem.mergedFileName,
+                    onProgress,
+                    options
+                  );
+                  return { hdrItemId: batchItem.hdrItem.id, artifact: retriedArtifact };
+                } catch (error) {
+                  return {
+                    hdrItemId: batchItem.hdrItem.id,
+                    errorMessage: error instanceof Error ? error.message : String(error)
+                  };
+                }
+              }
               return { hdrItemId: batchItem.hdrItem.id, errorMessage: artifact.errorMessage };
             }
 

@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,7 @@ RAWPY_AUTO_WB_BLEND_ENV = "METROVAN_RAWPY_AUTO_WB_BLEND"
 RAWPY_WB_CONFIDENCE_MIN_ENV = "METROVAN_RAWPY_WB_CONFIDENCE_MIN"
 RAWPY_WB_GREEN_SCENE_LIMIT_ENV = "METROVAN_RAWPY_WB_GREEN_SCENE_LIMIT"
 RAWPY_ALLOW_FLAT_CAMERA_WB_OVERRIDE_ENV = "METROVAN_RAWPY_ALLOW_FLAT_CAMERA_WB_OVERRIDE"
+DOWNLOAD_RETRY_COUNT_ENV = "METROVAN_DOWNLOAD_RETRIES"
 
 
 def env(name: str, default: str = "") -> str:
@@ -139,6 +141,20 @@ def run_process(command: str, args: list[str], cwd: Path, timeout: int = 300) ->
 def trim_error(value: str) -> str:
     value = (value or "").replace("\r", " ").replace("\n", " ").strip()
     return value[:300]
+
+
+def download_retry_count() -> int:
+    try:
+        value = int(env(DOWNLOAD_RETRY_COUNT_ENV, "4"))
+    except ValueError:
+        value = 4
+    return max(1, min(8, value))
+
+
+def sleep_before_download_retry(attempt: int, error: Exception) -> None:
+    delay = min(8.0, float(2 ** max(0, attempt - 1)))
+    print(f"Download attempt {attempt} failed: {trim_error(str(error))}; retrying in {delay:.0f}s.", flush=True)
+    time.sleep(delay)
 
 
 def is_raw(path: Path) -> bool:
@@ -302,10 +318,23 @@ def download_s3_object(config: dict[str, str], target: Path) -> None:
         aws_access_key_id=config["access_key_id"],
         aws_secret_access_key=config["secret_access_key"],
         region_name=config["region"],
-        config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
+        config=Config(signature_version="s3v4", retries={"max_attempts": 5, "mode": "standard"}),
     )
-    print(f"Downloading ACR lens profiles from object storage: {config['bucket']}/{config['key']}", flush=True)
-    client.download_file(config["bucket"], config["key"], str(target))
+    print(f"Downloading object storage file: {config['bucket']}/{config['key']}", flush=True)
+    attempts = download_retry_count()
+    for attempt in range(1, attempts + 1):
+        try:
+            target.unlink(missing_ok=True)
+            client.download_file(config["bucket"], config["key"], str(target))
+            return
+        except Exception as error:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt >= attempts:
+                raise
+            sleep_before_download_retry(attempt, error)
 
 
 def extract_zip_safe(zip_path: Path, destination: Path) -> None:
@@ -766,12 +795,25 @@ def apply_lens_correction(image: Image.Image, source: Path) -> Image.Image:
 
 def download_url(url: str, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=180) as response:
-        response.raise_for_status()
-        with target.open("wb") as output:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    output.write(chunk)
+    attempts = download_retry_count()
+    for attempt in range(1, attempts + 1):
+        try:
+            target.unlink(missing_ok=True)
+            with requests.get(url, stream=True, timeout=180) as response:
+                response.raise_for_status()
+                with target.open("wb") as output:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            output.write(chunk)
+            return
+        except (requests.RequestException, OSError) as error:
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt >= attempts:
+                raise
+            sleep_before_download_retry(attempt, error)
 
 
 def sanitize_file_name(value: str, fallback: str) -> str:
