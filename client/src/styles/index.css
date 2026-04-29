@@ -8,7 +8,8 @@
 @import './10-studio-workspace.css';
 @import './20-landing-core.css';
 @import './30-studio-polish.css';
-@import './40-homepage-polish.css';
+@import './40-homepage-public.css';
+@import './40-admin-prototype.css';
 @import './50-plans.css';
 @import './60-showcase-render.css';
 @import './70-polish-layer.css';

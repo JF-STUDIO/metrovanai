@@ -56,9 +56,17 @@ export function buildDeploymentReadiness(input: {
     'METROVAN_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES',
     30 * 1024 * 1024 * 1024
   );
-  const distributedRateLimitReady =
+  const upstashRateLimitReady =
     (hasEnv('UPSTASH_REDIS_REST_URL') && hasEnv('UPSTASH_REDIS_REST_TOKEN')) ||
     (hasEnv('METROVAN_UPSTASH_REDIS_REST_URL') && hasEnv('METROVAN_UPSTASH_REDIS_REST_TOKEN'));
+  const postgresRateLimitReady =
+    hasEnv('METROVAN_RATE_LIMIT_DATABASE_URL') || hasEnv('SUPABASE_DB_URL') || hasEnv('DATABASE_URL') || hasEnv('POSTGRES_URL');
+  const distributedRateLimitReady = upstashRateLimitReady || postgresRateLimitReady;
+  const distributedRateLimitCurrent = upstashRateLimitReady
+    ? 'Upstash Redis REST'
+    : postgresRateLimitReady
+      ? 'Postgres rate-limit table'
+      : 'in-memory per instance';
   const checks: DeploymentReadinessCheck[] = [
     {
       id: 'security.csp',
@@ -73,10 +81,10 @@ export function buildDeploymentReadiness(input: {
     {
       id: 'security.distributed_rate_limit',
       status: distributedRateLimitReady ? 'ready' : 'action-required',
-      current: distributedRateLimitReady ? 'Upstash Redis REST' : 'in-memory per instance',
+      current: distributedRateLimitCurrent,
       next: distributedRateLimitReady
         ? 'Runtime rate limits use an external backend and survive restarts or multi-instance traffic.'
-        : 'Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for global rate limits.'
+        : 'Set Upstash Redis REST env vars or a Postgres database URL for global rate limits.'
     },
     {
       id: 'metadata.provider',

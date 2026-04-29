@@ -1,0 +1,7 @@
+/*
+ * Authenticated app/admin style entry.
+ * Loaded only when the full App bundle is imported.
+ */
+@import './10-studio-workspace.css';
+@import './30-studio-polish.css';
+@import './40-admin-prototype.css';

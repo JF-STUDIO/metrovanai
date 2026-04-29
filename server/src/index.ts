@@ -6,6 +6,7 @@ import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import pg from 'pg';
 import { z } from 'zod';
 import {
   AUTH_COOKIE_NAME,
@@ -106,6 +107,7 @@ import { traceIdMiddleware } from './middleware/trace-id.js';
 import { captureServerError, initServerObservability, logServerEvent } from './observability.js';
 import { loadWorkflowConfig } from './workflows.js';
 
+const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..');
@@ -215,6 +217,9 @@ interface RateLimitBucket {
 
 const rateLimitBuckets = new Map<string, RateLimitBucket>();
 let externalRateLimitWarningLogged = false;
+let postgresRateLimitWarningLogged = false;
+let postgresRateLimitPool: pg.Pool | null | undefined;
+let postgresRateLimitTableReady: Promise<void> | null = null;
 const rateLimitCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, bucket] of rateLimitBuckets.entries()) {
@@ -627,6 +632,95 @@ function getExternalRateLimitConfig() {
   return url && token ? { url, token } : null;
 }
 
+function getPostgresRateLimitDatabaseUrl() {
+  return String(
+    process.env.METROVAN_RATE_LIMIT_DATABASE_URL ??
+      process.env.SUPABASE_DB_URL ??
+      process.env.DATABASE_URL ??
+      process.env.POSTGRES_URL ??
+      ''
+  ).trim();
+}
+
+function getPostgresRateLimitTableName() {
+  const raw = String(process.env.METROVAN_RATE_LIMIT_TABLE ?? 'metrovan_rate_limits').trim();
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) ? raw : 'metrovan_rate_limits';
+}
+
+function getPostgresRateLimitPool() {
+  if (postgresRateLimitPool !== undefined) {
+    return postgresRateLimitPool;
+  }
+
+  const databaseUrl = getPostgresRateLimitDatabaseUrl();
+  if (!databaseUrl) {
+    postgresRateLimitPool = null;
+    return null;
+  }
+
+  const sslValue = (process.env.METROVAN_POSTGRES_SSL ?? process.env.SUPABASE_POSTGRES_SSL ?? 'true').trim().toLowerCase();
+  const useSsl = sslValue !== 'false' && sslValue !== '0' && sslValue !== 'no';
+  postgresRateLimitPool = new Pool({
+    connectionString: databaseUrl,
+    max: 2,
+    ssl: useSsl ? { rejectUnauthorized: false } : undefined
+  });
+  return postgresRateLimitPool;
+}
+
+async function ensurePostgresRateLimitTable(pool: pg.Pool) {
+  const tableName = getPostgresRateLimitTableName();
+  postgresRateLimitTableReady ??= pool.query(`
+    CREATE TABLE IF NOT EXISTS ${tableName} (
+      rate_key text PRIMARY KEY,
+      hit_count integer NOT NULL,
+      reset_at timestamptz NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `).then(() => undefined);
+  await postgresRateLimitTableReady;
+}
+
+async function getPostgresRateLimitBucket(key: string, windowMs: number) {
+  const pool = getPostgresRateLimitPool();
+  if (!pool) {
+    return null;
+  }
+
+  await ensurePostgresRateLimitTable(pool);
+  const resetAt = Date.now() + windowMs;
+  const tableName = getPostgresRateLimitTableName();
+  const response = await pool.query<{ hit_count: number; reset_at_ms: string | number | null }>(
+    `
+      INSERT INTO ${tableName} (rate_key, hit_count, reset_at, updated_at)
+      VALUES ($1, 1, to_timestamp($2::double precision / 1000.0), now())
+      ON CONFLICT (rate_key) DO UPDATE SET
+        hit_count = CASE
+          WHEN ${tableName}.reset_at <= now() THEN 1
+          ELSE ${tableName}.hit_count + 1
+        END,
+        reset_at = CASE
+          WHEN ${tableName}.reset_at <= now() THEN EXCLUDED.reset_at
+          ELSE ${tableName}.reset_at
+        END,
+        updated_at = now()
+      RETURNING hit_count, EXTRACT(EPOCH FROM reset_at) * 1000 AS reset_at_ms
+    `,
+    [key, resetAt]
+  );
+
+  const row = response.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const parsedResetAt = Number(row.reset_at_ms);
+  return {
+    count: Number(row.hit_count) || 1,
+    resetAt: Number.isFinite(parsedResetAt) ? parsedResetAt : resetAt
+  };
+}
+
 function getLocalRateLimitBucket(key: string, windowMs: number) {
   const now = Date.now();
   const existing = rateLimitBuckets.get(key);
@@ -709,6 +803,22 @@ async function getRateLimitBucket(key: string, windowMs: number) {
       externalRateLimitWarningLogged = true;
       console.warn(
         `External rate limit backend failed; falling back to in-memory limits: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  try {
+    const postgresBucket = await getPostgresRateLimitBucket(key, windowMs);
+    if (postgresBucket) {
+      return postgresBucket;
+    }
+  } catch (error) {
+    if (!postgresRateLimitWarningLogged) {
+      postgresRateLimitWarningLogged = true;
+      console.warn(
+        `Postgres rate limit backend failed; falling back to in-memory limits: ${
           error instanceof Error ? error.message : String(error)
         }`
       );

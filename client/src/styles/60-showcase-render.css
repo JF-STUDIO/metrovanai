@@ -39,7 +39,6 @@
 .showcase-sci-render-after {
   z-index: 2;
   clip-path: inset(0 100% 0 0);
-  will-change: clip-path;
   animation: showcaseSciReveal 8.4s cubic-bezier(0.45, 0.05, 0.35, 0.98) infinite;
 }
 
@@ -183,8 +182,6 @@
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   box-shadow: 0 10px 28px -14px rgba(71, 198, 255, 0.6);
   white-space: nowrap;
 }
@@ -246,8 +243,6 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   transition: color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
 }
 

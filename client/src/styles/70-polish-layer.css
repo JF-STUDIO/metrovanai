@@ -253,7 +253,6 @@
     background:
       linear-gradient(180deg, rgba(14, 18, 24, 0.98), rgba(14, 18, 24, 0.9)),
       radial-gradient(80% 70% at 50% -20%, rgba(var(--accent-rgb), 0.18), transparent 62%);
-    backdrop-filter: blur(18px);
   }
 
   .recharge-card .modal-head > div {
@@ -624,7 +623,6 @@
     linear-gradient(180deg, rgba(14, 15, 18, 0.98), rgba(8, 9, 11, 0.98)),
     radial-gradient(circle at 50% 0%, rgba(var(--accent-rgb), 0.18), transparent 38%);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
-  backdrop-filter: blur(18px);
 }
 
 .history-menu-head {

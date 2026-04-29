@@ -582,7 +582,6 @@ body {
     top: 0;
     z-index: 2;
     background: rgba(255, 255, 255, 0.96);
-    backdrop-filter: blur(12px);
   }
 
   .result-editor-regenerate-head,

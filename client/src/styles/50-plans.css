@@ -41,7 +41,6 @@
   font-size: 0.78rem;
   letter-spacing: 0.06em;
   color: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(6px);
 }
 
 .landing-shell .plans-hero-pill {
@@ -99,7 +98,6 @@
   font-family: var(--hp-mono);
   font-size: 0.82rem;
   color: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(8px);
 }
 
 .landing-shell .plans-hero-meta em {

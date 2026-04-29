@@ -57,6 +57,8 @@ export interface PlansPageCopy {
   plansFaq2A: string;
   plansFaq3Q: string;
   plansFaq3A: string;
+  plansFaq4Q: string;
+  plansFaq4A: string;
   plansFaq5Q: string;
   plansFaq5A: string;
   plansCtaTitle: string;
@@ -187,6 +189,7 @@ export function PlansPage({ copy, onStart }: PlansPageProps) {
             { q: copy.plansFaq1Q, a: copy.plansFaq1A },
             { q: copy.plansFaq2Q, a: copy.plansFaq2A },
             { q: copy.plansFaq3Q, a: copy.plansFaq3A },
+            { q: copy.plansFaq4Q, a: copy.plansFaq4A },
             { q: copy.plansFaq5Q, a: copy.plansFaq5A }
           ].map((item) => (
             <details key={item.q} className="plans-faq-item">

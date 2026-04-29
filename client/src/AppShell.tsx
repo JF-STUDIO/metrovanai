@@ -1,8 +1,13 @@
-import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
+import { fetchSession } from './api';
+import { LANDING_COPY, getStoredLandingLocale } from './landing-copy';
 import { captureClientError, initClientObservability } from './observability';
+import { LandingPage } from './pages/LandingPage';
 
 const PRELOAD_RECOVERY_STORAGE_KEY = 'metrovanai.preload-recovery-at';
 const PRELOAD_RECOVERY_THROTTLE_MS = 15_000;
+type ShellRoute = 'home' | 'plans' | 'app';
+type LandingRoute = 'home' | 'plans';
 
 let preloadRecoveryInstalled = false;
 
@@ -71,6 +76,28 @@ function installPreloadRecovery() {
 
 const App = lazy(() => import('./App'));
 
+function getShellRouteFromPath(pathname = window.location.pathname): ShellRoute {
+  if (pathname === '/plans') {
+    return 'plans';
+  }
+  if (pathname === '/' || pathname === '' || pathname === '/home') {
+    return 'home';
+  }
+  return 'app';
+}
+
+function getLandingPath(route: LandingRoute) {
+  return route === 'plans' ? '/plans' : '/home';
+}
+
+function pushShellUrl(pathname: string, search = '', hash = window.location.hash) {
+  const nextUrl = `${pathname}${search}${hash}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (currentUrl !== nextUrl) {
+    window.history.pushState({}, '', nextUrl);
+  }
+}
+
 interface AppErrorBoundaryState {
   hasError: boolean;
   isRecovering: boolean;
@@ -112,21 +139,87 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, AppErrorBounda
 }
 
 export default function AppShell() {
+  const [shellRoute, setShellRoute] = useState<ShellRoute>(() => getShellRouteFromPath());
+  const [hasSession, setHasSession] = useState(false);
+  const locale = getStoredLandingLocale();
+  const copy = useMemo(() => LANDING_COPY[locale], [locale]);
   installPreloadRecovery();
   initClientObservability();
 
+  useEffect(() => {
+    if (window.location.pathname === '/' || window.location.pathname === '') {
+      window.history.replaceState({}, '', `/home${window.location.search}${window.location.hash}`);
+    }
+
+    const syncRoute = () => setShellRoute(getShellRouteFromPath());
+    window.addEventListener('popstate', syncRoute);
+    return () => window.removeEventListener('popstate', syncRoute);
+  }, []);
+
+  useEffect(() => {
+    if (shellRoute === 'app') {
+      return;
+    }
+
+    let cancelled = false;
+    fetchSession()
+      .then(({ session }) => {
+        if (!cancelled) {
+          setHasSession(Boolean(session));
+        }
+      })
+      .catch((error) => {
+        captureClientError(error, { source: 'app_shell.session' });
+        if (!cancelled) {
+          setHasSession(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shellRoute]);
+
+  const navigateLanding = useCallback((route: 'home' | 'plans' | 'studio') => {
+    if (route === 'studio') {
+      pushShellUrl('/studio');
+      setShellRoute('app');
+      return;
+    }
+
+    pushShellUrl(getLandingPath(route));
+    setShellRoute(route);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const openAuth = useCallback((mode: 'signin' | 'signup') => {
+    pushShellUrl('/studio', `?auth=${mode}`);
+    setShellRoute('app');
+  }, []);
+
   return (
     <AppErrorBoundary>
-      <Suspense
-        fallback={
-          <div className="boot-fallback">
-            <strong>Metrovan AI</strong>
-            <span>正在加载...</span>
-          </div>
-        }
-      >
-        <App />
-      </Suspense>
+      {shellRoute === 'app' ? (
+        <Suspense
+          fallback={
+            <div className="boot-fallback">
+              <strong>Metrovan AI</strong>
+              <span>正在加载...</span>
+            </div>
+          }
+        >
+          <App />
+        </Suspense>
+      ) : (
+        <LandingPage
+          activeRoute={shellRoute}
+          copy={copy}
+          hasSession={hasSession}
+          message=""
+          onNavigate={navigateLanding}
+          onOpenAuth={openAuth}
+        />
+      )}
     </AppErrorBoundary>
   );
 }

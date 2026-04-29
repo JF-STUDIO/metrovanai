@@ -1,12 +1,15 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
 import logoFull from '../assets/metrovan-logo-full.png';
 import jinSignatureAvatar from '../assets/jin-signature-avatar.jpg';
 import showcaseInteriorAfter from '../assets/showcase-interior-after.jpg';
 import showcaseInteriorBefore from '../assets/showcase-interior-before.jpg';
-import { PlansPage, type PlansPageCopy } from './PlansPage';
+import landingVideoPoster from '../assets/landing-video-poster.webp';
+import type { PlansPageCopy } from './PlansPage';
 
 const LANDING_VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260217_030345_246c0224-10a4-422c-b324-070b7c0eceda.mp4';
+
+const PlansPage = lazy(() => import('./PlansPage').then((module) => ({ default: module.PlansPage })));
 
 type LandingRoute = 'home' | 'plans';
 type LandingNavigateRoute = 'home' | 'plans' | 'studio';
@@ -140,21 +143,56 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
       return;
     }
 
-    const retryPlayback = () => attemptLandingVideoPlayback(video);
+    let activated = false;
+    const activateVideo = () => {
+      if (activated) {
+        attemptLandingVideoPlayback(video);
+        return;
+      }
+
+      activated = true;
+      video.preload = 'auto';
+      if (!video.getAttribute('src')) {
+        video.src = LANDING_VIDEO_URL;
+      }
+      video.load();
+      attemptLandingVideoPlayback(video);
+    };
+    const retryPlayback = () => activateVideo();
     const retryWhenVisible = () => {
       if (document.visibilityState === 'visible') {
         retryPlayback();
       }
     };
 
-    const frameId = window.requestAnimationFrame(retryPlayback);
+    let fallbackFrameId: number | null = null;
+    let observer: IntersectionObserver | null = null;
+    const IntersectionObserverCtor = window.IntersectionObserver;
+    if (typeof IntersectionObserverCtor === 'function') {
+      observer = new IntersectionObserverCtor(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            activateVideo();
+            observer?.disconnect();
+          }
+        },
+        { rootMargin: '280px 0px' }
+      );
+      observer.observe(video);
+    } else {
+      fallbackFrameId = window.requestAnimationFrame(activateVideo);
+    }
+
     window.addEventListener('pageshow', retryPlayback);
     window.addEventListener('touchstart', retryPlayback, { passive: true });
     window.addEventListener('pointerdown', retryPlayback, { passive: true });
     document.addEventListener('visibilitychange', retryWhenVisible);
 
     return () => {
-      window.cancelAnimationFrame(frameId);
+      observer?.disconnect();
+      if (fallbackFrameId !== null) {
+        window.cancelAnimationFrame(fallbackFrameId);
+      }
       window.removeEventListener('pageshow', retryPlayback);
       window.removeEventListener('touchstart', retryPlayback);
       window.removeEventListener('pointerdown', retryPlayback);
@@ -172,10 +210,10 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
           loop
           muted
           playsInline
-          preload="metadata"
+          preload="none"
+          poster={landingVideoPoster}
           disablePictureInPicture
           onCanPlay={() => attemptLandingVideoPlayback(landingVideoRef.current)}
-          src={LANDING_VIDEO_URL}
         />
         <div className="landing-video-overlay" />
       </div>
@@ -383,7 +421,9 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
       )}
 
       {activeRoute === 'plans' && (
-        <PlansPage copy={copy} onStart={() => (hasSession ? onNavigate('studio') : onOpenAuth('signup'))} />
+        <Suspense fallback={<div className="plans-section plans-loading" aria-busy="true">正在加载方案...</div>}>
+          <PlansPage copy={copy} onStart={() => (hasSession ? onNavigate('studio') : onOpenAuth('signup'))} />
+        </Suspense>
       )}
     </main>
   );

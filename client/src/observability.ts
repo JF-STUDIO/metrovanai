@@ -74,6 +74,26 @@ async function initSentry() {
   return await sentryReady;
 }
 
+function scheduleSentryInit() {
+  if (!getSentryDsn() || typeof window === 'undefined') {
+    return;
+  }
+
+  const start = () => {
+    void initSentry().catch(() => undefined);
+  };
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+  };
+
+  if (typeof idleWindow.requestIdleCallback === 'function') {
+    idleWindow.requestIdleCallback(start, { timeout: 5000 });
+    return;
+  }
+
+  window.setTimeout(start, 3000);
+}
+
 export function sendClientEvent(input: ClientEventInput) {
   const payload = {
     type: input.type ?? 'client.error',
@@ -125,7 +145,7 @@ export function initClientObservability() {
   }
 
   initialized = true;
-  void initSentry().catch(() => undefined);
+  scheduleSentryInit();
 
   window.addEventListener('error', (event) => {
     captureClientError(event.error ?? event.message, {

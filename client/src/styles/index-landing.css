@@ -1,0 +1,12 @@
+/*
+ * Public landing/plans style entry.
+ * Keep this smaller than the full app bundle so /home and /plans avoid
+ * loading Studio/Admin-only CSS on first paint.
+ */
+@import './00-foundation.css';
+@import './20-landing-core.css';
+@import './40-homepage-public.css';
+@import './50-plans.css';
+@import './60-showcase-render.css';
+@import './70-polish-layer.css';
+@import './80-mobile.css';

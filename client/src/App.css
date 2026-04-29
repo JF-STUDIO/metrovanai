@@ -2,4 +2,4 @@
  * Compatibility entry for the main Metrovan AI app bundle.
  * New page styles belong in client/src/styles/, not in this file.
  */
-@import './styles/index.css';
+@import './styles/index-app.css';
