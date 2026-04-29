@@ -48,6 +48,7 @@ import {
   fetchBilling,
   fetchProject,
   fetchProjects,
+  fetchResultThumbnails,
   fetchSession,
   fetchStudioFeatures,
   getApiRoot,
@@ -2614,6 +2615,7 @@ function App() {
   const [uploadPaused, setUploadPaused] = useState(false);
   const [failedUploadFiles, setFailedUploadFiles] = useState<FailedUploadEntry[]>([]);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [resultThumbnailManifest, setResultThumbnailManifest] = useState<{ projectId: string; urls: Record<string, string> } | null>(null);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(() => (isDemoMode ? DEMO_BILLING_SUMMARY : null));
   const [billingEntries, setBillingEntries] = useState<BillingEntry[]>(() => (isDemoMode ? DEMO_BILLING_ENTRIES : []));
   const [billingPackages, setBillingPackages] = useState<BillingPackage[]>(() => (isDemoMode ? DEMO_BILLING_PACKAGES : []));
@@ -2851,6 +2853,34 @@ function App() {
     const missingAssets = assets.filter((asset) => !orderedIds.has(asset.hdrItemId));
     return [...orderedAssets, ...missingAssets];
   }, [currentProject, resultDragPreview]);
+  useEffect(() => {
+    if (isDemoMode || !currentProject?.id || currentProject.resultAssets.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    void fetchResultThumbnails(currentProject.id)
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setResultThumbnailManifest({
+          projectId: currentProject.id,
+          urls: Object.fromEntries(payload.thumbnails.map((thumbnail) => [thumbnail.assetId, thumbnail.url]))
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResultThumbnailManifest({ projectId: currentProject.id, urls: {} });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProject?.id, currentProject?.resultAssets.length, currentProject?.updatedAt, isDemoMode]);
+  const resultThumbnailUrls =
+    resultThumbnailManifest && resultThumbnailManifest.projectId === currentProject?.id ? resultThumbnailManifest.urls : {};
   const activeLocalDraft = currentProject ? localImportDrafts[currentProject.id] ?? null : null;
   const downloadProject =
     visibleProjects.find((project) => project.id === downloadDialogProjectId) ??
@@ -9528,7 +9558,7 @@ function App() {
                     {displayResultAssets.length ? (
                       <div className={`result-grid${draggedResultHdrItemId ? ' is-reordering' : ''}`}>
                         {displayResultAssets.map((asset, index) => {
-                          const previewUrl = resolveMediaUrl(asset.previewUrl ?? asset.storageUrl);
+                          const previewUrl = resolveMediaUrl(resultThumbnailUrls[asset.id] ?? asset.previewUrl ?? asset.storageUrl);
                           const regeneration = asset.regeneration;
                           const isRegenerating = regeneration?.status === 'running' || Boolean(resultRegenerateBusy[asset.hdrItemId]);
                           const selectedColorCard = getResultColorCard(asset);

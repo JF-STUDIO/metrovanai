@@ -178,6 +178,8 @@ const PASSWORD_RESET_TTL_MS = 1000 * 60 * 60;
 const EMAIL_VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24;
 const TRASH_CLEANUP_INTERVAL_MS = 1000 * 60 * 60 * 6;
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 1000 * 60 * 10;
+const RESULT_THUMBNAIL_LONG_EDGE = 320;
+const RESULT_THUMBNAIL_URL_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
 const DIRECT_UPLOAD_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
@@ -1602,6 +1604,62 @@ async function ensureHdrItemResultPreviewFile(project: ProjectRecord, hdrItem: H
     sortOrder: hdrItem.index,
     regeneration: hdrItem.regeneration
   });
+}
+
+function getResultAssetVersionSegment(asset: ResultAsset) {
+  return sanitizeSegment(getRegeneratedAssetVersion(asset.regeneration) ?? 'base') || 'base';
+}
+
+function getResultAssetThumbnailPath(project: ProjectRecord, asset: ResultAsset) {
+  const fileName = `${sanitizeSegment(asset.id) || 'result'}-${getResultAssetVersionSegment(asset)}-320.jpg`;
+  return path.resolve(path.join(store.getProjectDirectories(project).previews, 'results', fileName));
+}
+
+function getResultAssetThumbnailKey(asset: ResultAsset) {
+  if (!asset.storageKey) {
+    return null;
+  }
+  const baseKey = asset.storageKey.replace(/\\/g, '/');
+  const parent = path.posix.dirname(baseKey);
+  const fileName = `${sanitizeSegment(asset.id) || 'result'}-${getResultAssetVersionSegment(asset)}-320.jpg`;
+  return path.posix.join(parent, 'thumbnails', fileName);
+}
+
+async function ensureResultThumbnailManifestItem(project: ProjectRecord, asset: ResultAsset) {
+  const storageKey = getResultAssetThumbnailKey(asset);
+  if (!storageKey || !isObjectStorageConfigured()) {
+    return null;
+  }
+
+  if (!(await getObjectStorageMetadata(storageKey))) {
+    const storageRoot = store.getStorageRoot();
+    const sourcePath = path.resolve(asset.storagePath);
+    const thumbnailPath = getResultAssetThumbnailPath(project, asset);
+    if (!isPathInsideDirectory(sourcePath, storageRoot) || !isPathInsideDirectory(thumbnailPath, storageRoot)) {
+      return null;
+    }
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      await restoreObjectToFileIfAvailable(asset.storageKey, sourcePath);
+    }
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      return null;
+    }
+    if (!fs.existsSync(thumbnailPath) || !fs.statSync(thumbnailPath).isFile()) {
+      await extractPreviewOrConvertToJpeg(sourcePath, thumbnailPath, 78, RESULT_THUMBNAIL_LONG_EDGE);
+    }
+    await uploadFileToObjectStorage({
+      sourcePath: thumbnailPath,
+      storageKey,
+      contentType: 'image/jpeg'
+    });
+  }
+
+  return {
+    assetId: asset.id,
+    url: createObjectDownloadUrl(storageKey, RESULT_THUMBNAIL_URL_TTL_SECONDS),
+    width: RESULT_THUMBNAIL_LONG_EDGE,
+    height: RESULT_THUMBNAIL_LONG_EDGE
+  };
 }
 
 function sendCachedPreviewFile(res: express.Response, filePath: string | null) {
@@ -4050,6 +4108,49 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', 
     return;
   }
   sendProtectedStorageFile(res, previewPath, exposure.previewKey);
+});
+
+app.get('/api/projects/:id/results/thumbnails-batch', async (req, res) => {
+  const owned = getOwnedProjectFromRequest(req, res);
+  if (!owned) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, owned.user, {
+      scope: 'project-result-thumbnails',
+      limit: 120,
+      windowMs: 1000 * 60 * 15
+    }))
+  ) {
+    return;
+  }
+
+  const thumbnails: Array<{
+    assetId: string;
+    url: string;
+    width: number;
+    height: number;
+  }> = [];
+  await runWithConcurrency(owned.project.resultAssets, 4, async (asset) => {
+    try {
+      const thumbnail = await ensureResultThumbnailManifestItem(owned.project, asset);
+      if (thumbnail) {
+        thumbnails.push(thumbnail);
+      }
+    } catch (error) {
+      logServerEvent({
+        level: 'warning',
+        event: 'project.result_thumbnail.failed',
+        projectId: owned.project.id,
+        details: {
+          resultAssetId: asset.id,
+          message: error instanceof Error ? error.message : String(error)
+        }
+      });
+    }
+  });
+
+  res.json({ thumbnails });
 });
 
 app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {

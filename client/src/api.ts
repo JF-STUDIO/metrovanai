@@ -115,6 +115,13 @@ export interface DownloadJobPayload {
   error: string | null;
 }
 
+export interface ResultThumbnailManifestItem {
+  assetId: string;
+  url: string;
+  width: number;
+  height: number;
+}
+
 export interface BillingPayload {
   summary: BillingSummary;
   entries: BillingEntry[];
@@ -914,6 +921,12 @@ export async function retryFailedProcessing(projectId: string) {
     method: 'POST',
     body: JSON.stringify({})
   });
+}
+
+export async function fetchResultThumbnails(projectId: string) {
+  return await jsonRequest<{ thumbnails: ResultThumbnailManifestItem[] }>(
+    `/api/projects/${encodeURIComponent(projectId)}/results/thumbnails-batch`
+  );
 }
 
 function encodeDownloadOptions(input: DownloadRequestPayload) {
