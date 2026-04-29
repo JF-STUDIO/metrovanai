@@ -729,6 +729,8 @@ def render_raw_to_jpeg(
     raw_user_wb: list[float] | None = None,
     resize_long_edge: int = HDR_LONG_EDGE,
     hdr_input: bool = False,
+    display_mode: str | None = None,
+    render_bright: float | None = None,
 ) -> None:
     if isinstance(raw_user_wb, str):
         if raw_user_wb != "camera":
@@ -736,9 +738,12 @@ def render_raw_to_jpeg(
         raw_user_wb = None
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    rgb = postprocess_raw_to_rgb(source, raw_user_wb, half_size=False, bright=rawpy_decode_bright(hdr_input))
+    bright = render_bright if render_bright is not None else rawpy_decode_bright(hdr_input)
+    rgb = postprocess_raw_to_rgb(source, raw_user_wb, half_size=False, bright=bright)
     image = resize_rgb_array(rgb, resize_long_edge)
     image = apply_lensfun_correction(image, source)
+    if display_mode:
+        image = apply_single_display_mapping_to_image(image, source.name)
     image.save(destination, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
 
 
@@ -778,7 +783,15 @@ def resize_with_pillow(source: Path, destination: Path, quality: int, long_edge:
 def convert_to_jpeg(source: Path, destination: Path, quality: int, long_edge: int | None = None) -> None:
     if is_raw(source):
         raw_user_wb = estimate_raw_rgb_grey_user_wb(source)
-        render_raw_to_jpeg(source, destination, quality, raw_user_wb, long_edge or HDR_LONG_EDGE)
+        render_raw_to_jpeg(
+            source,
+            destination,
+            quality,
+            raw_user_wb,
+            long_edge or HDR_LONG_EDGE,
+            display_mode="single",
+            render_bright=1.0,
+        )
         return
     resize_with_pillow(source, destination, quality, long_edge)
 
@@ -988,6 +1001,38 @@ def apply_image_adjustments(
     output.save(destination_path, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
 
 
+def single_display_settings() -> tuple[float, float, float, float]:
+    return 0.32, 6.0, 0.82, 0.97
+
+
+def apply_single_display_mapping_to_image(image: Image.Image, label: str = "") -> Image.Image:
+    target_midtone, max_exposure, knee, ceiling = single_display_settings()
+    array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+    luma = luminance(array)
+    midtone = max(float(np.percentile(luma, 50)), 1e-4)
+    exposure = max(0.55, min(max_exposure, target_midtone / midtone))
+
+    scaled_luma = luma * exposure
+    mapped_luma = scaled_luma.copy()
+    shoulder = scaled_luma > knee
+    if np.any(shoulder):
+        shoulder_range = max(ceiling - knee, 1e-4)
+        mapped_luma[shoulder] = knee + shoulder_range * (
+            1.0 - np.exp(-(scaled_luma[shoulder] - knee) / shoulder_range)
+        )
+    mapped_luma = np.clip(mapped_luma, 0.0, ceiling)
+    mapped = array * (mapped_luma / np.maximum(luma, 1e-6))[:, :, None]
+    mapped = np.clip(mapped, 0.0, 1.0)
+
+    print(
+        "Single RAW display mapping for "
+        f"{label or 'image'}: "
+        f"midtone={midtone:.4f} exposure={exposure:.3f} knee={knee:.2f}",
+        flush=True,
+    )
+    return Image.fromarray(np.clip(mapped * 255.0, 0, 255).astype(np.uint8), mode="RGB")
+
+
 def apply_hdr_tone_adjustments(source_path: Path, destination_path: Path, quality: int) -> None:
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     image = Image.open(source_path).convert("RGB")
@@ -1100,7 +1145,15 @@ def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
             source = source_paths[str(exposure.get("id"))]
             if is_raw(source):
                 raw_user_wb = estimate_raw_rgb_grey_user_wb(source)
-                render_raw_to_jpeg(source, output_path, 95, raw_user_wb, HDR_LONG_EDGE)
+                render_raw_to_jpeg(
+                    source,
+                    output_path,
+                    95,
+                    raw_user_wb,
+                    HDR_LONG_EDGE,
+                    display_mode="single",
+                    render_bright=1.0,
+                )
             else:
                 convert_to_jpeg(source, output_path, 95, HDR_LONG_EDGE)
             return
