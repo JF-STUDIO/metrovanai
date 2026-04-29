@@ -1290,3 +1290,62 @@
     left: 0%;
   }
 }
+
+/* ============================================================ */
+/* Result Editor — professional topbar + Deliver button         */
+/* ============================================================ */
+
+.result-editor-topbar {
+  background: rgba(18, 18, 20, 0.97) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07) !important;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.result-editor-title strong {
+  color: rgba(255, 255, 255, 0.94) !important;
+}
+
+.result-editor-title span {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: rgba(255, 255, 255, 0.52) !important;
+  border-radius: 0.55rem !important;
+}
+
+/* Deliver: primary action — green, monospace, prominent */
+.result-editor-deliver {
+  min-height: 36px !important;
+  padding: 0 1rem !important;
+  border-radius: 0.6rem !important;
+  background: linear-gradient(135deg, #2dd4b0, #1ab896) !important;
+  color: #051a14 !important;
+  font-family: var(--hp-mono) !important;
+  font-size: 0.76rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  box-shadow: 0 8px 20px -6px rgba(45, 212, 176, 0.48) !important;
+  transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+.result-editor-deliver:hover {
+  filter: brightness(1.08) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 12px 26px -6px rgba(45, 212, 176, 0.6) !important;
+}
+
+/* Icon buttons: dark theme */
+.result-editor-icon-button {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 0.55rem !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.72) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.result-editor-icon-button:hover {
+  background: rgba(255, 255, 255, 0.11) !important;
+  color: rgba(255, 255, 255, 0.94) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}

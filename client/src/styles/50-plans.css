@@ -747,3 +747,130 @@
     transform: none !important;
   }
 }
+
+/* ============================================================ */
+/* Plans Page — Professional refinements                         */
+/* ============================================================ */
+
+/* Featured CTA: match solid-button accent treatment */
+.landing-shell .plans-tier-card.is-featured .plans-tier-cta {
+  font-family: var(--hp-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 800;
+  border-radius: var(--r-pill);
+  border-color: rgba(94, 222, 255, 0.6);
+  box-shadow:
+    0 18px 40px -12px rgba(140, 120, 255, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+}
+
+.landing-shell .plans-tier-card.is-featured .plans-tier-cta:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.07);
+  box-shadow:
+    0 24px 48px -12px rgba(140, 120, 255, 0.68),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38);
+}
+
+/* Non-featured CTA: monospace style but subdued */
+.landing-shell .plans-tier-cta {
+  font-family: var(--hp-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  border-radius: var(--r-pill);
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.landing-shell .plans-tier-cta:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.07);
+  transform: translateY(-1px);
+}
+
+/* Points box: more prominent */
+.landing-shell .plans-tier-points {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.landing-shell .plans-tier-card.is-featured .plans-tier-points {
+  border-color: rgba(94, 222, 255, 0.22);
+  background: rgba(94, 222, 255, 0.06);
+}
+
+.landing-shell .plans-tier-card.is-featured .plans-tier-points strong {
+  background: linear-gradient(135deg, #fff 0%, rgba(94, 222, 255, 0.95) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* FAQ: larger answer text, better spacing */
+.landing-shell .plans-faq-item p {
+  font-size: 0.92rem;
+  line-height: 1.7;
+  padding-bottom: 1.2rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.landing-shell .plans-faq-item summary {
+  padding: 1.05rem 1.2rem;
+  font-size: 1rem;
+}
+
+/* Trust stat bar between hero and lock banner */
+.landing-shell .plans-trust-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2.2rem;
+  padding: 1rem 1.5rem;
+  border-radius: var(--r-lg);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  flex-wrap: wrap;
+}
+
+.landing-shell .plans-trust-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.18rem;
+}
+
+.landing-shell .plans-trust-item strong {
+  font-family: var(--hp-display);
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #fff;
+  line-height: 1;
+}
+
+.landing-shell .plans-trust-item span {
+  font-family: var(--hp-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.landing-shell .plans-trust-sep {
+  width: 1px;
+  height: 2rem;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 680px) {
+  .landing-shell .plans-trust-bar {
+    gap: 1.4rem;
+  }
+  .landing-shell .plans-trust-sep {
+    display: none;
+  }
+}

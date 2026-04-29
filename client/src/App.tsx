@@ -800,6 +800,10 @@ const UI_TEXT = {
     plansMetaUnit: ' / 积分',
     plansMetaPhoto: ' 1 积分 = 1 张',
     plansMetaMax: ' 最高折扣',
+    plansTrustOutput: '高清输出',
+    plansTrustFormats: 'RAW 格式',
+    plansTrustSpeed: '单张处理',
+    plansTrustCloud: '云端交付',
     plansLockBadge: '限时',
     plansLockTitle: '开发阶段 · 折扣终身锁定',
     plansLockSub: '现在购买的用户，所购档位折扣永久保留。例如 $2000 档 = 40% 折扣永久有效，日后价格调整也不受影响。',
@@ -1187,6 +1191,10 @@ const UI_TEXT = {
     plansMetaUnit: ' / credit',
     plansMetaPhoto: ' 1 credit = 1 photo',
     plansMetaMax: ' max discount',
+    plansTrustOutput: 'HD Output',
+    plansTrustFormats: 'RAW Formats',
+    plansTrustSpeed: 'Per Photo',
+    plansTrustCloud: 'Cloud Delivered',
     plansLockBadge: 'Limited',
     plansLockTitle: 'Early-access pricing · locked in for life',
     plansLockSub: 'Buy during the early-access phase and your tier discount stays yours forever. The $2000 plan keeps its 40% off on every future top-up — even after prices return to standard.',
@@ -2616,6 +2624,7 @@ function App() {
     displayName: '',
     locale: getStoredLocale()
   });
+  const [projectToDelete, setProjectToDelete] = useState<ProjectRecord | null>(null);
   const [adminUsers, setAdminUsers] = useState<AdminUserSummary[]>([]);
   const [adminProjects, setAdminProjects] = useState<ProjectRecord[]>([]);
   const [adminOrders, setAdminOrders] = useState<PaymentOrderRecord[]>([]);
@@ -5327,21 +5336,27 @@ function App() {
     }
   }
 
-  async function handleDeleteProject(project: ProjectRecord) {
-    const confirmed = window.confirm(copy.deleteProjectConfirm(project.name));
-    if (!confirmed) return;
+  function handleDeleteProject(project: ProjectRecord) {
+    setProjectToDelete(project);
+  }
 
+  async function handleConfirmDeleteProject() {
+    if (!projectToDelete) return;
+    const project = projectToDelete;
+    const wasCurrentProject = currentProjectId === project.id;
+    setProjectToDelete(null);
+    setProjects((current) => current.filter((item) => item.id !== project.id));
+    setCurrentProjectId((current) => (current === project.id ? null : current));
     setBusy(true);
     try {
       await deleteProject(project.id);
       clearLocalImportDraft(project.id);
-      setProjects((current) => current.filter((item) => item.id !== project.id));
-      setCurrentProjectId((current) => {
-        if (current !== project.id) return current;
-        return null;
-      });
       setMessage('');
     } catch (error) {
+      setProjects((current) => (current.some((item) => item.id === project.id) ? current : [project, ...current]));
+      if (wasCurrentProject) {
+        setCurrentProjectId(project.id);
+      }
       setMessage(getUserFacingErrorMessage(error, copy.deleteProjectFailed, locale));
     } finally {
       setBusy(false);
@@ -8102,7 +8117,7 @@ function App() {
                           >
                             {copy.download}
                           </button>
-                          <button className="ghost-button compact" type="button" onClick={() => void handleDeleteProject(project)}>
+                          <button className="ghost-button compact" type="button" onClick={() => handleDeleteProject(project)}>
                             {copy.delete}
                           </button>
                         </div>
@@ -9804,6 +9819,32 @@ function App() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {projectToDelete && (
+        <div className="modal-backdrop delete-confirm-backdrop" onClick={() => setProjectToDelete(null)}>
+          <div className="modal-card delete-confirm-card" onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true" aria-labelledby="delete-confirm-title">
+            <div className="delete-confirm-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14H6L5 6" />
+                <path d="M10 11v6M14 11v6" />
+                <path d="M9 6V4h6v2" />
+              </svg>
+            </div>
+            <strong id="delete-confirm-title" className="delete-confirm-title">
+              {locale === 'zh' ? '删除项目' : 'Delete Project'}
+            </strong>
+            <p className="delete-confirm-desc">{copy.deleteProjectConfirm(projectToDelete.name)}</p>
+            <div className="delete-confirm-actions">
+              <button className="ghost-button delete-confirm-cancel" type="button" onClick={() => setProjectToDelete(null)}>
+                {copy.cancel}
+              </button>
+              <button className="delete-confirm-btn" type="button" onClick={() => void handleConfirmDeleteProject()}>
+                {copy.delete}
+              </button>
+            </div>
           </div>
         </div>
       )}

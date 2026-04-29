@@ -5,6 +5,10 @@ export interface PlansPageCopy {
   plansMetaUnit: string;
   plansMetaPhoto: string;
   plansMetaMax: string;
+  plansTrustOutput?: string;
+  plansTrustFormats?: string;
+  plansTrustSpeed?: string;
+  plansTrustCloud?: string;
   plansLockBadge: string;
   plansLockTitle: string;
   plansLockSub: string;
@@ -87,6 +91,28 @@ export function PlansPage({ copy, onStart }: PlansPageProps) {
           <span><em>1 : 1</em>{copy.plansMetaPhoto}</span>
           <span className="plans-hero-meta-sep" aria-hidden="true" />
           <span><em>40%</em>{copy.plansMetaMax}</span>
+        </div>
+      </div>
+
+      <div className="plans-trust-bar" aria-label="Platform capabilities">
+        <div className="plans-trust-item">
+          <strong>4K</strong>
+          <span>{copy.plansTrustOutput ?? 'HD Output'}</span>
+        </div>
+        <span className="plans-trust-sep" aria-hidden="true" />
+        <div className="plans-trust-item">
+          <strong>30+</strong>
+          <span>{copy.plansTrustFormats ?? 'RAW Formats'}</span>
+        </div>
+        <span className="plans-trust-sep" aria-hidden="true" />
+        <div className="plans-trust-item">
+          <strong>&lt; 60s</strong>
+          <span>{copy.plansTrustSpeed ?? 'Per Photo'}</span>
+        </div>
+        <span className="plans-trust-sep" aria-hidden="true" />
+        <div className="plans-trust-item">
+          <strong>100%</strong>
+          <span>{copy.plansTrustCloud ?? 'Cloud Delivered'}</span>
         </div>
       </div>
 

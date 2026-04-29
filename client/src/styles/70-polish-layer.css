@@ -772,3 +772,265 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* ============================================================ */
+/* Billing Card — professional financial UI                      */
+/* ============================================================ */
+
+.billing-card {
+  border-radius: var(--r-lg) !important;
+  border: 1px solid rgba(var(--accent-rgb), 0.14) !important;
+  background:
+    linear-gradient(180deg, rgba(14, 18, 24, 0.98), rgba(8, 10, 14, 0.97)),
+    radial-gradient(80% 60% at 50% -10%, rgba(var(--accent-rgb), 0.12), transparent 55%) !important;
+  box-shadow:
+    0 32px 80px -32px rgba(var(--accent-rgb), 0.24),
+    0 18px 48px -28px rgba(0, 0, 0, 0.65) !important;
+}
+
+.billing-card .modal-head strong {
+  font-family: var(--hp-display);
+  letter-spacing: var(--ls-section);
+}
+
+/* Balance card: primary emphasis */
+.billing-card .billing-summary-grid .billing-stat-card:first-child {
+  border-color: rgba(var(--accent-rgb), 0.28);
+  background: linear-gradient(160deg, rgba(var(--accent-rgb), 0.12), rgba(var(--accent-rgb), 0.03));
+}
+
+.billing-card .billing-summary-grid .billing-stat-card:first-child strong {
+  font-size: 1.55rem;
+  font-family: var(--hp-display);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--accent);
+}
+
+/* Stat labels: monospace kicker style */
+.billing-card .billing-stat-card span {
+  font-family: var(--hp-mono);
+  font-size: 0.68rem;
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+/* Recharge CTA bar: accent-tinted */
+.billing-card .billing-recharge-bar {
+  border-color: rgba(var(--accent-rgb), 0.22) !important;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.07), rgba(var(--accent-rgb), 0.02)) !important;
+}
+
+.billing-card .billing-recharge-bar strong {
+  font-family: var(--hp-display);
+  letter-spacing: var(--ls-section);
+}
+
+/* Transaction rows: receipt-style */
+.billing-card .billing-entry-row > div:first-child strong {
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: var(--hp-body);
+}
+
+.billing-card .billing-entry-row > div:first-child span {
+  font-family: var(--hp-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.billing-card .billing-entry-amount strong {
+  font-family: var(--hp-mono);
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+}
+
+/* Recharge package price label */
+.recharge-card .recharge-package-price {
+  font-family: var(--hp-mono);
+  font-size: 0.76rem;
+  color: rgba(255, 255, 255, 0.42);
+  letter-spacing: 0.02em;
+  margin-top: auto;
+  padding-top: 0.1rem;
+}
+
+.recharge-card .recharge-package-card.active .recharge-package-price {
+  color: rgba(var(--accent-rgb), 0.7);
+}
+
+/* ============================================================ */
+/* Settings Card — consistent with billing/recharge             */
+/* ============================================================ */
+
+.settings-card {
+  border-radius: var(--r-lg) !important;
+  border: 1px solid rgba(var(--accent-rgb), 0.14) !important;
+  background:
+    linear-gradient(180deg, rgba(14, 18, 24, 0.98), rgba(8, 10, 14, 0.97)),
+    radial-gradient(70% 50% at 50% -8%, rgba(var(--accent-rgb), 0.11), transparent 56%) !important;
+  box-shadow:
+    0 28px 72px -28px rgba(var(--accent-rgb), 0.22),
+    0 16px 40px -20px rgba(0, 0, 0, 0.65) !important;
+}
+
+.settings-card .modal-head strong {
+  font-family: var(--hp-display);
+  letter-spacing: var(--ls-section);
+}
+
+/* Section divider before language */
+.settings-language-field {
+  border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
+  padding-top: 1.1rem !important;
+  margin-top: 0.3rem !important;
+}
+
+/* Email readonly: visibly locked */
+.settings-readonly {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
+.settings-field-note {
+  font-family: var(--hp-mono) !important;
+  font-size: 0.7rem !important;
+  letter-spacing: 0.02em !important;
+  color: rgba(255, 255, 255, 0.36) !important;
+}
+
+/* Language toggle: accent active state */
+.language-option.active {
+  border-color: rgba(var(--accent-rgb), 0.5) !important;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.18), rgba(var(--accent-rgb), 0.06)) !important;
+  color: var(--accent) !important;
+  font-weight: 700 !important;
+}
+
+/* ============================================================ */
+/* Auth Modal — Google button as primary CTA                     */
+/* ============================================================ */
+
+.auth-card .provider-button {
+  min-height: 3.3rem !important;
+  font-size: 0.92rem !important;
+  font-weight: 600 !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  background: rgba(255, 255, 255, 0.055) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.auth-card .provider-button:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.45) !important;
+  background: rgba(var(--accent-rgb), 0.07) !important;
+  color: rgba(255, 255, 255, 0.96) !important;
+}
+
+.auth-card .provider-button .provider-icon {
+  width: 1.45rem;
+  height: 1.45rem;
+  font-size: 0.92rem;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Auth chip — more prominent */
+.auth-card .auth-chip {
+  align-self: flex-start;
+  padding: 0.22rem 0.7rem;
+  border-radius: var(--r-pill);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: rgba(var(--accent-rgb), 0.9);
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  font-size: 0.66rem;
+}
+
+/* ── Delete confirm dialog ─────────────────────────────────────────── */
+.delete-confirm-card {
+  width: min(400px, 88vw);
+  background:
+    linear-gradient(160deg, #1c1a2a 0%, #110f1d 100%),
+    radial-gradient(60% 50% at 50% -5%, rgba(220, 50, 50, 0.12), transparent 70%);
+  border: 1px solid rgba(220, 60, 60, 0.28);
+  border-radius: 18px;
+  padding: 2rem 1.75rem 1.625rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.65rem;
+  box-shadow:
+    0 24px 64px -20px rgba(0, 0, 0, 0.75),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.delete-confirm-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: rgba(210, 40, 40, 0.14);
+  border: 1px solid rgba(220, 60, 60, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ff5c5c;
+  margin-bottom: 0.2rem;
+  flex-shrink: 0;
+}
+
+.delete-confirm-title {
+  font-family: var(--hp-display, var(--display, sans-serif));
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.delete-confirm-desc {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.55;
+  margin: 0;
+  max-width: 28ch;
+}
+
+.delete-confirm-actions {
+  display: flex;
+  gap: 0.625rem;
+  margin-top: 0.5rem;
+  width: 100%;
+}
+
+.delete-confirm-actions .delete-confirm-cancel {
+  flex: 1;
+  justify-content: center;
+}
+
+.delete-confirm-btn {
+  flex: 1;
+  background: linear-gradient(135deg, #d93a3a 0%, #b42020 100%);
+  border: none;
+  color: #fff;
+  font-family: var(--hp-mono, var(--mono, monospace));
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.625rem 1.25rem;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.delete-confirm-btn:hover {
+  opacity: 0.88;
+}
+
+.delete-confirm-btn:active {
+  transform: scale(0.97);
+}
