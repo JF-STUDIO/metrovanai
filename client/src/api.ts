@@ -444,6 +444,7 @@ const ADAPTIVE_UPLOAD_HIGH_BPS = 8 * 1024 * 1024;
 const ADAPTIVE_UPLOAD_SAMPLE_MS = 5000;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
+let deprecatedUploadFileBatchWarningShown = false;
 
 class ThroughputSampler {
   private samples: Array<{ ts: number; bytes: number }> = [];
@@ -1034,6 +1035,11 @@ export async function downloadProjectArchive(projectId: string, input: DownloadR
 }
 
 function uploadFileBatch(projectId: string, files: File[], onProgress: (loadedBytes: number) => void) {
+  if (!deprecatedUploadFileBatchWarningShown) {
+    deprecatedUploadFileBatchWarningShown = true;
+    console.warn('[deprecated] uploadFileBatch called, expected to be unreachable outside local development');
+  }
+
   return new Promise<{ project: ProjectRecord }>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API_ROOT}/api/projects/${projectId}/files`);
