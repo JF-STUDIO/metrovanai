@@ -811,6 +811,12 @@ export async function updateAdminActivationCode(id: string, input: Partial<Admin
   });
 }
 
+export async function deleteAdminActivationCode(id: string) {
+  return await jsonRequest<{ ok: boolean }>(`/api/admin/activation-codes/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+}
+
 export async function fetchProjects() {
   return await jsonRequest<{ items: ProjectRecord[] }>('/api/projects');
 }

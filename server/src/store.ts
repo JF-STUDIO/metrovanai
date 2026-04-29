@@ -1269,6 +1269,15 @@ export class LocalStore {
     return db.activationCodes[index !== -1 ? index : 0]!;
   }
 
+  deleteActivationCode(id: string) {
+    const db = this.loadDb();
+    const index = db.activationCodes.findIndex((item) => item.id === id);
+    if (index === -1) return null;
+    const removed = db.activationCodes.splice(index, 1)[0]!;
+    this.saveDb(db);
+    return removed;
+  }
+
   getProjectChargeEntry(projectId: string) {
     return (
       this.loadDb().billing.find((entry) => entry.projectId === projectId && entry.type === 'charge') ?? null

@@ -3547,6 +3547,33 @@ app.patch('/api/admin/activation-codes/:id', (req, res) => {
   });
 });
 
+app.delete('/api/admin/activation-codes/:id', (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  const activationCodeId = String(req.params.id ?? '');
+  const existing = store.getActivationCodeById(activationCodeId);
+  if (!existing) {
+    res.status(404).json({ error: 'Activation code not found.' });
+    return;
+  }
+
+  if (existing.redemptionCount > 0) {
+    res.status(409).json({ error: 'Cannot delete an activation code that has been redeemed. Disable it instead.' });
+    return;
+  }
+
+  store.deleteActivationCode(activationCodeId);
+  writeAdminAuditLog(req, actor, {
+    action: 'admin.activation_code.delete',
+    details: { activationCodeId: existing.id, code: existing.code }
+  });
+
+  res.json({ ok: true });
+});
+
 app.post('/api/auth/register', async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {

@@ -66,6 +66,7 @@ import {
   startProcessing,
   updateAccountSettings,
   updateAdminActivationCode,
+  deleteAdminActivationCode,
   updateAdminSettings,
   updateAdminUser,
   updateGroup,
@@ -2571,6 +2572,7 @@ function App() {
   const [adminOrdersStatusFilter, setAdminOrdersStatusFilter] = useState<'all' | 'paid' | 'checkout_created' | 'failed'>('all');
   const [adminLogsSearch, setAdminLogsSearch] = useState('');
   const [adminCodesStatusFilter, setAdminCodesStatusFilter] = useState<'all' | 'available' | 'used' | 'expired' | 'inactive'>('all');
+  const [adminSingleCodeOpen, setAdminSingleCodeOpen] = useState(false);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [downloadDialogProjectId, setDownloadDialogProjectId] = useState<string | null>(null);
@@ -4406,6 +4408,7 @@ function App() {
         active: true
       });
       setAdminActivationLoaded(true);
+      setAdminSingleCodeOpen(false);
       setAdminMessage('优惠码已创建。');
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '优惠码创建失败。', locale));
@@ -4428,6 +4431,27 @@ function App() {
       setAdminMessage(nextActive ? '优惠码已启用。' : '优惠码已停用。');
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '优惠码更新失败。', locale));
+    } finally {
+      setAdminActivationBusy(false);
+    }
+  }
+
+  async function handleAdminDeleteActivationCode(item: AdminActivationCode) {
+    if (item.redemptionCount > 0) {
+      setAdminMessage(`\u5151\u6362\u7801 ${item.code} \u5DF2\u88AB\u5151\u6362 ${item.redemptionCount} \u6B21\uFF0C\u65E0\u6CD5\u5220\u9664\uFF0C\u8BF7\u505C\u7528\u3002`);
+      return;
+    }
+    if (!window.confirm(`\u786E\u8BA4\u6C38\u4E45\u5220\u9664\u5151\u6362\u7801 ${item.code}\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\u3002`)) {
+      return;
+    }
+    setAdminActivationBusy(true);
+    setAdminMessage('');
+    try {
+      await deleteAdminActivationCode(item.id);
+      setAdminActivationCodes((current) => current.filter((entry) => entry.id !== item.id));
+      setAdminMessage(`\u5151\u6362\u7801 ${item.code} \u5DF2\u5220\u9664\u3002`);
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '\u5151\u6362\u7801\u5220\u9664\u5931\u8D25\u3002', locale));
     } finally {
       setAdminActivationBusy(false);
     }
@@ -6863,7 +6887,7 @@ function App() {
               {adminActivationBusy ? '刷新中...' : '刷新兑换码'}
             </button>
             <button className="btn btn-ghost" type="button" onClick={handleAdminOpenBatchActivationCodes}>批量生成</button>
-            <button className="btn btn-primary" type="button" onClick={() => void handleAdminCreateActivationCode()}>+ 新建兑换码</button>
+            <button className="btn btn-primary" type="button" onClick={() => { setAdminSingleCodeOpen(true); setAdminActivationDraft({ code: '', label: '', packageId: '', discountPercentOverride: '', bonusPoints: '0', maxRedemptions: '', expiresAt: '', active: true }); }}>+ 新建兑换码</button>
           </>
         )}
         <div className="code-grid">
@@ -6926,23 +6950,64 @@ function App() {
             </div>
           </div>
         ) : null}
+        {adminSingleCodeOpen ? (
+          <div className="card admin-inline-editor">
+            <div className="card-header">
+              <h3>新建单个兑换码</h3>
+              <button className="tbl-icon" type="button" onClick={() => setAdminSingleCodeOpen(false)}>×</button>
+            </div>
+            <div className="admin-form-grid">
+              <label>
+                <span>兑换码（留空自动生成）</span>
+                <input value={adminActivationDraft.code} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, code: event.target.value.toUpperCase() }))} placeholder="自动生成" />
+              </label>
+              <label>
+                <span>显示名称</span>
+                <input value={adminActivationDraft.label} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, label: event.target.value }))} placeholder="例：双十一活动码" />
+              </label>
+              <label>
+                <span>绑定套餐</span>
+                <select value={adminActivationDraft.packageId} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, packageId: event.target.value }))}>
+                  <option value="">不绑定套餐（通用）</option>
+                  {planPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>覆盖优惠 %（留空使用套餐默认）</span>
+                <input type="number" min="0" max="100" value={adminActivationDraft.discountPercentOverride} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, discountPercentOverride: event.target.value }))} placeholder="不覆盖" />
+              </label>
+              <label>
+                <span>额外赠送积分</span>
+                <input type="number" min="0" value={adminActivationDraft.bonusPoints} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, bonusPoints: event.target.value }))} />
+              </label>
+              <label>
+                <span>最大兑换次数（留空无限）</span>
+                <input type="number" min="1" value={adminActivationDraft.maxRedemptions} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, maxRedemptions: event.target.value }))} placeholder="无限" />
+              </label>
+              <label>
+                <span>到期时间（留空永不过期）</span>
+                <input type="datetime-local" value={adminActivationDraft.expiresAt} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, expiresAt: event.target.value }))} />
+              </label>
+              <label className="admin-check-field">
+                <input type="checkbox" checked={adminActivationDraft.active} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, active: event.target.checked }))} />
+                <span>创建后立即启用</span>
+              </label>
+            </div>
+            <div className="admin-form-actions">
+              <button className="btn btn-ghost" type="button" onClick={() => setAdminSingleCodeOpen(false)}>取消</button>
+              <button className="btn btn-primary" type="button" onClick={() => void handleAdminCreateActivationCode()} disabled={adminActivationBusy}>
+                {adminActivationBusy ? '创建中...' : '确认创建'}
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="card">
           <div className="toolbar">
             <input
               value={adminActivationDraft.code}
               onChange={(event) => setAdminActivationDraft((current) => ({ ...current, code: event.target.value.toUpperCase() }))}
-              placeholder="搜索或输入兑换码"
+              placeholder="搜索兑换码"
             />
-            <input
-              value={adminActivationDraft.label}
-              onChange={(event) => setAdminActivationDraft((current) => ({ ...current, label: event.target.value }))}
-              placeholder="显示名称"
-            />
-            <select value={adminActivationDraft.packageId} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, packageId: event.target.value }))}>
-              <option value="">所有类型</option>
-              {planPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-            <input value={adminActivationDraft.bonusPoints} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, bonusPoints: event.target.value }))} placeholder="积分面值" />
             <select value={adminCodesStatusFilter} onChange={(event) => setAdminCodesStatusFilter(event.target.value as typeof adminCodesStatusFilter)}>
               <option value="all">所有状态</option>
               <option value="available">活跃可用</option>
@@ -6956,6 +7021,8 @@ function App() {
               <thead><tr><th>兑换码</th><th>类型</th><th>面值</th><th>剩余 / 总量</th><th>有效期</th><th>使用情况</th><th>状态</th><th></th></tr></thead>
               <tbody>
                 {adminActivationCodes.filter((item) => {
+                  const search = adminActivationDraft.code.trim().toUpperCase();
+                  if (search && !item.code.includes(search) && !item.label.toUpperCase().includes(search)) return false;
                   const isExpired = !!item.expiresAt && new Date(item.expiresAt) < new Date();
                   const isUsedUp = !item.available && item.active && !isExpired &&
                     item.maxRedemptions !== null && item.redemptionCount >= item.maxRedemptions;
@@ -6973,7 +7040,12 @@ function App() {
                     <td className="cell-id">{item.expiresAt ? formatAdminDate(item.expiresAt) : '永久'}</td>
                     <td className="mono">{item.redemptionCount}{item.maxRedemptions ? ` / ${item.maxRedemptions}` : ' 次'}</td>
                     <td><span className={item.available ? 'tag tag-green' : item.active ? 'tag tag-orange' : 'tag tag-gray'}>{item.available ? '活跃' : item.active ? '不可用' : '已停用'}</span></td>
-                    <td><button className="tbl-icon" type="button" onClick={() => void handleAdminToggleActivationCode(item)}>⋯</button></td>
+                    <td>
+                      <div className="tbl-actions">
+                        <button className="tbl-icon" type="button" title={item.active ? '停用' : '启用'} onClick={() => void handleAdminToggleActivationCode(item)} disabled={adminActivationBusy}>{item.active ? '⏸' : '▶'}</button>
+                        <button className="tbl-icon" type="button" title={item.redemptionCount > 0 ? '已兑换，无法删除' : '删除'} onClick={() => void handleAdminDeleteActivationCode(item)} disabled={adminActivationBusy || item.redemptionCount > 0} style={item.redemptionCount > 0 ? { opacity: 0.35, cursor: 'not-allowed' } : {}}>✕</button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
