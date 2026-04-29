@@ -177,6 +177,7 @@ export interface UploadFilesOptions {
   onFileUploaded?: (uploaded: UploadedObjectReference) => void;
   onFileFailed?: (failed: FailedUploadFile) => void;
   pauseController?: UploadPauseController;
+  continueOnFileError?: boolean;
 }
 
 interface DirectUploadTarget {
@@ -1921,12 +1922,18 @@ async function uploadFilesViaDirectObject(
           }
         } catch (error) {
           if (!(error instanceof DOMException && error.name === 'AbortError')) {
-            options.onFileFailed?.({
+            const failedFile = {
               fileIdentity,
               fileName: file.name,
               reason: getUploadFailureReason(error),
               lastError: getUploadFailureMessage(error)
-            });
+            };
+            options.onFileFailed?.(failedFile);
+            if (options.continueOnFileError) {
+              loadedByFile[fileIndex] = 0;
+              reportProgress();
+              continue;
+            }
           }
           throw error;
         }
@@ -1959,6 +1966,9 @@ async function uploadFilesViaDirectObject(
   const completedObjects = files
     .map((file) => findCompletedObjectForFile(completedByIdentity, file))
     .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
+  if (options.continueOnFileError && !completedObjects.length) {
+    throw new Error('No files uploaded.');
+  }
   const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
     signal: options.signal,
     onOfflinePause: () =>

@@ -108,6 +108,7 @@ type AdminConsolePage = 'dashboard' | 'users' | 'works' | 'orders' | 'plans' | '
 type StudioFeatureId = string;
 type StudioFeatureStatus = 'available' | 'beta' | 'locked';
 type StudioFeatureImageField = 'beforeImageUrl' | 'afterImageUrl';
+type FailedUploadEntry = FailedUploadFile & { hdrItemId: string };
 
 const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
 const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
@@ -2611,7 +2612,7 @@ function App() {
   const [uploadPercent, setUploadPercent] = useState(0);
   const [uploadSnapshot, setUploadSnapshot] = useState<UploadProgressSnapshot | null>(null);
   const [uploadPaused, setUploadPaused] = useState(false);
-  const [failedUploadFiles, setFailedUploadFiles] = useState<FailedUploadFile[]>([]);
+  const [failedUploadFiles, setFailedUploadFiles] = useState<FailedUploadEntry[]>([]);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(() => (isDemoMode ? DEMO_BILLING_SUMMARY : null));
   const [billingEntries, setBillingEntries] = useState<BillingEntry[]>(() => (isDemoMode ? DEMO_BILLING_ENTRIES : []));
@@ -3476,6 +3477,12 @@ function App() {
 
   function getUploadReferenceIdentity(input: { originalName: string; size: number }) {
     return `${normalizeFileIdentity(input.originalName)}:${input.size}`;
+  }
+
+  function getLocalFileUploadIdentity(file: File) {
+    const maybePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    const relativePath = typeof maybePath === 'string' ? maybePath.trim().toLowerCase() : '';
+    return `${normalizeFileIdentity(file.name)}:${file.size}:${file.lastModified}:${relativePath}`;
   }
 
   function mergeUploadedObjectReferences(
@@ -5155,13 +5162,6 @@ function App() {
     }
   }
 
-  function rememberFailedUploadFile(failed: FailedUploadFile) {
-    setFailedUploadFiles((current) => {
-      const next = current.filter((item) => item.fileIdentity !== failed.fileIdentity);
-      return [...next, failed].slice(-8);
-    });
-  }
-
   function handleCancelUpload() {
     uploadAbortControllerRef.current?.abort();
   }
@@ -5484,7 +5484,7 @@ function App() {
     void handleShiftExposure(hdrItem, deltaX < 0 ? 1 : -1);
   }
 
-  async function handleStartProcessing(options: { retryFailed?: boolean } = {}) {
+  async function handleStartProcessing(options: { retryFailed?: boolean; retryUploadFileIdentity?: string } = {}) {
     if (!currentProject) return;
     if (!workspaceHdrItems.length) {
       setMessage(copy.importPhotosFirst);
@@ -5495,9 +5495,25 @@ function App() {
     try {
       if (activeLocalDraft) {
         const projectId = currentProject.id;
+        const retryUploadFileIdentity = options.retryUploadFileIdentity;
         resetUploadPause();
-        setFailedUploadFiles([]);
+        let failedUploadBuffer = retryUploadFileIdentity
+          ? failedUploadFiles.filter((file) => file.fileIdentity !== retryUploadFileIdentity)
+          : [];
+        if (!retryUploadFileIdentity) {
+          setFailedUploadFiles([]);
+        }
         const draftFiles = collectLocalDraftFiles(activeLocalDraft);
+        const uploadHdrItems = retryUploadFileIdentity
+          ? activeLocalDraft.hdrItems.filter((item) =>
+              collectLocalHdrItemFiles(item).some((file) => getLocalFileUploadIdentity(file) === retryUploadFileIdentity)
+            )
+          : activeLocalDraft.hdrItems;
+        if (retryUploadFileIdentity && !uploadHdrItems.length) {
+          setFailedUploadFiles(failedUploadBuffer);
+          setMessage(locale === 'en' ? 'That file is no longer in this project.' : '这个文件已不在当前项目里。');
+          return;
+        }
         const uploadTotalFiles = Math.max(1, draftFiles.length);
         let uploadedObjects = [...(activeLocalDraft.uploadedObjects ?? [])];
         const completedFileIdentities = new Set(
@@ -5535,6 +5551,11 @@ function App() {
           }));
           updateAggregateUploadProgress('uploading');
         };
+        const rememberGroupFailedUploadFile = (hdrItemId: string) => (failed: FailedUploadFile) => {
+          const entry: FailedUploadEntry = { ...failed, hdrItemId };
+          failedUploadBuffer = [...failedUploadBuffer.filter((item) => item.fileIdentity !== failed.fileIdentity), entry].slice(-8);
+          setFailedUploadFiles(failedUploadBuffer);
+        };
         setUploadActive(true);
         setUploadMode('originals');
         setUploadPercent(1);
@@ -5561,50 +5582,73 @@ function App() {
 
         let nextHdrItemIndex = 0;
         const uploadGroupWorker = async () => {
-          while (nextHdrItemIndex < activeLocalDraft.hdrItems.length) {
+          while (nextHdrItemIndex < uploadHdrItems.length) {
             if (uploadAbortController.signal.aborted) {
               throw new DOMException('Upload cancelled.', 'AbortError');
             }
             const hdrItemIndex = nextHdrItemIndex;
             nextHdrItemIndex += 1;
-            const hdrItem = activeLocalDraft.hdrItems[hdrItemIndex];
+            const hdrItem = uploadHdrItems[hdrItemIndex];
             if (!hdrItem) {
               continue;
             }
 
-            const groupFiles = collectLocalHdrItemFiles(hdrItem);
+            const allGroupFiles = collectLocalHdrItemFiles(hdrItem);
+            const groupFiles = retryUploadFileIdentity
+              ? allGroupFiles.filter((file) => getLocalFileUploadIdentity(file) === retryUploadFileIdentity)
+              : allGroupFiles;
             if (!groupFiles.length) {
               continue;
             }
 
-            const existingGroupUploads = getUploadedObjectsForFiles(uploadedObjects, groupFiles);
-            let groupUploads = existingGroupUploads;
-            if (existingGroupUploads.length < groupFiles.length) {
-            const uploadResponse = await uploadFiles(projectId, groupFiles, (_percent, snapshot) => {
-              const uploadedInGroup = Math.min(
-                groupFiles.length,
-                snapshot?.uploadedFiles ?? Math.round(((_percent || 0) / 100) * groupFiles.length)
-              );
-              inFlightGroupProgress.set(hdrItem.id, uploadedInGroup);
-              const stage = snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' ? snapshot.stage : 'uploading';
-              updateAggregateUploadProgress(stage, {
-                currentFileName: snapshot?.currentFileName,
-                attempt: snapshot?.attempt,
-                maxAttempts: snapshot?.maxAttempts,
-                offline: snapshot?.offline
-              });
-            }, {
-              signal: uploadAbortController.signal,
-              completedObjects: existingGroupUploads,
-              onFileUploaded: rememberUploadedObject,
-              onFileFailed: rememberFailedUploadFile,
-              pauseController: uploadPauseControllerRef.current
-            });
-            inFlightGroupProgress.delete(hdrItem.id);
-            groupUploads = 'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : getUploadedObjectsForFiles(uploadedObjects, groupFiles);
-            uploadedObjects = mergeUploadedObjectReferences(uploadedObjects, groupUploads);
+            const existingUploadsForRun = getUploadedObjectsForFiles(uploadedObjects, groupFiles);
+            if (existingUploadsForRun.length < groupFiles.length) {
+              try {
+                const uploadResponse = await uploadFiles(projectId, groupFiles, (_percent, snapshot) => {
+                  const uploadedInGroup = Math.min(
+                    groupFiles.length,
+                    snapshot?.uploadedFiles ?? Math.round(((_percent || 0) / 100) * groupFiles.length)
+                  );
+                  inFlightGroupProgress.set(hdrItem.id, uploadedInGroup);
+                  const stage = snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' ? snapshot.stage : 'uploading';
+                  updateAggregateUploadProgress(stage, {
+                    currentFileName: snapshot?.currentFileName,
+                    attempt: snapshot?.attempt,
+                    maxAttempts: snapshot?.maxAttempts,
+                    offline: snapshot?.offline
+                  });
+                }, {
+                  signal: uploadAbortController.signal,
+                  completedObjects: existingUploadsForRun,
+                  onFileUploaded: rememberUploadedObject,
+                  onFileFailed: rememberGroupFailedUploadFile(hdrItem.id),
+                  pauseController: uploadPauseControllerRef.current,
+                  continueOnFileError: true
+                });
+                uploadedObjects = mergeUploadedObjectReferences(
+                  uploadedObjects,
+                  'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : getUploadedObjectsForFiles(uploadedObjects, groupFiles)
+                );
+              } catch (error) {
+                inFlightGroupProgress.delete(hdrItem.id);
+                if (error instanceof DOMException && error.name === 'AbortError') {
+                  throw error;
+                }
+                updateAggregateUploadProgress('uploading');
+                continue;
+              } finally {
+                inFlightGroupProgress.delete(hdrItem.id);
+              }
             }
-            for (const file of groupFiles) {
+            if (retryUploadFileIdentity) {
+              failedUploadBuffer = failedUploadBuffer.filter((file) => file.fileIdentity !== retryUploadFileIdentity);
+              setFailedUploadFiles(failedUploadBuffer);
+            }
+            const groupUploads = getUploadedObjectsForFiles(uploadedObjects, allGroupFiles);
+            if (groupUploads.length < allGroupFiles.length) {
+              continue;
+            }
+            for (const file of allGroupFiles) {
               completedFileIdentities.add(getUploadReferenceIdentity({ originalName: file.name, size: file.size }));
             }
             updateAggregateUploadProgress('uploading');
@@ -5624,9 +5668,26 @@ function App() {
 
         const groupUploadWorkerCount = Math.max(
           1,
-          Math.min(LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY, activeLocalDraft.hdrItems.length)
+          Math.min(LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY, uploadHdrItems.length)
         );
         await Promise.all(Array.from({ length: groupUploadWorkerCount }, () => uploadGroupWorker()));
+
+        if (failedUploadBuffer.length) {
+          updateLocalImportDraft(projectId, (draft) => ({ ...draft, uploadStatus: 'paused', uploadedObjects }));
+          const reviewStep = await patchProject(projectId, { currentStep: 2, status: 'review' }).catch(() => null);
+          if (reviewStep?.project) {
+            upsertProject(reviewStep.project);
+          }
+          setUploadActive(false);
+          setUploadMode(null);
+          setUploadSnapshot(null);
+          setMessage(
+            locale === 'en'
+              ? `${failedUploadBuffer.length} file${failedUploadBuffer.length === 1 ? '' : 's'} need retry before processing.`
+              : `${failedUploadBuffer.length} 个文件需要重试后才能开始处理。`
+          );
+          return;
+        }
 
         const completedLayoutResponse = await applyHdrLayout(projectId, [], { mode: 'merge', inputComplete: true });
         const syncedProject = completedLayoutResponse.project;
@@ -9175,12 +9236,20 @@ function App() {
                           <div>
                             <strong>{locale === 'en' ? 'Files waiting for retry' : '等待重试的文件'}</strong>
                             <span>
-                              {failedUploadFiles.map((file) => file.fileName).join(', ')}
+                              {locale === 'en' ? 'Retry one file at a time before processing starts.' : '处理开始前请逐个重试失败文件。'}
                             </span>
                           </div>
-                          <button className="ghost-button compact" type="button" onClick={() => void handleStartProcessing()} disabled={busy}>
-                            {locale === 'en' ? 'Retry upload' : '重试上传'}
-                          </button>
+                          {failedUploadFiles.map((file) => (
+                            <button
+                              key={file.fileIdentity}
+                              className="ghost-button compact"
+                              type="button"
+                              onClick={() => void handleStartProcessing({ retryUploadFileIdentity: file.fileIdentity })}
+                              disabled={busy}
+                            >
+                              {locale === 'en' ? `Retry ${file.fileName}` : `重试 ${file.fileName}`}
+                            </button>
+                          ))}
                         </div>
                       )}
 
