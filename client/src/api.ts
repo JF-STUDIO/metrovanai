@@ -505,22 +505,32 @@ const HUGE_DIRECT_OBJECT_FILE_BYTES = 200 * 1024 * 1024;
 const MULTIPART_UPLOAD_THRESHOLD_BYTES = 100 * 1024 * 1024;
 const MULTIPART_PART_CONCURRENCY = 4;
 const MULTIPART_PART_RETRIES = 5;
+const DIRECT_OBJECT_GLOBAL_CONNECTION_LIMIT = 8;
 const ADAPTIVE_UPLOAD_MIN_CONCURRENCY = 2;
 const ADAPTIVE_UPLOAD_MAX_CONCURRENCY = 12;
 const ADAPTIVE_UPLOAD_LOW_BPS = 1 * 1024 * 1024;
 const ADAPTIVE_UPLOAD_HIGH_BPS = 8 * 1024 * 1024;
 const ADAPTIVE_UPLOAD_SAMPLE_MS = 2000;
+const UPLOAD_TELEMETRY_SAMPLE_MS = 12000;
+const UPLOAD_TELEMETRY_MIN_SPAN_MS = 3000;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
 let deprecatedUploadFileBatchWarningShown = false;
 
 class ThroughputSampler {
   private samples: Array<{ ts: number; bytes: number }> = [];
+  private readonly windowMs: number;
+  private readonly minSpanMs: number;
+
+  constructor(windowMs = ADAPTIVE_UPLOAD_SAMPLE_MS, minSpanMs = 750) {
+    this.windowMs = windowMs;
+    this.minSpanMs = minSpanMs;
+  }
 
   recordBytes(bytes: number) {
     const now = Date.now();
     this.samples.push({ ts: now, bytes });
-    this.samples = this.samples.filter((sample) => now - sample.ts < ADAPTIVE_UPLOAD_SAMPLE_MS);
+    this.samples = this.samples.filter((sample) => now - sample.ts < this.windowMs);
   }
 
   bytesPerSecond() {
@@ -528,10 +538,80 @@ class ThroughputSampler {
       return 0;
     }
     const total = this.samples.reduce((sum, sample) => sum + sample.bytes, 0);
-    const spanSeconds = (this.samples[this.samples.length - 1]!.ts - this.samples[0]!.ts) / 1000;
+    const spanMs = this.samples[this.samples.length - 1]!.ts - this.samples[0]!.ts;
+    const spanSeconds = Math.max(this.minSpanMs, spanMs) / 1000;
     return spanSeconds > 0 ? total / spanSeconds : 0;
   }
 }
+
+class UploadConnectionLimiter {
+  private active = 0;
+  private readonly limit: number;
+  private readonly waiters: Array<{
+    resolve: () => void;
+    reject: (error: unknown) => void;
+    signal?: AbortSignal;
+    abort: () => void;
+  }> = [];
+
+  constructor(limit: number) {
+    this.limit = limit;
+  }
+
+  async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    await this.acquire(signal);
+    try {
+      return await task();
+    } finally {
+      this.release();
+    }
+  }
+
+  private acquire(signal?: AbortSignal) {
+    if (signal?.aborted) {
+      return Promise.reject(new DOMException('Upload cancelled.', 'AbortError'));
+    }
+    if (this.active < this.limit) {
+      this.active += 1;
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve: () => {
+          signal?.removeEventListener('abort', waiter.abort);
+          resolve();
+        },
+        reject,
+        signal,
+        abort: () => {
+          this.removeWaiter(waiter);
+          reject(new DOMException('Upload cancelled.', 'AbortError'));
+        }
+      };
+      signal?.addEventListener('abort', waiter.abort, { once: true });
+      this.waiters.push(waiter);
+    });
+  }
+
+  private release() {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter.resolve();
+      return;
+    }
+    this.active = Math.max(0, this.active - 1);
+  }
+
+  private removeWaiter(waiter: (typeof this.waiters)[number]) {
+    const index = this.waiters.indexOf(waiter);
+    if (index >= 0) {
+      this.waiters.splice(index, 1);
+    }
+  }
+}
+
+const directUploadConnectionLimiter = new UploadConnectionLimiter(DIRECT_OBJECT_GLOBAL_CONNECTION_LIMIT);
 
 function buildUploadTelemetry(uploadedBytes: number, totalBytes: number, bytesPerSecond?: number) {
   const safeUploadedBytes = Math.min(Math.max(0, uploadedBytes), Math.max(1, totalBytes));
@@ -1527,7 +1607,7 @@ async function waitIfUploadPaused(options: Pick<UploadFilesOptions, 'pauseContro
 }
 
 function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgress: (loadedBytes: number) => void, signal?: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
+  return directUploadConnectionLimiter.run(() => new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
       reject(new DOMException('Upload cancelled.', 'AbortError'));
       return;
@@ -1570,7 +1650,7 @@ function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgre
       reject(signal?.aborted ? new DOMException('Upload cancelled.', 'AbortError') : new DirectUploadError('Direct upload was interrupted.'));
     });
     xhr.send(file);
-  });
+  }), signal);
 }
 
 async function uploadDirectObjectFileWithRetry(
@@ -1640,7 +1720,7 @@ function uploadMultipartPart(
   onProgress: (loadedBytes: number) => void,
   signal?: AbortSignal
 ) {
-  return new Promise<string>((resolve, reject) => {
+  return directUploadConnectionLimiter.run(() => new Promise<string>((resolve, reject) => {
     if (signal?.aborted) {
       reject(new DOMException('Upload cancelled.', 'AbortError'));
       return;
@@ -1685,7 +1765,7 @@ function uploadMultipartPart(
       reject(signal?.aborted ? new DOMException('Upload cancelled.', 'AbortError') : new DirectUploadError('Multipart part upload was interrupted.'));
     });
     xhr.send(blob);
-  });
+  }), signal);
 }
 
 function mergeMultipartPartUrls(current: MultipartUploadPartUrl[], additions: MultipartUploadPartUrl[]) {
@@ -1904,7 +1984,7 @@ async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProg
   let latestProject: ProjectRecord | null = null;
   const batchLoadedBytes = new Array<number>(batches.length).fill(0);
   let nextBatchIndex = 0;
-  const sampler = new ThroughputSampler();
+  const sampler = new ThroughputSampler(UPLOAD_TELEMETRY_SAMPLE_MS, UPLOAD_TELEMETRY_MIN_SPAN_MS);
 
   const reportProgress = () => {
     const activeLoadedBytes = batchLoadedBytes.reduce((sum, value) => sum + Math.max(0, value), 0);
@@ -2139,7 +2219,8 @@ async function uploadFilesViaDirectObject(
     throwIfUploadAborted(options.signal);
     reportProgress({ stage: 'preparing' });
     const batchFiles = batch.map((item) => item.file);
-    const sampler = new ThroughputSampler();
+    const adaptiveSampler = new ThroughputSampler(ADAPTIVE_UPLOAD_SAMPLE_MS, 1000);
+    const telemetrySampler = new ThroughputSampler(UPLOAD_TELEMETRY_SAMPLE_MS, UPLOAD_TELEMETRY_MIN_SPAN_MS);
     const { targets } = await runWithOfflineRetry(() => createDirectUploadTargets(projectId, batchFiles), {
       signal: options.signal,
       onPause: () => reportProgress({ stage: 'paused', offline: true })
@@ -2158,11 +2239,19 @@ async function uploadFilesViaDirectObject(
       const deltaBytes = nextLoaded - previousLoaded;
       loadedByFile[fileIndex] = nextLoaded;
       if (deltaBytes > 0) {
-        sampler.recordBytes(deltaBytes);
+        adaptiveSampler.recordBytes(deltaBytes);
+        telemetrySampler.recordBytes(deltaBytes);
       }
     };
     const reportUploadProgress = (overrides: Partial<UploadProgressSnapshot> = {}) =>
-      reportProgress({ ...buildUploadTelemetry(completedBytes + loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0), totalBytes, sampler.bytesPerSecond()), ...overrides });
+      reportProgress({
+        ...buildUploadTelemetry(
+          completedBytes + loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0),
+          totalBytes,
+          telemetrySampler.bytesPerSecond()
+        ),
+        ...overrides
+      });
     const maybeAdjustConcurrency = () => {
       const now = Date.now();
       const elapsedMs = now - lastSampleAt;
@@ -2171,7 +2260,7 @@ async function uploadFilesViaDirectObject(
       }
 
       lastSampleAt = now;
-      const bps = sampler.bytesPerSecond();
+      const bps = adaptiveSampler.bytesPerSecond();
       if (!Number.isFinite(bps) || bps <= 0) {
         return;
       }

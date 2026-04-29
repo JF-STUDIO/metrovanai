@@ -5792,7 +5792,7 @@ function App() {
           uploadedObjects.map((uploaded) => getUploadReferenceIdentity(uploaded))
         );
         const inFlightGroupProgress = new Map<string, number>();
-        const inFlightGroupByteProgress = new Map<string, { uploadedBytes: number; bytesPerSecond: number }>();
+        const inFlightGroupByteProgress = new Map<string, { uploadedBytes: number; bytesPerSecond: number; updatedAt: number }>();
         const uploadTotalBytes = Math.max(1, draftFiles.reduce((sum, file) => sum + Math.max(1, file.size), 0));
         const getConfirmedUploadedBytes = () =>
           draftFiles.reduce(
@@ -5815,8 +5815,9 @@ function App() {
             0
           );
           const uploadedBytes = Math.min(uploadTotalBytes, confirmedUploadedBytes + activeUploadedBytes);
+          const now = Date.now();
           const bytesPerSecond = Array.from(inFlightGroupByteProgress.values()).reduce(
-            (sum, value) => sum + Math.max(0, value.bytesPerSecond),
+            (sum, value) => sum + (now - value.updatedAt <= 6000 ? Math.max(0, value.bytesPerSecond) : 0),
             0
           );
           const estimatedSecondsRemaining =
@@ -5922,7 +5923,8 @@ function App() {
                   const groupUploadedBytes = Math.min(groupTotalBytes, snapshot?.uploadedBytes ?? 0);
                   inFlightGroupByteProgress.set(hdrItem.id, {
                     uploadedBytes: Math.max(0, groupUploadedBytes - groupConfirmedBytes),
-                    bytesPerSecond: snapshot?.bytesPerSecond ?? 0
+                    bytesPerSecond: snapshot?.bytesPerSecond ?? 0,
+                    updatedAt: Date.now()
                   });
                   const stage =
                     snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' || snapshot?.stage === 'verifying'
@@ -9168,6 +9170,7 @@ function App() {
                     <em>{copy.rechargeSave} {billingPackage.discountPercent}%</em>
                   </div>
                   <strong className="recharge-package-points">{billingPackage.points} pts</strong>
+                  <span className="recharge-package-price">{formatUsd(billingPackage.amountUsd, locale)}</span>
                 </button>
               ))}
             </div>
