@@ -493,9 +493,9 @@ export interface AuthProvidersPayload {
 const MAX_UPLOAD_BATCH_BYTES = 40 * 1024 * 1024;
 const MAX_UPLOAD_BATCH_FILES = 16;
 const MAX_UPLOAD_CONCURRENT_BATCHES = 4;
-const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 8;
-const DIRECT_OBJECT_UPLOAD_LARGE_FILE_CONCURRENCY = 6;
-const DIRECT_OBJECT_UPLOAD_HUGE_FILE_CONCURRENCY = 4;
+const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 1;
+const DIRECT_OBJECT_UPLOAD_LARGE_FILE_CONCURRENCY = 1;
+const DIRECT_OBJECT_UPLOAD_HUGE_FILE_CONCURRENCY = 1;
 const MAX_UPLOAD_BATCH_RETRIES = 3;
 const UPLOAD_RETRY_BASE_DELAY_MS = 850;
 const UPLOAD_RETRY_JITTER_MS = 650;
@@ -503,11 +503,11 @@ const DIRECT_OBJECT_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 const LARGE_DIRECT_OBJECT_FILE_BYTES = 80 * 1024 * 1024;
 const HUGE_DIRECT_OBJECT_FILE_BYTES = 200 * 1024 * 1024;
 const MULTIPART_UPLOAD_THRESHOLD_BYTES = 100 * 1024 * 1024;
-const MULTIPART_PART_CONCURRENCY = 4;
+const MULTIPART_PART_CONCURRENCY = 2;
 const MULTIPART_PART_RETRIES = 5;
-const DIRECT_OBJECT_GLOBAL_CONNECTION_LIMIT = 8;
-const ADAPTIVE_UPLOAD_MIN_CONCURRENCY = 2;
-const ADAPTIVE_UPLOAD_MAX_CONCURRENCY = 12;
+const DIRECT_OBJECT_GLOBAL_CONNECTION_LIMIT = 4;
+const ADAPTIVE_UPLOAD_MIN_CONCURRENCY = 1;
+const ADAPTIVE_UPLOAD_MAX_CONCURRENCY = 1;
 const ADAPTIVE_UPLOAD_LOW_BPS = 1 * 1024 * 1024;
 const ADAPTIVE_UPLOAD_HIGH_BPS = 8 * 1024 * 1024;
 const ADAPTIVE_UPLOAD_SAMPLE_MS = 2000;
@@ -734,8 +734,17 @@ export async function fetchAuthProviders() {
   return await jsonRequest<AuthProvidersPayload>('/api/auth/providers');
 }
 
+let _cachedCapabilities: UploadCapabilitiesPayload | null = null;
+let _capabilitiesCacheExpiry = 0;
+
 export async function fetchUploadCapabilities() {
-  return await jsonRequest<UploadCapabilitiesPayload>('/api/upload/capabilities');
+  if (_cachedCapabilities && Date.now() < _capabilitiesCacheExpiry) {
+    return _cachedCapabilities;
+  }
+  const result = await jsonRequest<UploadCapabilitiesPayload>('/api/upload/capabilities');
+  _cachedCapabilities = result;
+  _capabilitiesCacheExpiry = Date.now() + 60_000;
+  return result;
 }
 
 export async function registerWithEmail(input: { email: string; displayName?: string; password: string }) {
