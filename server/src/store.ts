@@ -12,6 +12,7 @@ import type {
   PaymentOrderRecord,
   PasswordResetTokenRecord,
   ProjectGroup,
+  ProjectDownloadJobRecord,
   ProjectJobState,
   ProjectRegenerationUsage,
   ProjectRecord,
@@ -319,6 +320,7 @@ export class LocalStore {
       paymentOrders: Array.isArray(raw.paymentOrders) ? raw.paymentOrders : [],
       processedStripeEvents: Array.isArray(raw.processedStripeEvents) ? raw.processedStripeEvents : [],
       activationCodes: Array.isArray(raw.activationCodes) ? raw.activationCodes : [],
+      downloadJobs: Array.isArray(raw.downloadJobs) ? raw.downloadJobs : [],
       users,
       sessions: sessions.filter((session) => !this.isSessionExpired(session)),
       passwordResetTokens: passwordResetTokens.filter((token) => !this.isPasswordResetTokenExpired(token)),
@@ -470,6 +472,64 @@ export class LocalStore {
       return null;
     }
     return project;
+  }
+
+  getProjectDownloadJob(projectId: string, jobId: string, userKey: string) {
+    return (
+      this.loadDb().downloadJobs.find((job) => job.projectId === projectId && job.jobId === jobId && job.userKey === userKey) ??
+      null
+    );
+  }
+
+  findReusableProjectDownloadJob(projectId: string, userKey: string, requestKey: string, retentionMs: number) {
+    const job =
+      this.loadDb().downloadJobs.find((item) => item.projectId === projectId && item.userKey === userKey && item.requestKey === requestKey) ??
+      null;
+    if (!job) {
+      return null;
+    }
+    if (!['ready', 'failed', 'cancelled'].includes(job.status)) {
+      return job;
+    }
+    if (job.status === 'ready' && job.completedAt && Date.now() - job.completedAt < retentionMs) {
+      return job;
+    }
+    return null;
+  }
+
+  upsertProjectDownloadJob(job: ProjectDownloadJobRecord) {
+    const db = this.loadDb();
+    const index = db.downloadJobs.findIndex((item) => item.jobId === job.jobId);
+    if (index === -1) {
+      db.downloadJobs.unshift(job);
+    } else {
+      db.downloadJobs[index] = job;
+    }
+    db.downloadJobs = db.downloadJobs.slice(0, 1000);
+    this.saveDb(db);
+    return job;
+  }
+
+  markInterruptedDownloadJobsFailed(message: string) {
+    const db = this.loadDb();
+    let count = 0;
+    db.downloadJobs = db.downloadJobs.map((job) => {
+      if (['ready', 'failed', 'cancelled'].includes(job.status)) {
+        return job;
+      }
+      count += 1;
+      return {
+        ...job,
+        status: 'failed',
+        progress: 100,
+        completedAt: Date.now(),
+        error: message
+      };
+    });
+    if (count > 0) {
+      this.saveDb(db);
+    }
+    return count;
   }
 
   getUserById(userId: string) {

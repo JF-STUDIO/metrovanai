@@ -6,9 +6,19 @@ import {
   type ProjectDownloadOptions
 } from './downloads.js';
 import { createObjectDownloadUrl, uploadFileToObjectStorage } from './object-storage.js';
-import type { ProjectRecord } from './types.js';
+import type { ProjectDownloadJobRecord, ProjectDownloadJobStatus, ProjectRecord } from './types.js';
 
-type DownloadJobStatus = 'queued' | 'preflight' | 'packaging' | 'uploading' | 'ready' | 'failed' | 'cancelled';
+interface DownloadJobStore {
+  getProjectDownloadJob(projectId: string, jobId: string, userKey: string): ProjectDownloadJobRecord | null;
+  findReusableProjectDownloadJob(
+    projectId: string,
+    userKey: string,
+    requestKey: string,
+    retentionMs: number
+  ): ProjectDownloadJobRecord | null;
+  upsertProjectDownloadJob(job: ProjectDownloadJobRecord): ProjectDownloadJobRecord;
+  markInterruptedDownloadJobsFailed(message: string): number;
+}
 
 interface DownloadJob {
   jobId: string;
@@ -17,10 +27,11 @@ interface DownloadJob {
   userKey: string;
   project: ProjectRecord;
   options: ProjectDownloadOptions;
-  status: DownloadJobStatus;
+  status: ProjectDownloadJobStatus;
   progress: number;
   createdAt: number;
   completedAt: number | null;
+  downloadKey: string | null;
   downloadUrl: string | null;
   expiresAt: number | null;
   error: string | null;
@@ -31,7 +42,16 @@ const DOWNLOAD_URL_TTL_SECONDS = 6 * 60 * 60;
 const jobs = new Map<string, DownloadJob>();
 const activeByRequest = new Map<string, string>();
 const queue: DownloadJob[] = [];
+let jobStore: DownloadJobStore | null = null;
 let workerRunning = false;
+
+export function configureDownloadJobs(store: DownloadJobStore) {
+  jobStore = store;
+}
+
+export function recoverInterruptedDownloadJobsAfterRestart() {
+  return jobStore?.markInterruptedDownloadJobsFailed('Server restarted before download completion.') ?? 0;
+}
 
 function getRequestKey(projectId: string, options: ProjectDownloadOptions) {
   return `${projectId}:${JSON.stringify(options)}`;
@@ -53,7 +73,7 @@ function getReusableJob(requestKey: string) {
   return null;
 }
 
-function publicJob(job: DownloadJob) {
+function publicJob(job: DownloadJob | ProjectDownloadJobRecord) {
   return {
     jobId: job.jobId,
     status: job.status,
@@ -62,6 +82,28 @@ function publicJob(job: DownloadJob) {
     expiresAt: job.expiresAt ? new Date(job.expiresAt).toISOString() : null,
     error: job.error
   };
+}
+
+function persistJob(job: DownloadJob) {
+  jobStore?.upsertProjectDownloadJob({
+    jobId: job.jobId,
+    requestKey: job.requestKey,
+    projectId: job.projectId,
+    userKey: job.userKey,
+    options: job.options,
+    status: job.status,
+    progress: job.progress,
+    createdAt: job.createdAt,
+    completedAt: job.completedAt,
+    downloadKey: job.downloadKey,
+    downloadUrl: job.downloadUrl,
+    expiresAt: job.expiresAt,
+    error: job.error
+  });
+}
+
+function persistRecord(job: ProjectDownloadJobRecord) {
+  jobStore?.upsertProjectDownloadJob(job);
 }
 
 function startWorker() {
@@ -91,11 +133,13 @@ async function runWorker() {
     try {
       job.status = 'preflight';
       job.progress = 8;
+      persistJob(job);
       await assertProjectDownloadAssetsReady(job.project);
       if (isJobCancelled(job)) continue;
 
       job.status = 'packaging';
       job.progress = 35;
+      persistJob(job);
       const archive = await buildProjectDownloadArchive(job.project, job.options);
       archivePath = archive.zipPath;
       if (isJobCancelled(job)) {
@@ -105,6 +149,8 @@ async function runWorker() {
       job.status = 'uploading';
       job.progress = 75;
       const storageKey = `downloads/${job.userKey}/${job.projectId}/${job.jobId}.zip`;
+      job.downloadKey = storageKey;
+      persistJob(job);
       await uploadFileToObjectStorage({
         sourcePath: archive.zipPath,
         storageKey,
@@ -121,11 +167,13 @@ async function runWorker() {
       job.status = 'ready';
       job.progress = 100;
       job.completedAt = Date.now();
+      persistJob(job);
     } catch (error) {
       job.status = 'failed';
       job.progress = 100;
       job.error = error instanceof Error ? error.message : String(error);
       job.completedAt = Date.now();
+      persistJob(job);
     } finally {
       if (archivePath) {
         fs.rmSync(archivePath, { force: true });
@@ -144,6 +192,10 @@ export function enqueueDownloadJob(input: {
   if (reused) {
     return { job: publicJob(reused), reused: true };
   }
+  const persisted = jobStore?.findReusableProjectDownloadJob(input.project.id, input.userKey, requestKey, JOB_RETENTION_MS) ?? null;
+  if (persisted) {
+    return { job: publicJob(persisted), reused: true };
+  }
 
   const job: DownloadJob = {
     jobId: nanoid(12),
@@ -156,12 +208,14 @@ export function enqueueDownloadJob(input: {
     progress: 1,
     createdAt: Date.now(),
     completedAt: null,
+    downloadKey: null,
     downloadUrl: null,
     expiresAt: null,
     error: null
   };
   jobs.set(job.jobId, job);
   activeByRequest.set(job.requestKey, job.jobId);
+  persistJob(job);
   queue.push(job);
   startWorker();
   return { job: publicJob(job), reused: false };
@@ -170,7 +224,8 @@ export function enqueueDownloadJob(input: {
 export function getDownloadJob(projectId: string, jobId: string, userKey: string) {
   const job = jobs.get(jobId);
   if (!job || job.projectId !== projectId || job.userKey !== userKey) {
-    return null;
+    const persisted = jobStore?.getProjectDownloadJob(projectId, jobId, userKey) ?? null;
+    return persisted ? publicJob(persisted) : null;
   }
   return publicJob(job);
 }
@@ -178,12 +233,25 @@ export function getDownloadJob(projectId: string, jobId: string, userKey: string
 export function cancelDownloadJob(projectId: string, jobId: string, userKey: string) {
   const job = jobs.get(jobId);
   if (!job || job.projectId !== projectId || job.userKey !== userKey) {
-    return false;
+    const persisted = jobStore?.getProjectDownloadJob(projectId, jobId, userKey) ?? null;
+    if (!persisted) {
+      return false;
+    }
+    if (persisted.status !== 'ready' && persisted.status !== 'failed') {
+      persistRecord({
+        ...persisted,
+        status: 'cancelled',
+        error: 'Download cancelled.',
+        completedAt: Date.now()
+      });
+    }
+    return true;
   }
   if (job.status !== 'ready' && job.status !== 'failed') {
     job.status = 'cancelled';
     job.error = 'Download cancelled.';
     job.completedAt = Date.now();
+    persistJob(job);
   }
   return true;
 }

@@ -38,7 +38,13 @@ import {
   getProjectDownloadFileName,
   streamProjectDownloadArchive
 } from './downloads.js';
-import { cancelDownloadJob, enqueueDownloadJob, getDownloadJob } from './download-jobs.js';
+import {
+  cancelDownloadJob,
+  configureDownloadJobs,
+  enqueueDownloadJob,
+  getDownloadJob,
+  recoverInterruptedDownloadJobsAfterRestart
+} from './download-jobs.js';
 import { buildHdrItemsFromFrontendLayout } from './importer.js';
 import { extractPreviewOrConvertToJpeg } from './images.js';
 import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js';
@@ -165,6 +171,7 @@ assertCloudProductionRuntime();
 await initServerObservability();
 const store = new LocalStore(repoRoot);
 await store.initialize();
+configureDownloadJobs(store);
 const processor = new ProjectProcessor(repoRoot, store);
 const POINT_PRICE_USD = 0.25;
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 60;
@@ -4346,7 +4353,7 @@ app.delete('/api/projects/:id/download/jobs/:jobId', async (req, res) => {
     return;
   }
 
-  res.json({ ok: true });
+  res.json({ cancelled: true });
 });
 
 app.post('/api/projects/:id/uploads/multipart/init', async (req, res) => {
@@ -5352,6 +5359,10 @@ if (fs.existsSync(clientIndexPath)) {
 
 app.listen(port, () => {
   console.log(`Metrovan AI API listening on port ${port}`);
+  const interruptedDownloads = recoverInterruptedDownloadJobsAfterRestart();
+  if (interruptedDownloads > 0) {
+    console.log(`Marked ${interruptedDownloads} interrupted download job(s) as failed.`);
+  }
 
   void processor
     .recoverInterruptedProjects()

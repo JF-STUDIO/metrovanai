@@ -7,6 +7,7 @@ import type {
   EmailVerificationTokenRecord,
   PaymentOrderRecord,
   PasswordResetTokenRecord,
+  ProjectDownloadJobRecord,
   ProjectRecord,
   SessionRecord,
   SystemSettings,
@@ -27,6 +28,7 @@ export interface DatabaseShape {
   paymentOrders: PaymentOrderRecord[];
   processedStripeEvents: ProcessedStripeEventRecord[];
   activationCodes: BillingActivationCode[];
+  downloadJobs: ProjectDownloadJobRecord[];
   users: UserRecord[];
   sessions: SessionRecord[];
   passwordResetTokens: PasswordResetTokenRecord[];
@@ -64,6 +66,7 @@ function createEmptyDatabase(): DatabaseShape {
     paymentOrders: [],
     processedStripeEvents: [],
     activationCodes: [],
+    downloadJobs: [],
     users: [],
     sessions: [],
     passwordResetTokens: [],
@@ -99,6 +102,7 @@ function normalizeDatabaseShape(raw: Partial<DatabaseShape>): DatabaseShape {
     paymentOrders: Array.isArray(raw.paymentOrders) ? raw.paymentOrders : [],
     processedStripeEvents: Array.isArray(raw.processedStripeEvents) ? raw.processedStripeEvents : [],
     activationCodes: Array.isArray(raw.activationCodes) ? raw.activationCodes : [],
+    downloadJobs: Array.isArray(raw.downloadJobs) ? raw.downloadJobs : [],
     users: Array.isArray(raw.users) ? raw.users : [],
     sessions: Array.isArray(raw.sessions) ? raw.sessions.map((session) => ({ ...session, csrfTokenHash: session.csrfTokenHash ?? null })) : [],
     passwordResetTokens: Array.isArray(raw.passwordResetTokens) ? raw.passwordResetTokens : [],

@@ -123,6 +123,24 @@ export interface ResultAsset {
   regeneration?: ResultRegenerationState;
 }
 
+export type ProjectDownloadJobStatus = 'queued' | 'preflight' | 'packaging' | 'uploading' | 'ready' | 'failed' | 'cancelled';
+
+export interface ProjectDownloadJobRecord {
+  jobId: string;
+  requestKey: string;
+  projectId: string;
+  userKey: string;
+  options: unknown;
+  status: ProjectDownloadJobStatus;
+  progress: number;
+  createdAt: number;
+  completedAt: number | null;
+  downloadKey: string | null;
+  downloadUrl: string | null;
+  expiresAt: number | null;
+  error: string | null;
+}
+
 export interface WorkflowRealtimeInfo {
   total: number;
   entered: number;
