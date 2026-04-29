@@ -85,6 +85,7 @@ def env_float(name: str, default: float, min_value: float, max_value: float) -> 
 ACR_LCP_CACHE_DIR = Path(env("METROVAN_ACR_LCP_CACHE_DIR", "/tmp/metrovan-acr-lcp"))
 ACR_LCP_ZIP_MARKER = ACR_LCP_CACHE_DIR / ".ready"
 _LCP_PROFILE_CACHE: list[dict[str, Any]] | None = None
+_LCP_DISTORTION_MODEL_CACHE: dict[str, list[dict[str, Any]]] = {}
 _LENSFUN_DB: Any | None = None
 
 
@@ -183,7 +184,18 @@ def read_raw_lens_metadata(source: Path) -> dict[str, Any]:
 
     result = run_process(
         exiftool,
-        ["-j", "-Make", "-Model", "-LensModel", "-LensID", "-LensInfo", "-FocalLength", "-FNumber", str(source)],
+        [
+            "-j",
+            "-Make",
+            "-Model",
+            "-LensModel",
+            "-LensID",
+            "-LensInfo",
+            "-FocalLength",
+            "-FocalLengthIn35mmFormat",
+            "-FNumber",
+            str(source),
+        ],
         source.parent,
         timeout=60,
     )
@@ -315,6 +327,7 @@ def get_acr_lcp_roots() -> list[Path]:
         [
             Path("/opt/metrovan/lcp-profiles"),
             Path("/opt/metrovan/acr-lcp"),
+            Path("/usr/share/rawtherapee/lensprofiles"),
             Path("/usr/share/lensprofiles"),
             Path("C:/ProgramData/Adobe/CameraRaw/LensProfiles/1.0"),
         ]
@@ -379,8 +392,8 @@ def load_lcp_profiles() -> list[dict[str, Any]]:
     return profiles
 
 
-def find_acr_lcp_profile(source: Path) -> Path | None:
-    metadata = read_raw_lens_metadata(source)
+def find_acr_lcp_profile(source: Path, metadata: dict[str, Any] | None = None) -> Path | None:
+    metadata = metadata if metadata is not None else read_raw_lens_metadata(source)
     lens_text = " ".join(str(metadata.get(key) or "") for key in ("LensModel", "LensID", "LensInfo"))
     lens_tokens = text_tokens(lens_text)
     if not lens_tokens:
@@ -424,6 +437,153 @@ def find_acr_lcp_profile(source: Path) -> Path | None:
         flush=True,
     )
     return None
+
+
+def lcp_attrs(value: str) -> dict[str, str]:
+    return {key: raw for key, raw in re.findall(r'stCamera:([A-Za-z0-9]+)="([^"]*)"', value)}
+
+
+def lcp_float(attrs: dict[str, str], key: str, default: float = 0.0) -> float:
+    try:
+        value = float(attrs.get(key, default))
+    except (TypeError, ValueError):
+        value = default
+    return value if np.isfinite(value) else default
+
+
+def parse_lcp_distortion_models(profile_path: Path) -> list[dict[str, Any]]:
+    cache_key = str(profile_path)
+    if cache_key in _LCP_DISTORTION_MODEL_CACHE:
+        return _LCP_DISTORTION_MODEL_CACHE[cache_key]
+
+    try:
+        text = profile_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        _LCP_DISTORTION_MODEL_CACHE[cache_key] = []
+        return []
+
+    models: list[dict[str, Any]] = []
+    perspectives = re.finditer(r"<stCamera:(PerspectiveModel|FisheyeModel)\b(?P<attrs>[^>]*)/?>", text, re.DOTALL)
+    for perspective in perspectives:
+        description_start = text.rfind("<rdf:Description", 0, perspective.start())
+        if description_start < 0:
+            continue
+        description_end = text.find(">", description_start)
+        if description_end < 0:
+            continue
+        common = lcp_attrs(text[description_start : description_end + 1])
+        attrs = lcp_attrs(perspective.group("attrs"))
+        params = [
+            lcp_float(attrs, "RadialDistortParam1"),
+            lcp_float(attrs, "RadialDistortParam2"),
+            lcp_float(attrs, "RadialDistortParam3"),
+            lcp_float(attrs, "TangentialDistortParam1", lcp_float(attrs, "RadialDistortParam4")),
+            lcp_float(attrs, "TangentialDistortParam2", lcp_float(attrs, "RadialDistortParam5")),
+        ]
+        if not any(abs(value) > 1e-8 for value in params):
+            continue
+        models.append(
+            {
+                "focal": lcp_float(common, "FocalLength"),
+                "focus": lcp_float(common, "FocusDistance"),
+                "aperture": lcp_float(common, "ApertureValue"),
+                "sensor_format_factor": lcp_float(common, "SensorFormatFactor", 1.0),
+                "focal_x": lcp_float(attrs, "FocalLengthX", -1.0),
+                "focal_y": lcp_float(attrs, "FocalLengthY", -1.0),
+                "center_x": lcp_float(attrs, "ImageXCenter", 0.5),
+                "center_y": lcp_float(attrs, "ImageYCenter", 0.5),
+                "params": params,
+                "mean_error": lcp_float(attrs, "ResidualMeanError", 0.0),
+                "fisheye": perspective.group(1) == "FisheyeModel",
+            }
+        )
+
+    _LCP_DISTORTION_MODEL_CACHE[cache_key] = models
+    return models
+
+
+def choose_lcp_distortion_model(profile_path: Path, metadata: dict[str, Any]) -> dict[str, Any] | None:
+    models = parse_lcp_distortion_models(profile_path)
+    if not models:
+        return None
+
+    focal = parse_number(metadata.get("FocalLength"))
+    aperture = parse_number(metadata.get("FNumber"))
+
+    def score(model: dict[str, Any]) -> float:
+        value = float(model.get("mean_error") or 0.0)
+        model_focal = float(model.get("focal") or 0.0)
+        if focal and model_focal > 0:
+            value += abs(math.log(max(model_focal, 0.01)) - math.log(max(focal, 0.01))) * 100.0
+        model_aperture = float(model.get("aperture") or 0.0)
+        if aperture and model_aperture > 0:
+            value += abs(model_aperture - aperture) * 0.01
+        return value
+
+    return min(models, key=score)
+
+
+def apply_acr_lcp_correction(image: Image.Image, source: Path, metadata: dict[str, Any]) -> Image.Image | None:
+    if cv2 is None:
+        return None
+
+    profile = find_acr_lcp_profile(source, metadata)
+    if profile is None:
+        return None
+    model = choose_lcp_distortion_model(profile, metadata)
+    if model is None:
+        print(f"ACR LCP correction skipped: no usable distortion model in {profile.name}.", flush=True)
+        return None
+    if model.get("fisheye"):
+        print(f"ACR LCP correction skipped: fisheye model is not supported for {profile.name}.", flush=True)
+        return None
+
+    width, height = image.size
+    dmax = float(max(width, height))
+    focal = parse_number(metadata.get("FocalLength")) or float(model.get("focal") or 0.0)
+    focal_35 = parse_number(metadata.get("FocalLengthIn35mmFormat"))
+    sensor_factor = float(model.get("sensor_format_factor") or 1.0)
+    focal_x = float(model.get("focal_x") or -1.0)
+    focal_y = float(model.get("focal_y") or -1.0)
+    if focal_x < 0.0 or focal_y < 0.0:
+        if not focal_35 or focal_35 < 1.0:
+            focal_35 = focal * sensor_factor if focal else 35.0
+        fallback = focal_35 / 35.0
+        focal_x = fallback
+        focal_y = fallback
+
+    fx = max(focal_x * dmax, 1.0)
+    fy = max(focal_y * dmax, 1.0)
+    x0 = float(model.get("center_x") or 0.5) * width
+    y0 = float(model.get("center_y") or 0.5) * height
+    k1, k2, k3, tangential_y, tangential_x = [float(value) for value in model["params"]]
+
+    y, x = np.indices((height, width), dtype=np.float32)
+    xd = (x - x0) / fx
+    yd = (y - y0) / fy
+    r2 = xd * xd + yd * yd
+    common = (((k3 * r2 + k2) * r2 + k1) * r2 + 1.0) + 2.0 * (tangential_y * yd + tangential_x * xd)
+    map_x = (xd * common + tangential_x * r2) * fx + x0
+    map_y = (yd * common + tangential_y * r2) * fy + y0
+
+    if float(np.nanmax(np.abs(map_x - x)) + np.nanmax(np.abs(map_y - y))) < 0.05:
+        print(f"ACR LCP correction skipped: negligible geometry shift for {source.name}.", flush=True)
+        return None
+
+    array = np.asarray(image.convert("RGB"), dtype=np.float32)
+    corrected = cv2.remap(
+        array,
+        map_x.astype(np.float32),
+        map_y.astype(np.float32),
+        interpolation=cv2.INTER_LANCZOS4,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    print(
+        f"ACR LCP geometry correction applied for {source.name}: {profile.name} "
+        f"focal={float(model.get('focal') or 0.0):g}mm",
+        flush=True,
+    )
+    return Image.fromarray(np.clip(corrected, 0, 255).astype(np.uint8), mode="RGB")
 
 
 def get_lensfun_db() -> Any | None:
@@ -586,6 +746,14 @@ def apply_lensfun_correction(image: Image.Image, source: Path) -> Image.Image:
         return image
 
     return Image.fromarray(np.clip(array * 255.0, 0, 255).astype(np.uint8), mode="RGB")
+
+
+def apply_lens_correction(image: Image.Image, source: Path) -> Image.Image:
+    metadata = read_raw_lens_metadata(source)
+    acr_corrected = apply_acr_lcp_correction(image, source, metadata)
+    if acr_corrected is not None:
+        return acr_corrected
+    return apply_lensfun_correction(image, source)
 
 
 def download_url(url: str, target: Path) -> None:
@@ -861,7 +1029,7 @@ def render_raw_to_jpeg(
     bright = render_bright if render_bright is not None else rawpy_decode_bright(hdr_input)
     rgb = postprocess_raw_to_rgb(source, raw_user_wb, half_size=False, bright=bright)
     image = resize_rgb_array(rgb, resize_long_edge)
-    image = apply_lensfun_correction(image, source)
+    image = apply_lens_correction(image, source)
     if display_mode:
         image = apply_single_display_mapping_to_image(image, source.name)
     image.save(destination, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
