@@ -117,6 +117,8 @@ export interface DownloadJobPayload {
 
 export interface ResultThumbnailManifestItem {
   assetId: string;
+  sortOrder?: number;
+  fileName?: string;
   url: string;
   width: number;
   height: number;
@@ -944,9 +946,13 @@ export async function retryFailedProcessing(projectId: string) {
 }
 
 export async function fetchResultThumbnails(projectId: string) {
-  return await jsonRequest<{ thumbnails: ResultThumbnailManifestItem[] }>(
-    `/api/projects/${encodeURIComponent(projectId)}/results/thumbnails-batch`
-  );
+  const payload = await jsonRequest<{
+    items?: ResultThumbnailManifestItem[];
+    thumbnails?: ResultThumbnailManifestItem[];
+  }>(`/api/projects/${encodeURIComponent(projectId)}/results/thumbnails`);
+  return {
+    thumbnails: payload.thumbnails ?? payload.items ?? []
+  };
 }
 
 function encodeDownloadOptions(input: DownloadRequestPayload) {

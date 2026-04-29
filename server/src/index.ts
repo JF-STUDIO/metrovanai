@@ -4110,7 +4110,47 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', 
   sendProtectedStorageFile(res, previewPath, exposure.previewKey);
 });
 
-app.get('/api/projects/:id/results/thumbnails-batch', async (req, res) => {
+async function collectResultThumbnailManifestItems(project: ProjectRecord) {
+  const items: Array<{
+    assetId: string;
+    sortOrder: number;
+    fileName: string;
+    url: string;
+    width: number;
+    height: number;
+  }> = [];
+
+  await runWithConcurrency(project.resultAssets, 4, async (asset) => {
+    try {
+      const thumbnail = await ensureResultThumbnailManifestItem(project, asset);
+      if (thumbnail) {
+        items.push({
+          ...thumbnail,
+          sortOrder: asset.sortOrder,
+          fileName: asset.fileName
+        });
+      }
+    } catch (error) {
+      logServerEvent({
+        level: 'warning',
+        event: 'project.result_thumbnail.failed',
+        projectId: project.id,
+        details: {
+          resultAssetId: asset.id,
+          message: error instanceof Error ? error.message : String(error)
+        }
+      });
+    }
+  });
+
+  return items.sort((left, right) => left.sortOrder - right.sortOrder);
+}
+
+async function respondWithResultThumbnailManifest(
+  req: express.Request,
+  res: express.Response,
+  mode: 'manifest' | 'batch'
+) {
   const owned = getOwnedProjectFromRequest(req, res);
   if (!owned) {
     return;
@@ -4125,32 +4165,22 @@ app.get('/api/projects/:id/results/thumbnails-batch', async (req, res) => {
     return;
   }
 
-  const thumbnails: Array<{
-    assetId: string;
-    url: string;
-    width: number;
-    height: number;
-  }> = [];
-  await runWithConcurrency(owned.project.resultAssets, 4, async (asset) => {
-    try {
-      const thumbnail = await ensureResultThumbnailManifestItem(owned.project, asset);
-      if (thumbnail) {
-        thumbnails.push(thumbnail);
-      }
-    } catch (error) {
-      logServerEvent({
-        level: 'warning',
-        event: 'project.result_thumbnail.failed',
-        projectId: owned.project.id,
-        details: {
-          resultAssetId: asset.id,
-          message: error instanceof Error ? error.message : String(error)
-        }
-      });
-    }
-  });
+  const items = await collectResultThumbnailManifestItems(owned.project);
 
-  res.json({ thumbnails });
+  if (mode === 'batch') {
+    res.json({ thumbnails: items });
+    return;
+  }
+
+  res.json({ items, thumbnails: items, expiresInSeconds: RESULT_THUMBNAIL_URL_TTL_SECONDS });
+}
+
+app.get('/api/projects/:id/results/thumbnails', async (req, res) => {
+  await respondWithResultThumbnailManifest(req, res, 'manifest');
+});
+
+app.get('/api/projects/:id/results/thumbnails-batch', async (req, res) => {
+  await respondWithResultThumbnailManifest(req, res, 'batch');
 });
 
 app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
