@@ -3268,6 +3268,96 @@
   color: var(--text);
 }
 
+.admin-prototype .btn-xs {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.admin-prototype .admin-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.stripe-success-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(124, 232, 255, 0.22);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(124, 232, 255, 0.13), rgba(104, 99, 255, 0.1)),
+    rgba(8, 11, 18, 0.72);
+}
+
+.stripe-success-copy {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.stripe-success-copy strong {
+  color: #ffffff;
+  font-size: 1rem;
+}
+
+.stripe-success-copy span,
+.stripe-success-copy em,
+.stripe-doc-pending {
+  color: rgba(240, 244, 252, 0.66);
+  font-size: 0.82rem;
+  font-style: normal;
+}
+
+.stripe-badge {
+  width: max-content;
+  padding: 0.18rem 0.52rem;
+  border-radius: 999px;
+  background: rgba(99, 91, 255, 0.22);
+  color: #bfc2ff !important;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.stripe-document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.52rem;
+}
+
+.stripe-document-actions.compact {
+  justify-content: flex-start;
+  margin-top: 0.3rem;
+}
+
+.stripe-doc-link {
+  min-height: 2.24rem;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .stripe-success-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stripe-document-actions {
+    justify-content: flex-start;
+  }
+
+  .stripe-doc-link {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 .admin-prototype .card {
   overflow: hidden;
   border: 1px solid var(--line);

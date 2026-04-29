@@ -127,6 +127,7 @@ export interface ResultThumbnailManifestItem {
 export interface BillingPayload {
   summary: BillingSummary;
   entries: BillingEntry[];
+  orders: PaymentOrderRecord[];
   packages: BillingPackage[];
 }
 
@@ -161,7 +162,14 @@ export interface UploadCapabilitiesPayload {
   };
 }
 
-export type UploadProgressStage = 'preparing' | 'uploading' | 'retrying' | 'paused' | 'finalizing' | 'completed';
+export type UploadProgressStage =
+  | 'preparing'
+  | 'verifying'
+  | 'uploading'
+  | 'retrying'
+  | 'paused'
+  | 'finalizing'
+  | 'completed';
 
 export interface UploadProgressSnapshot {
   stage: UploadProgressStage;
@@ -280,9 +288,42 @@ export interface AdminProjectsPayload {
   items: ProjectRecord[];
 }
 
+export interface AdminProjectRecoverySummary {
+  projectId: string;
+  status: 'done' | 'active' | 'missing' | 'idle';
+  attempted: number;
+  recovered: number;
+  failed: number;
+}
+
 export interface AdminOrdersPayload {
   total: number;
   items: PaymentOrderRecord[];
+}
+
+export interface AdminOpsHealthPayload {
+  generatedAt: string;
+  totals: {
+    projects: number;
+    photos: number;
+    completedPhotos: number;
+    failedPhotos: number;
+    runningHubTasks: number;
+    resultRecoveryProjects: number;
+    creditMismatchProjects: number;
+    stalledProcessingProjects: number;
+  };
+  rates: {
+    failedItemRate: number;
+    runningHubSuccessRate: number;
+    resultReturnFailureRate: number;
+  };
+  samples: {
+    resultRecoveryProjectIds: string[];
+    creditMismatchProjectIds: string[];
+    stalledProcessingProjectIds: string[];
+  };
+  alerts: Array<{ level: 'warning' | 'error'; code: string; value: number; threshold: number }>;
 }
 
 export interface AdminUserListQuery {
@@ -691,9 +732,20 @@ export async function fetchAdminProjects(limit = 120) {
   return await jsonRequest<AdminProjectsPayload>(`/api/admin/projects?${params.toString()}`);
 }
 
+export async function recoverAdminProjectRunningHubResults(projectId: string) {
+  return await jsonRequest<{ summary: AdminProjectRecoverySummary; project: ProjectRecord | null }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/recover-runninghub-results`,
+    { method: 'POST' }
+  );
+}
+
 export async function fetchAdminOrders(limit = 120) {
   const params = new URLSearchParams({ limit: String(limit) });
   return await jsonRequest<AdminOrdersPayload>(`/api/admin/orders?${params.toString()}`);
+}
+
+export async function fetchAdminOpsHealth() {
+  return await jsonRequest<AdminOpsHealthPayload>('/api/admin/ops/health');
 }
 
 export async function fetchAdminUserProjects(userId: string) {
@@ -1940,6 +1992,13 @@ async function uploadFilesViaDirectObject(
   }
 
   const pendingFiles = files.filter((file) => !findCompletedObjectForFile(completedByIdentity, file));
+  const resumedFiles = files.length - pendingFiles.length;
+  onProgress(1, {
+    stage: 'verifying',
+    percent: 1,
+    uploadedFiles: resumedFiles,
+    totalFiles: files.length
+  });
   if (!pendingFiles.length) {
     const completedObjects = collectCompletedObjects(files, completedByIdentity);
     onProgress(96, {

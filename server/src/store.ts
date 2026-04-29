@@ -431,6 +431,20 @@ export class LocalStore {
       .sort((a, b) => (a.updatedAt > b.updatedAt ? 1 : -1));
   }
 
+  listProjectsNeedingResultRecovery() {
+    return this.loadDb().projects
+      .filter((project) =>
+        project.hdrItems.some(
+          (item) =>
+            !item.resultUrl &&
+            !item.resultKey &&
+            (item.status === 'error' || item.workflow?.stage === 'failed') &&
+            Boolean(item.workflow?.runningHubTaskId?.trim())
+        )
+      )
+      .sort((a, b) => (a.updatedAt > b.updatedAt ? 1 : -1));
+  }
+
   listBillingEntries(userKey: string) {
     return this.loadDb().billing
       .filter((entry) => entry.userKey === userKey)
@@ -1042,6 +1056,9 @@ export class LocalStore {
       stripeCheckoutSessionId: null,
       stripePaymentIntentId: null,
       stripeCustomerId: null,
+      stripeReceiptUrl: null,
+      stripeInvoiceUrl: null,
+      stripeInvoicePdfUrl: null,
       checkoutUrl: null,
       status: 'pending',
       errorMessage: null,
@@ -1093,6 +1110,9 @@ export class LocalStore {
       errorMessage?: string | null;
       stripePaymentIntentId?: string | null;
       stripeCustomerId?: string | null;
+      stripeReceiptUrl?: string | null;
+      stripeInvoiceUrl?: string | null;
+      stripeInvoicePdfUrl?: string | null;
     }
   ) {
     return this.updatePaymentOrder(orderId, (order) => ({
@@ -1100,13 +1120,35 @@ export class LocalStore {
       status: input.status,
       errorMessage: input.errorMessage ?? order.errorMessage,
       stripePaymentIntentId: input.stripePaymentIntentId ?? order.stripePaymentIntentId,
-      stripeCustomerId: input.stripeCustomerId ?? order.stripeCustomerId
+      stripeCustomerId: input.stripeCustomerId ?? order.stripeCustomerId,
+      stripeReceiptUrl: input.stripeReceiptUrl ?? order.stripeReceiptUrl ?? null,
+      stripeInvoiceUrl: input.stripeInvoiceUrl ?? order.stripeInvoiceUrl ?? null,
+      stripeInvoicePdfUrl: input.stripeInvoicePdfUrl ?? order.stripeInvoicePdfUrl ?? null
+    }));
+  }
+
+  attachStripePaymentDocuments(
+    orderId: string,
+    input: { stripeReceiptUrl?: string | null; stripeInvoiceUrl?: string | null; stripeInvoicePdfUrl?: string | null }
+  ) {
+    return this.updatePaymentOrder(orderId, (order) => ({
+      ...order,
+      stripeReceiptUrl: input.stripeReceiptUrl ?? order.stripeReceiptUrl ?? null,
+      stripeInvoiceUrl: input.stripeInvoiceUrl ?? order.stripeInvoiceUrl ?? null,
+      stripeInvoicePdfUrl: input.stripeInvoicePdfUrl ?? order.stripeInvoicePdfUrl ?? null
     }));
   }
 
   fulfillPaymentOrder(
     orderId: string,
-    input: { stripePaymentIntentId?: string | null; stripeCustomerId?: string | null; note?: string } = {}
+    input: {
+      stripePaymentIntentId?: string | null;
+      stripeCustomerId?: string | null;
+      stripeReceiptUrl?: string | null;
+      stripeInvoiceUrl?: string | null;
+      stripeInvoicePdfUrl?: string | null;
+      note?: string;
+    } = {}
   ) {
     const db = this.loadDb();
     const index = db.paymentOrders.findIndex((order) => order.id === orderId);
@@ -1116,8 +1158,19 @@ export class LocalStore {
 
     const order = db.paymentOrders[index]!;
     if (order.fulfilledAt && order.billingEntryId) {
+      const updated: PaymentOrderRecord = {
+        ...order,
+        stripePaymentIntentId: input.stripePaymentIntentId ?? order.stripePaymentIntentId,
+        stripeCustomerId: input.stripeCustomerId ?? order.stripeCustomerId,
+        stripeReceiptUrl: input.stripeReceiptUrl ?? order.stripeReceiptUrl ?? null,
+        stripeInvoiceUrl: input.stripeInvoiceUrl ?? order.stripeInvoiceUrl ?? null,
+        stripeInvoicePdfUrl: input.stripeInvoicePdfUrl ?? order.stripeInvoicePdfUrl ?? null,
+        updatedAt: new Date().toISOString()
+      };
+      db.paymentOrders[index] = updated;
+      this.saveDb(db);
       return {
-        order,
+        order: updated,
         entry: db.billing.find((entry) => entry.id === order.billingEntryId) ?? null,
         created: false
       };
@@ -1157,6 +1210,9 @@ export class LocalStore {
       errorMessage: null,
       stripePaymentIntentId: input.stripePaymentIntentId ?? order.stripePaymentIntentId,
       stripeCustomerId: input.stripeCustomerId ?? order.stripeCustomerId,
+      stripeReceiptUrl: input.stripeReceiptUrl ?? order.stripeReceiptUrl ?? null,
+      stripeInvoiceUrl: input.stripeInvoiceUrl ?? order.stripeInvoiceUrl ?? null,
+      stripeInvoicePdfUrl: input.stripeInvoicePdfUrl ?? order.stripeInvoicePdfUrl ?? null,
       billingEntryId: entry.id,
       paidAt: order.paidAt ?? now,
       fulfilledAt: now,

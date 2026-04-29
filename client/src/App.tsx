@@ -8,18 +8,7 @@ import logoMark from './assets/metrovan-logo-mark.png';
 import showcaseExteriorAfter from './assets/showcase-exterior-after.jpg';
 import showcaseInteriorAfter from './assets/showcase-interior-after.jpg';
 import showcaseInteriorBefore from './assets/showcase-interior-before.jpg';
-import {
-  IMPORT_FILE_ACCEPT,
-  buildLocalImportDraft,
-  deleteStoredLocalImportDraft,
-  filterSupportedImportFiles,
-  persistLocalImportDraft,
-  restoreStoredLocalImportDraft,
-  revokeLocalImportDraftUrls,
-  type LocalExposureDraft,
-  type LocalHdrItemDraft,
-  type LocalImportDraft
-} from './local-import';
+import type { LocalExposureDraft, LocalHdrItemDraft, LocalImportDraft } from './local-import';
 import {
   ApiRequestError,
   confirmEmailVerification,
@@ -37,6 +26,7 @@ import {
   adjustAdminUserBilling,
   fetchAdminActivationCodes,
   fetchAdminAuditLogs,
+  fetchAdminOpsHealth,
   fetchAdminOrders,
   fetchAdminProjects,
   fetchAdminSettings,
@@ -61,6 +51,7 @@ import {
   redeemActivationCode,
   requestPasswordReset,
   regenerateResult,
+  recoverAdminProjectRunningHubResults,
   retryFailedProcessing,
   selectExposure,
   startProcessing,
@@ -77,6 +68,7 @@ import {
 import type {
   AdminActivationCode,
   AdminAuditLogEntry,
+  AdminOpsHealthPayload,
   AdminSystemSettings,
   AdminUserListQuery,
   AdminUserSummary,
@@ -108,6 +100,37 @@ type AppRoute = 'home' | 'plans' | 'studio' | 'admin';
 type AdminConsolePage = 'dashboard' | 'users' | 'works' | 'orders' | 'plans' | 'codes' | 'engine' | 'prompts' | 'content' | 'logs' | 'settings';
 type StudioFeatureId = string;
 type StudioFeatureStatus = 'available' | 'beta' | 'locked';
+
+const IMPORT_FILE_ACCEPT = '.arw,.cr2,.cr3,.crw,.nef,.nrw,.dng,.raf,.rw2,.rwl,.orf,.srw,.3fr,.fff,.iiq,.pef,.erf,.jpg,.jpeg';
+const IMPORT_FILE_EXTENSIONS = new Set(IMPORT_FILE_ACCEPT.split(','));
+
+let localImportModulePromise: Promise<typeof import('./local-import')> | null = null;
+
+function loadLocalImportModule() {
+  localImportModulePromise ??= import('./local-import');
+  return localImportModulePromise;
+}
+
+function filterSupportedImportFiles(files: File[]) {
+  const supported: File[] = [];
+  const unsupported: File[] = [];
+  for (const file of files) {
+    const dotIndex = file.name.lastIndexOf('.');
+    const extension = dotIndex >= 0 ? file.name.slice(dotIndex).toLowerCase() : '';
+    if (IMPORT_FILE_EXTENSIONS.has(extension)) {
+      supported.push(file);
+    } else {
+      unsupported.push(file);
+    }
+  }
+  return { supported, unsupported };
+}
+
+function revokeLocalImportDraftUrls(draft: LocalImportDraft | null | undefined) {
+  for (const url of draft?.objectUrls ?? []) {
+    URL.revokeObjectURL(url);
+  }
+}
 type StudioFeatureImageField = 'beforeImageUrl' | 'afterImageUrl';
 type FailedUploadEntry = FailedUploadFile & { hdrItemId: string };
 
@@ -724,6 +747,12 @@ const UI_TEXT = {
     topUpSuccess: '积分充值成功。',
     topUpFailed: '积分充值失败。',
     topUpRedirecting: '正在跳转到 Stripe 安全支付...',
+    stripePaymentSuccessTitle: 'Stripe 已确认付款',
+    stripePaymentSuccessBody: '积分已到账。付款、收据和 Invoice 均由 Stripe 安全处理。',
+    stripeReceiptLink: '查看 Stripe 收据',
+    stripeInvoiceLink: '查看 Stripe Invoice',
+    stripeInvoicePdfLink: '下载 Invoice PDF',
+    stripeDocumentsPending: 'Stripe 正在生成收据/Invoice，稍后刷新账单即可查看。',
     redeemActivationSuccess: '激活码兑换成功，积分已到账。',
     redeemActivationFailed: '激活码兑换失败。',
     paymentCancelled: '支付已取消。',
@@ -888,6 +917,7 @@ const UI_TEXT = {
     uploadStarting: '正在读取照片...',
     uploadProgress: (value: number) => `导入 ${value}%`,
     uploadFileProgress: (uploaded: number, total: number) => `已上传 ${uploaded}/${total} 张`,
+    uploadVerifyingProgress: (uploaded: number, total: number) => `正在校验已上传 ${uploaded}/${total} 张，缺失文件将自动补传`,
     uploadRetryProgress: (name: string, attempt: number, maxAttempts: number, uploaded: number, total: number) =>
       `正在重试 ${name}（${attempt}/${maxAttempts}）· 已上传 ${uploaded}/${total} 张`,
     uploadFinalizeProgress: (total: number) => `${total} 张已上传，正在生成分组`,
@@ -1093,6 +1123,12 @@ const UI_TEXT = {
     topUpSuccess: 'Credits added successfully.',
     topUpFailed: 'Top-up failed.',
     topUpRedirecting: 'Redirecting to secure Stripe checkout...',
+    stripePaymentSuccessTitle: 'Stripe payment confirmed',
+    stripePaymentSuccessBody: 'Credits are available. Payment, receipt, and invoice are handled securely by Stripe.',
+    stripeReceiptLink: 'View Stripe receipt',
+    stripeInvoiceLink: 'View Stripe invoice',
+    stripeInvoicePdfLink: 'Download invoice PDF',
+    stripeDocumentsPending: 'Stripe is generating the receipt/invoice. Refresh billing shortly to view it.',
     redeemActivationSuccess: 'Activation code redeemed. Credits are now available.',
     redeemActivationFailed: 'Activation code redemption failed.',
     paymentCancelled: 'Payment was cancelled.',
@@ -1257,6 +1293,7 @@ const UI_TEXT = {
     uploadStarting: 'Reading photos...',
     uploadProgress: (value: number) => `Importing ${value}%`,
     uploadFileProgress: (uploaded: number, total: number) => `Uploaded ${uploaded}/${total}`,
+    uploadVerifyingProgress: (uploaded: number, total: number) => `Verifying uploaded files ${uploaded}/${total}; missing files will resume`,
     uploadRetryProgress: (name: string, attempt: number, maxAttempts: number, uploaded: number, total: number) =>
       `Retrying ${name} (${attempt}/${maxAttempts}) · Uploaded ${uploaded}/${total}`,
     uploadFinalizeProgress: (total: number) => `${total} uploaded. Building groups`,
@@ -2115,6 +2152,10 @@ function formatUploadProgressLabel(
     return copy.uploadFileProgress(snapshot.totalFiles, snapshot.totalFiles);
   }
 
+  if (snapshot.stage === 'verifying') {
+    return copy.uploadVerifyingProgress(snapshot.uploadedFiles, snapshot.totalFiles);
+  }
+
   if (snapshot.stage === 'retrying') {
     return copy.uploadRetryProgress(
       snapshot.currentFileName || '',
@@ -2489,7 +2530,9 @@ function App() {
   const [resultThumbnailManifest, setResultThumbnailManifest] = useState<{ projectId: string; urls: Record<string, string> } | null>(null);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(() => (isDemoMode ? DEMO_BILLING_SUMMARY : null));
   const [billingEntries, setBillingEntries] = useState<BillingEntry[]>(() => (isDemoMode ? DEMO_BILLING_ENTRIES : []));
+  const [billingOrders, setBillingOrders] = useState<PaymentOrderRecord[]>([]);
   const [billingPackages, setBillingPackages] = useState<BillingPackage[]>(() => (isDemoMode ? DEMO_BILLING_PACKAGES : []));
+  const [recentStripeOrder, setRecentStripeOrder] = useState<PaymentOrderRecord | null>(null);
   const [billingOpen, setBillingOpen] = useState(false);
   const [billingModalMode, setBillingModalMode] = useState<'topup' | 'billing'>('billing');
   const [billingBusy, setBillingBusy] = useState(false);
@@ -2518,6 +2561,8 @@ function App() {
   const [adminProjectsBusy, setAdminProjectsBusy] = useState(false);
   const [adminOrdersLoaded, setAdminOrdersLoaded] = useState(false);
   const [adminOrdersBusy, setAdminOrdersBusy] = useState(false);
+  const [adminOpsHealth, setAdminOpsHealth] = useState<AdminOpsHealthPayload | null>(null);
+  const [adminOpsBusy, setAdminOpsBusy] = useState(false);
   const [adminSearch, setAdminSearch] = useState('');
   const [adminRoleFilter, setAdminRoleFilter] = useState<AdminUserListQuery['role']>('all');
   const [adminStatusFilter, setAdminStatusFilter] = useState<AdminUserListQuery['accountStatus']>('all');
@@ -2777,6 +2822,10 @@ function App() {
   const customRechargeIsActive = customRechargeAmount.trim().length > 0;
   const customRechargeAmountUsd = customRechargeIsActive ? parseCustomRechargeAmount(customRechargeAmount) : null;
   const customRechargePoints = customRechargeAmountUsd === null ? 0 : getCustomRechargePoints(customRechargeAmountUsd);
+  const latestPaidStripeOrder =
+    recentStripeOrder ??
+    billingOrders.find((order) => order.status === 'paid' && Boolean(order.stripeCheckoutSessionId)) ??
+    null;
   const viewerAssets = displayResultAssets;
   const safeViewerIndex = resultViewerIndex === null ? null : clampIndex(resultViewerIndex, viewerAssets.length);
   const currentViewerAsset = safeViewerIndex !== null ? viewerAssets[safeViewerIndex] ?? null : null;
@@ -2898,7 +2947,7 @@ function App() {
       }
       return { ...current, [draft.projectId]: draft };
     });
-    void persistLocalImportDraft(draft).catch(() => {
+    void loadLocalImportModule().then((module) => module.persistLocalImportDraft(draft)).catch(() => {
       // Browser storage can fail for very large RAW sets; the in-memory draft still works.
     });
   }
@@ -2915,7 +2964,7 @@ function App() {
       delete next[projectId];
       return next;
     });
-    void deleteStoredLocalImportDraft(projectId).catch(() => {
+    void loadLocalImportModule().then((module) => module.deleteStoredLocalImportDraft(projectId)).catch(() => {
       // Ignore cleanup failures; stale local drafts are overwritten on the next import.
     });
   }
@@ -2928,7 +2977,7 @@ function App() {
       }
 
       const updated = updater(existing);
-      void persistLocalImportDraft(updated).catch(() => {
+      void loadLocalImportModule().then((module) => module.persistLocalImportDraft(updated)).catch(() => {
         // Keep UI responsive even if browser storage quota is exhausted.
       });
       return {
@@ -3005,7 +3054,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (activeRoute !== 'studio' || session || !sessionReady) {
+    if ((activeRoute !== 'studio' && activeRoute !== 'admin') || session || !sessionReady) {
       return;
     }
 
@@ -3013,7 +3062,7 @@ function App() {
       setAuthMode('signin');
       setAuthOpen(true);
       setAuthMessage('');
-      setMessage('');
+      setMessage(activeRoute === 'admin' ? '请先用管理员账号登录后台。' : '');
     }, 0);
 
     return () => window.clearTimeout(timer);
@@ -3120,6 +3169,36 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [activeRoute, adminOrdersLoaded, hasAdminSession, locale]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || !hasAdminSession || adminOpsHealth || adminOpsBusy) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setAdminOpsBusy(true);
+      fetchAdminOpsHealth()
+        .then((response) => {
+          if (cancelled) return;
+          setAdminOpsHealth(response);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setAdminOpsHealth(null);
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setAdminOpsBusy(false);
+          }
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeRoute, adminOpsBusy, adminOpsHealth, hasAdminSession]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || !hasAdminSession || adminActivationLoaded) {
@@ -3278,7 +3357,7 @@ function App() {
         delete next[completedProjectId];
         return next;
       });
-      void deleteStoredLocalImportDraft(completedProjectId).catch(() => {
+      void loadLocalImportModule().then((module) => module.deleteStoredLocalImportDraft(completedProjectId)).catch(() => {
         // Ignore cleanup failures; stale local drafts are overwritten on the next import.
       });
     }, 0);
@@ -3291,9 +3370,10 @@ function App() {
     setCurrentProjectId(project.id);
   }
 
-  function syncBilling(payload: { summary: BillingSummary; entries: BillingEntry[]; packages: BillingPackage[] }) {
+  function syncBilling(payload: { summary: BillingSummary; entries: BillingEntry[]; orders?: PaymentOrderRecord[]; packages: BillingPackage[] }) {
     setBillingSummary(payload.summary);
     setBillingEntries(payload.entries);
+    setBillingOrders(payload.orders ?? []);
     setBillingPackages(payload.packages);
   }
 
@@ -3540,7 +3620,13 @@ function App() {
           setAuthOpen(false);
           setAuth({ email: '', name: '', password: '', confirmPassword: '' });
           setAuthMessage('');
-          navigateToRoute('studio');
+          const nextPath = getPathForRoute('studio');
+          const nextUrl = `${nextPath}${window.location.hash}`;
+          if (window.location.pathname !== nextPath) {
+            window.history.pushState({}, '', nextUrl);
+          }
+          setActiveRoute('studio');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
           setMessage(copy.authEmailVerifiedSuccess);
         })
         .catch((error) => {
@@ -3594,7 +3680,7 @@ function App() {
     if (!candidates.length) return;
 
     let cancelled = false;
-    void Promise.all(candidates.map((project) => restoreStoredLocalImportDraft(project.id)))
+    void loadLocalImportModule().then((module) => Promise.all(candidates.map((project) => module.restoreStoredLocalImportDraft(project.id))))
       .then((drafts) => {
         const restoredDrafts = drafts.filter((draft): draft is LocalImportDraft => Boolean(draft));
         if (!restoredDrafts.length) return;
@@ -3684,13 +3770,14 @@ function App() {
       void confirmCheckoutSession(stripeSessionId)
         .then((response) => {
           syncBilling(response.billing);
+          setRecentStripeOrder(response.order);
           setRechargeOpen(false);
           setBillingModalMode('billing');
           setBillingOpen(true);
           setCustomRechargeAmount('');
           setRechargeActivationCode('');
           setRechargeMessage('');
-          setMessage(copy.topUpSuccess);
+          setMessage(`${copy.topUpSuccess} ${copy.stripePaymentSuccessTitle}`);
         })
         .catch((error) => {
           setMessage(getUserFacingErrorMessage(error, copy.topUpFailed, locale));
@@ -3706,6 +3793,7 @@ function App() {
     copy.paymentConfirming,
     copy.topUpFailed,
     copy.topUpSuccess,
+    copy.stripePaymentSuccessTitle,
     isDemoMode,
     locale,
     session,
@@ -3779,12 +3867,26 @@ function App() {
   }, [activeRoute, adminSelectedProject, hasAdminSession, isDemoMode]);
 
   function navigateToRoute(nextRoute: AppRoute) {
-    const nextPath = getPathForRoute(nextRoute);
+    let resolvedRoute = nextRoute;
+    if (nextRoute === 'admin' && !hasAdminSession) {
+      if (session) {
+        setMessage('当前账号没有管理员权限。');
+        resolvedRoute = 'studio';
+      } else {
+        setAuthMode('signin');
+        setAuthOpen(true);
+        setAuthMessage('');
+        setMessage('请先用管理员账号登录后台。');
+        resolvedRoute = 'home';
+      }
+    }
+
+    const nextPath = getPathForRoute(resolvedRoute);
     const nextUrl = `${nextPath}${window.location.hash}`;
     if (window.location.pathname !== nextPath) {
       window.history.pushState({}, '', nextUrl);
     }
-    setActiveRoute(nextRoute);
+    setActiveRoute(resolvedRoute);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -3869,6 +3971,24 @@ function App() {
     }
   }
 
+  async function handleAdminLoadOpsHealth() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminOpsBusy(true);
+    try {
+      const response = await fetchAdminOpsHealth();
+      setAdminOpsHealth(response);
+      setAdminMessage(response.alerts.length ? `检测到 ${response.alerts.length} 个运维告警。` : '运维监控正常。');
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '运维监控读取失败。', locale));
+    } finally {
+      setAdminOpsBusy(false);
+    }
+  }
+
   async function handleAdminSelectUser(userId: string) {
     setAdminSelectedUserId(userId);
     setAdminDetailBusy(true);
@@ -3904,6 +4024,38 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '项目读取失败。', locale));
     } finally {
       setAdminDetailBusy(false);
+    }
+  }
+
+  async function handleAdminRecoverSelectedProject() {
+    if (!adminSelectedProject) {
+      return;
+    }
+
+    setAdminActionBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await recoverAdminProjectRunningHubResults(adminSelectedProject.id);
+      if (response.project) {
+        setAdminProjects((current) => current.map((project) => (project.id === response.project!.id ? response.project! : project)));
+        setAdminDetailProjects((current) => {
+          const exists = current.some((project) => project.id === response.project!.id);
+          return exists
+            ? current.map((project) => (project.id === response.project!.id ? response.project! : project))
+            : [response.project!, ...current];
+        });
+      }
+      setAdminMessage(
+        response.summary.recovered > 0
+          ? `已恢复 ${response.summary.recovered} 张 RunningHub 结果。`
+          : response.summary.status === 'idle'
+            ? '这个项目没有需要恢复的 RunningHub 结果。'
+            : '暂时没有恢复到结果，后台会继续自动重试。'
+      );
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, 'RunningHub 结果恢复失败。', locale));
+    } finally {
+      setAdminActionBusy(false);
     }
   }
 
@@ -4775,7 +4927,9 @@ function App() {
     setProjects([]);
     setBillingSummary(isDemoMode ? DEMO_BILLING_SUMMARY : null);
     setBillingEntries(isDemoMode ? DEMO_BILLING_ENTRIES : []);
+    setBillingOrders([]);
     setBillingPackages(isDemoMode ? DEMO_BILLING_PACKAGES : []);
+    setRecentStripeOrder(null);
     setBillingOpen(false);
     setBillingModalMode('billing');
     setRechargeOpen(false);
@@ -5075,6 +5229,7 @@ function App() {
     setUploadSnapshot(null);
     setDragActive(false);
     try {
+      const { buildLocalImportDraft } = await loadLocalImportModule();
       const nextDraft = await buildLocalImportDraft(targetProject.id, supported, setUploadPercent);
       const response = await patchProject(targetProject.id, { currentStep: 2, status: 'review' });
       upsertProject(response.project);
@@ -5591,7 +5746,10 @@ function App() {
                     snapshot?.uploadedFiles ?? Math.round(((_percent || 0) / 100) * groupFiles.length)
                   );
                   inFlightGroupProgress.set(hdrItem.id, uploadedInGroup);
-                  const stage = snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' ? snapshot.stage : 'uploading';
+                  const stage =
+                    snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' || snapshot?.stage === 'verifying'
+                      ? snapshot.stage
+                      : 'uploading';
                   updateAggregateUploadProgress(stage, {
                     currentFileName: snapshot?.currentFileName,
                     attempt: snapshot?.attempt,
@@ -6169,6 +6327,96 @@ function App() {
       .toUpperCase();
   }
 
+  function getStripeDocumentLinks(order: PaymentOrderRecord | null | undefined) {
+    if (!order) {
+      return [];
+    }
+
+    return [
+      { key: 'invoice-pdf', label: copy.stripeInvoicePdfLink, url: order.stripeInvoicePdfUrl },
+      { key: 'invoice', label: copy.stripeInvoiceLink, url: order.stripeInvoiceUrl },
+      { key: 'receipt', label: copy.stripeReceiptLink, url: order.stripeReceiptUrl }
+    ].filter((link): link is { key: string; label: string; url: string } => Boolean(link.url));
+  }
+
+  function renderStripeDocumentLinks(order: PaymentOrderRecord | null | undefined, compact = false) {
+    const links = getStripeDocumentLinks(order);
+    if (!links.length) {
+      return <span className="stripe-doc-pending">{copy.stripeDocumentsPending}</span>;
+    }
+
+    return (
+      <div className={compact ? 'stripe-document-actions compact' : 'stripe-document-actions'}>
+        {links.map((link) => (
+          <a key={link.key} className="ghost-button small stripe-doc-link" href={link.url} target="_blank" rel="noreferrer">
+            {link.label}
+          </a>
+        ))}
+      </div>
+    );
+  }
+
+  function renderAuthDialog() {
+    if (!authOpen || session) {
+      return null;
+    }
+
+    return (
+      <AuthModal
+        copy={copy}
+        authMode={authMode}
+        authBusy={authBusy}
+        auth={auth}
+        authTitle={authTitle}
+        authSubtitle={authSubtitle}
+        authMessage={authMessage}
+        authSubmitLabel={authSubmitLabel}
+        googleAuthEnabled={googleAuthEnabled}
+        isAuthLinkMode={isAuthLinkMode}
+        isEmailVerifyMode={isEmailVerifyMode}
+        onClose={closeAuth}
+        onGoogleAuth={handleGoogleAuth}
+        onSelectMode={(mode) => {
+          setAuthMode(mode);
+          setAuthMessage('');
+        }}
+        onAuthChange={(patch) => setAuth((current) => ({ ...current, ...patch }))}
+        onForgotPassword={handleForgotPassword}
+        onToggleMode={() => {
+          if (authMode === 'reset-confirm' || authMode === 'verify-email') {
+            clearAuthTokenQuery();
+          }
+          setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+          setAuthMessage('');
+        }}
+        onSubmit={submitAuth}
+      />
+    );
+  }
+
+  if (activeRoute === 'admin' && !hasAdminSession) {
+    const adminAccessMessage = !sessionReady
+      ? '正在验证管理员权限...'
+      : session
+        ? '当前账号没有管理员权限。'
+        : '请先用管理员账号登录后台。';
+
+    return (
+      <>
+        <LandingPage
+          activeRoute="home"
+          copy={copy}
+          hasSession={Boolean(session)}
+          message={adminAccessMessage}
+          onNavigate={navigateToRoute}
+          onOpenAuth={openAuth}
+        />
+
+        {renderAuthDialog()}
+      </>
+    );
+  }
+
   if (activeRoute === 'admin') {
     const paidOrders = adminOrders.filter((order) => order.status === 'paid');
     const pendingProjectCount = adminProjects.filter((project) =>
@@ -6400,7 +6648,7 @@ function App() {
             <button className="btn btn-ghost" type="button" onClick={exportAdminOrdersCSV} disabled={!adminOrders.length}>
               导出订单 CSV
             </button>
-            <button className="btn btn-primary" type="button" onClick={() => void Promise.all([handleAdminLoadUsers(), handleAdminLoadOrders(), handleAdminLoadProjects()])}>
+            <button className="btn btn-primary" type="button" onClick={() => void Promise.all([handleAdminLoadUsers(), handleAdminLoadOrders(), handleAdminLoadProjects(), handleAdminLoadOpsHealth()])}>
               刷新全部数据
             </button>
           </>
@@ -6410,6 +6658,7 @@ function App() {
           {kpi('已支付营收', <>${paidOrderRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</>, <><span>▲ {paidOrders.length}</span><span className="vs">笔订单</span></>)}
           {kpi('AI 修图调用', <>{totalProjectPhotos.toLocaleString()}<span className="unit">次</span></>, <><span>▲ {totalProjectResults}</span><span className="vs">结果图</span></>)}
           {kpi('待处理作品', <>{pendingProjectCount}<span className="unit">项</span></>, <><span>▲ 队列</span><span className="vs">实时</span></>, pendingProjectCount ? 'down' : 'up')}
+          {kpi('运维告警', <>{adminOpsHealth?.alerts.length ?? 0}<span className="unit">项</span></>, <><span>{adminOpsBusy ? '读取中' : '监控'}</span><span className="vs">回传/积分/R2</span></>, adminOpsHealth?.alerts.length ? 'down' : 'up')}
         </div>
         <div className="dashboard-grid">
           <div className="card">
@@ -6725,7 +6974,12 @@ function App() {
           <div className="card admin-detail-card">
             <div className="card-header">
               <h3>{adminSelectedProject.name}</h3>
-              <span className={tagClassForStatus(adminSelectedProject.status)}>{getProjectStatusLabel(adminSelectedProject, locale)}</span>
+              <div className="admin-inline-actions">
+                <span className={tagClassForStatus(adminSelectedProject.status)}>{getProjectStatusLabel(adminSelectedProject, locale)}</span>
+                <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminRecoverSelectedProject()} disabled={adminActionBusy}>
+                  {adminActionBusy ? '恢复中...' : '恢复 RunningHub 结果'}
+                </button>
+              </div>
             </div>
             <div className="admin-project-live">
               <div className="admin-live-stats">
@@ -8480,6 +8734,21 @@ function App() {
               </article>
             </div>
 
+            {billingModalMode === 'billing' && latestPaidStripeOrder && (
+              <div className="stripe-success-panel">
+                <div className="stripe-success-copy">
+                  <span className="stripe-badge">Stripe</span>
+                  <strong>{copy.stripePaymentSuccessTitle}</strong>
+                  <span>{copy.stripePaymentSuccessBody}</span>
+                  <em>
+                    {formatUsd(latestPaidStripeOrder.amountUsd, locale)} · {latestPaidStripeOrder.points} pts ·{' '}
+                    {formatDate(latestPaidStripeOrder.paidAt ?? latestPaidStripeOrder.createdAt, locale)}
+                  </em>
+                </div>
+                {renderStripeDocumentLinks(latestPaidStripeOrder)}
+              </div>
+            )}
+
             <div className="billing-recharge-bar">
               <div>
                 <strong>{copy.billingOpenRecharge}</strong>
@@ -8500,21 +8769,25 @@ function App() {
                 </div>
                 {billingEntries.length ? (
                   <div className="billing-entry-list">
-                    {billingEntries.slice(0, 8).map((entry) => (
-                      <article key={entry.id} className="billing-entry-row">
-                        <div>
-                          <strong>{entry.note}</strong>
-                          <span>{formatDate(entry.createdAt, locale)}</span>
-                        </div>
-                        <div className={`billing-entry-amount ${entry.type === 'credit' ? 'credit' : 'charge'}`}>
-                          <strong>
-                            {entry.type === 'credit' ? '+' : '-'}
-                            {entry.points} pts
-                          </strong>
-                          <span>{formatUsd(entry.amountUsd, locale)}</span>
-                        </div>
-                      </article>
-                    ))}
+                    {billingEntries.slice(0, 8).map((entry) => {
+                      const stripeOrder = billingOrders.find((order) => order.billingEntryId === entry.id && order.status === 'paid');
+                      return (
+                        <article key={entry.id} className="billing-entry-row">
+                          <div>
+                            <strong>{entry.note}</strong>
+                            <span>{formatDate(entry.createdAt, locale)}</span>
+                            {stripeOrder ? renderStripeDocumentLinks(stripeOrder, true) : null}
+                          </div>
+                          <div className={`billing-entry-amount ${entry.type === 'credit' ? 'credit' : 'charge'}`}>
+                            <strong>
+                              {entry.type === 'credit' ? '+' : '-'}
+                              {entry.points} pts
+                            </strong>
+                            <span>{formatUsd(entry.amountUsd, locale)}</span>
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="empty-state billing-empty-state">

@@ -80,11 +80,26 @@ export async function createStripeCheckoutSession(input: {
     mode: 'payment',
     client_reference_id: input.order.id,
     customer_email: input.order.email,
+    customer_creation: 'always',
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
     metadata,
     payment_intent_data: {
       metadata
+    },
+    invoice_creation: {
+      enabled: true,
+      invoice_data: {
+        description: `Metrovan AI credits - ${input.order.packageName}`,
+        footer: 'Payment, receipt, and invoice are processed by Stripe.',
+        metadata
+      }
+    },
+    custom_text: {
+      submit: {
+        message:
+          'Secure payment is processed by Stripe. After payment, Stripe will provide the official receipt and invoice download link.'
+      }
     },
     line_items: [
       {

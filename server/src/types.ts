@@ -250,6 +250,9 @@ export interface PaymentOrderRecord {
   stripeCheckoutSessionId: string | null;
   stripePaymentIntentId: string | null;
   stripeCustomerId: string | null;
+  stripeReceiptUrl: string | null;
+  stripeInvoiceUrl: string | null;
+  stripeInvoicePdfUrl: string | null;
   checkoutUrl: string | null;
   status: PaymentOrderStatus;
   errorMessage: string | null;

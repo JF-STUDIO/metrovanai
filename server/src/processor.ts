@@ -101,6 +101,23 @@ interface StartOptions {
   retryFailed?: boolean;
 }
 
+export interface ResultRecoverySummary {
+  projectId: string;
+  status: 'done' | 'active' | 'missing' | 'idle';
+  attempted: number;
+  recovered: number;
+  failed: number;
+}
+
+export interface ResultRecoveryBatchSummary {
+  scanned: number;
+  attempted: number;
+  recovered: number;
+  failed: number;
+  skippedActive: number;
+  projects: ResultRecoverySummary[];
+}
+
 function createProcessingText(status: HdrItem['status']) {
   if (status === 'completed') return '已完成';
   if (status === 'error') return '处理失败';
@@ -127,6 +144,7 @@ function createEmptyWorkflowState() {
 export class ProjectProcessor {
   private readonly activeJobs = new Map<string, Promise<void>>();
   private readonly activeRegenerations = new Map<string, Promise<void>>();
+  private readonly activeResultRecoveries = new Map<string, Promise<ResultRecoverySummary>>();
   private readonly taskExecution: TaskExecutionProvider;
 
   constructor(
@@ -289,6 +307,190 @@ export class ProjectProcessor {
     }
 
     return recovered;
+  }
+
+  async recoverFailedRunningHubResults(options: { limit?: number } = {}): Promise<ResultRecoveryBatchSummary> {
+    const limit = Math.max(1, Math.min(50, Math.round(options.limit ?? 5)));
+    const projects = this.store.listProjectsNeedingResultRecovery().slice(0, limit);
+    const summary: ResultRecoveryBatchSummary = {
+      scanned: projects.length,
+      attempted: 0,
+      recovered: 0,
+      failed: 0,
+      skippedActive: 0,
+      projects: []
+    };
+
+    for (const project of projects) {
+      const projectSummary = await this.recoverRunningHubResults(project.id);
+      summary.projects.push(projectSummary);
+      summary.attempted += projectSummary.attempted;
+      summary.recovered += projectSummary.recovered;
+      summary.failed += projectSummary.failed;
+      if (projectSummary.status === 'active') {
+        summary.skippedActive += 1;
+      }
+    }
+
+    return summary;
+  }
+
+  async recoverRunningHubResults(projectId: string): Promise<ResultRecoverySummary> {
+    const activeRecovery = this.activeResultRecoveries.get(projectId);
+    if (activeRecovery) {
+      return await activeRecovery;
+    }
+
+    const recovery = this.performRunningHubResultRecovery(projectId).finally(() => {
+      this.activeResultRecoveries.delete(projectId);
+    });
+    this.activeResultRecoveries.set(projectId, recovery);
+    return await recovery;
+  }
+
+  private async performRunningHubResultRecovery(projectId: string): Promise<ResultRecoverySummary> {
+    if (this.activeJobs.has(projectId)) {
+      return { projectId, status: 'active', attempted: 0, recovered: 0, failed: 0 };
+    }
+
+    const project = this.store.getProject(projectId);
+    if (!project) {
+      return { projectId, status: 'missing', attempted: 0, recovered: 0, failed: 0 };
+    }
+
+    const recoverableItems = this.getRecoverableResultItems(project);
+    if (!recoverableItems.length) {
+      return { projectId, status: 'idle', attempted: 0, recovered: 0, failed: 0 };
+    }
+
+    const now = new Date().toISOString();
+    const completedBefore = this.countCompletedHdrItems(project);
+    this.store.updateProject(projectId, (current) => ({
+      ...current,
+      status: 'processing',
+      currentStep: 3
+    }));
+    this.store.setJobState(projectId, (job) => ({
+      ...job,
+      status: 'running',
+      phase: 'result_returning',
+      label: 'Recovering RunningHub results',
+      detail: `Recovering ${recoverableItems.length} completed RunningHub result${recoverableItems.length === 1 ? '' : 's'}.`,
+      startedAt: job.startedAt ?? now,
+      completedAt: null,
+      currentHdrItemId: recoverableItems[0]?.id ?? null,
+      percent: Math.max(job.percent, this.calculateBaselinePercent(project, completedBefore)),
+      workflowRealtime: {
+        ...job.workflowRealtime,
+        total: project.hdrItems.length,
+        entered: Math.max(job.workflowRealtime.entered, completedBefore + recoverableItems.length),
+        returned: completedBefore,
+        succeeded: completedBefore,
+        active: recoverableItems.length,
+        monitorState: 'recovering',
+        detail: 'recovering_runninghub_results'
+      }
+    }));
+
+    const taskExecution = this.taskExecution.createRunContext();
+    const projectDirs = this.store.getProjectDirectories(project);
+    const summary: ResultRecoverySummary = {
+      projectId,
+      status: 'done',
+      attempted: 0,
+      recovered: 0,
+      failed: 0
+    };
+
+    for (const candidate of recoverableItems) {
+      const latestProject = this.store.getProject(projectId);
+      const latestItem = latestProject?.hdrItems.find((item) => item.id === candidate.id);
+      if (!latestProject || !latestItem || !this.getRecoverableResultItems(latestProject).some((item) => item.id === candidate.id)) {
+        continue;
+      }
+
+      summary.attempted += 1;
+      this.store.setHdrItemState(projectId, latestItem.id, (item) => ({
+        ...item,
+        status: 'workflow-running',
+        statusText: createProcessingText('workflow-running'),
+        errorMessage: null,
+        workflow: {
+          ...createEmptyWorkflowState(),
+          ...(item.workflow ?? {}),
+          stage: 'runninghub',
+          updatedAt: now,
+          completedAt: null,
+          errorMessage: null
+        }
+      }));
+
+      const recovered = await this.tryRecoverWorkflowItem(projectId, latestProject, latestItem, taskExecution, projectDirs.hdr);
+      if (recovered) {
+        summary.recovered += 1;
+      } else {
+        summary.failed += 1;
+        this.store.setHdrItemState(projectId, latestItem.id, (item) => ({
+          ...item,
+          status: 'error',
+          statusText: createProcessingText('error'),
+          errorMessage: item.errorMessage || 'RunningHub result recovery did not return an output yet.',
+          workflow: {
+            ...createEmptyWorkflowState(),
+            ...(item.workflow ?? {}),
+            stage: 'failed',
+            updatedAt: new Date().toISOString(),
+            errorMessage: item.workflow?.errorMessage || 'RunningHub result recovery did not return an output yet.'
+          }
+        }));
+      }
+    }
+
+    const finalProject = this.store.getProject(projectId);
+    if (finalProject) {
+      const completedCount = this.countCompletedHdrItems(finalProject);
+      const allItemsCompleted = finalProject.hdrItems.length > 0 && finalProject.hdrItems.every((item) => this.isHdrItemCompleted(item));
+      const hasSuccess = completedCount > 0;
+      const failedCount = Math.max(0, finalProject.hdrItems.length - completedCount);
+
+      this.store.updateProject(projectId, (current) => ({
+        ...current,
+        status: hasSuccess ? 'completed' : 'failed',
+        currentStep: hasSuccess ? 4 : 3,
+        pointsSpent: hasSuccess ? completedCount : 0
+      }));
+      this.store.settleProjectProcessingCredits(projectId, POINT_PRICE_USD);
+      this.store.setJobState(projectId, (job) => ({
+        ...job,
+        status: hasSuccess ? 'completed' : 'failed',
+        phase: hasSuccess ? 'completed' : 'failed',
+        detail:
+          summary.recovered > 0
+            ? `Recovered ${summary.recovered} RunningHub result${summary.recovered === 1 ? '' : 's'}.`
+            : 'No RunningHub result was recovered.',
+        currentHdrItemId: null,
+        completedAt: new Date().toISOString(),
+        percent: hasSuccess ? 100 : Math.max(job.percent, 1),
+        workflowRealtime: {
+          ...job.workflowRealtime,
+          total: finalProject.hdrItems.length,
+          returned: completedCount,
+          succeeded: completedCount,
+          active: 0,
+          failed: failedCount,
+          monitorState: summary.recovered > 0 ? 'recovered' : 'recovery_failed',
+          detail: summary.recovered > 0 ? 'runninghub_results_recovered' : 'runninghub_recovery_no_output',
+          remoteProgress: hasSuccess ? 100 : job.workflowRealtime.remoteProgress,
+          currentNodePercent: hasSuccess ? 100 : job.workflowRealtime.currentNodePercent
+        }
+      }));
+
+      if (allItemsCompleted) {
+        await this.cleanupProjectIncomingObjects(finalProject);
+      }
+    }
+
+    return summary;
   }
 
   async regenerateResult(projectId: string, hdrItemId: string, input: { colorCardNo: string }) {
@@ -636,6 +838,15 @@ export class ProjectProcessor {
 
   private isHdrItemCompleted(item: HdrItem) {
     return Boolean(item.resultUrl && item.resultFileName && (item.resultKey || item.resultPath));
+  }
+
+  private getRecoverableResultItems(project: ProjectRecord) {
+    return project.hdrItems.filter(
+      (item) =>
+        !this.isHdrItemCompleted(item) &&
+        this.hasRecoverableRunningHubTask(item) &&
+        (item.status === 'error' || item.workflow?.stage === 'failed')
+    );
   }
 
   private isProjectInputComplete(project: ProjectRecord) {

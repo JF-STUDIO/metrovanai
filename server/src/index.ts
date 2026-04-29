@@ -188,6 +188,15 @@ const RESULT_THUMBNAIL_URL_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
 const DIRECT_UPLOAD_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
+const RESULT_RECOVERY_INTERVAL_MS = Math.max(
+  60_000,
+  Number(process.env.METROVAN_RESULT_RECOVERY_INTERVAL_MS ?? 5 * 60_000)
+);
+const RESULT_RECOVERY_SCAN_LIMIT = Math.max(
+  1,
+  Math.min(50, Math.round(Number(process.env.METROVAN_RESULT_RECOVERY_SCAN_LIMIT ?? 5)))
+);
+const RESULT_RECOVERY_ENABLED = !isEnabledEnv('METROVAN_DISABLE_RESULT_AUTO_RECOVERY');
 
 const trashCleanupTimer = setInterval(() => {
   try {
@@ -214,6 +223,65 @@ const rateLimitCleanupTimer = setInterval(() => {
   }
 }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
 rateLimitCleanupTimer.unref?.();
+let resultRecoverySweepRunning = false;
+
+async function runResultRecoverySweep(source: 'startup' | 'timer' | 'admin') {
+  if (resultRecoverySweepRunning && source !== 'admin') {
+    return null;
+  }
+
+  resultRecoverySweepRunning = true;
+  try {
+    const summary = await processor.recoverFailedRunningHubResults({ limit: RESULT_RECOVERY_SCAN_LIMIT });
+    if (summary.recovered > 0 || summary.failed > 0) {
+      logServerEvent({
+        level: summary.failed > 0 ? 'warning' : 'info',
+        event: 'project.result_recovery.sweep',
+        phase: 'result_returning',
+        details: {
+          source,
+          scanned: summary.scanned,
+          attempted: summary.attempted,
+          recovered: summary.recovered,
+          failed: summary.failed,
+          skippedActive: summary.skippedActive
+        }
+      });
+    }
+    const opsHealth = buildAdminOpsHealthPayload();
+    if (opsHealth.alerts.length) {
+      logServerEvent({
+        level: opsHealth.alerts.some((alert) => alert?.level === 'error') ? 'error' : 'warning',
+        event: 'admin.ops_health.alerts',
+        phase: 'monitoring',
+        details: {
+          source,
+          alerts: opsHealth.alerts,
+          totals: opsHealth.totals,
+          rates: opsHealth.rates
+        }
+      });
+    }
+    return summary;
+  } catch (error) {
+    captureServerError(error, {
+      event: 'project.result_recovery.sweep_failed',
+      phase: 'result_returning',
+      details: { source }
+    });
+    return null;
+  } finally {
+    resultRecoverySweepRunning = false;
+  }
+}
+
+const resultRecoveryTimer = setInterval(() => {
+  if (!RESULT_RECOVERY_ENABLED) {
+    return;
+  }
+  void runResultRecoverySweep('timer');
+}, RESULT_RECOVERY_INTERVAL_MS);
+resultRecoveryTimer.unref?.();
 const MIN_CUSTOM_TOP_UP_USD = 1;
 const MAX_CUSTOM_TOP_UP_USD = 50000;
 const clientEventSchema = z.object({
@@ -794,6 +862,7 @@ function buildBillingPayload(userKey: string) {
   return {
     summary: store.getBillingSummary(userKey),
     entries: store.listBillingEntries(userKey),
+    orders: store.listPaymentOrders(userKey),
     packages: getTopUpPackages()
   };
 }
@@ -803,6 +872,28 @@ function getStripeObjectId(value: string | { id?: string } | null | undefined) {
     return null;
   }
   return typeof value === 'string' ? value : value.id ?? null;
+}
+
+function getExpandedStripeObject<T extends { id?: string }>(value: string | T | null | undefined) {
+  return value && typeof value !== 'string' ? value : null;
+}
+
+async function retrieveStripeCheckoutSessionWithDocuments(sessionId: string) {
+  return await getStripeClient().checkout.sessions.retrieve(sessionId, {
+    expand: ['payment_intent.latest_charge', 'invoice']
+  });
+}
+
+function getStripePaymentDocumentLinks(session: Stripe.Checkout.Session) {
+  const invoice = getExpandedStripeObject<Stripe.Invoice>(session.invoice);
+  const paymentIntent = getExpandedStripeObject<Stripe.PaymentIntent>(session.payment_intent);
+  const latestCharge = getExpandedStripeObject<Stripe.Charge>(paymentIntent?.latest_charge);
+
+  return {
+    stripeReceiptUrl: latestCharge?.receipt_url ?? null,
+    stripeInvoiceUrl: invoice?.hosted_invoice_url ?? null,
+    stripeInvoicePdfUrl: invoice?.invoice_pdf ?? null
+  };
 }
 
 function buildStripeCheckoutReturnUrls(req: express.Request) {
@@ -841,6 +932,7 @@ function settlePaidStripeCheckoutSession(
 
   const stripePaymentIntentId = getStripeObjectId(session.payment_intent);
   const stripeCustomerId = getStripeObjectId(session.customer);
+  const stripeDocuments = getStripePaymentDocumentLinks(session);
 
   if (session.payment_status !== 'paid') {
     const status = session.status === 'expired' ? 'expired' : 'checkout_created';
@@ -856,6 +948,7 @@ function settlePaidStripeCheckoutSession(
   const fulfilled = store.fulfillPaymentOrder(order.id, {
     stripePaymentIntentId,
     stripeCustomerId,
+    ...stripeDocuments,
     note: `Stripe payment: ${order.packageName}${order.activationCode ? ` with ${order.activationCode}` : ''}`
   });
   if (!fulfilled) {
@@ -1090,6 +1183,85 @@ function buildAdminWorkflowPayload() {
       outputNodeIds: item.outputs?.map((output) => output.nodeId).filter(Boolean) ?? [],
       promptNodeId: item.prompt?.nodeId ?? null
     }))
+  };
+}
+
+function listAllProjectsForAdmin() {
+  return store
+    .listUsers()
+    .flatMap((user) => store.listProjects(user.userKey))
+    .sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1));
+}
+
+function isPublicHdrItemCompleted(item: HdrItem) {
+  return Boolean(item.resultUrl && item.resultFileName && (item.resultKey || item.resultPath));
+}
+
+function buildAdminOpsHealthPayload() {
+  const projects = listAllProjectsForAdmin();
+  const items = projects.flatMap((project) => project.hdrItems.map((item) => ({ project, item })));
+  const completedItems = items.filter(({ item }) => isPublicHdrItemCompleted(item));
+  const failedItems = items.filter(({ item }) => item.status === 'error' && !isPublicHdrItemCompleted(item));
+  const runningHubItems = items.filter(({ item }) => Boolean(item.workflow?.runningHubTaskId?.trim()));
+  const runningHubCompletedItems = runningHubItems.filter(({ item }) => isPublicHdrItemCompleted(item));
+  const resultRecoveryProjects = store.listProjectsNeedingResultRecovery();
+  const creditMismatchProjects = projects.filter((project) => {
+    const completedCount = project.hdrItems.filter(isPublicHdrItemCompleted).length;
+    return project.pointsSpent !== completedCount;
+  });
+  const stalledProcessingProjects = projects.filter((project) => {
+    const updatedAt = Date.parse(project.updatedAt);
+    return (
+      (project.status === 'processing' || project.job?.status === 'running' || project.job?.status === 'queued') &&
+      Number.isFinite(updatedAt) &&
+      Date.now() - updatedAt > 30 * 60 * 1000
+    );
+  });
+
+  const runningHubSuccessRate = runningHubItems.length ? runningHubCompletedItems.length / runningHubItems.length : 1;
+  const resultReturnFailureRate = runningHubItems.length ? resultRecoveryProjects.length / runningHubItems.length : 0;
+  const failedItemRate = items.length ? failedItems.length / items.length : 0;
+  const alerts = [
+    failedItemRate > 0.05
+      ? { level: 'warning', code: 'item-failure-rate', value: failedItemRate, threshold: 0.05 }
+      : null,
+    runningHubSuccessRate < 0.95
+      ? { level: 'warning', code: 'runninghub-success-rate', value: runningHubSuccessRate, threshold: 0.95 }
+      : null,
+    resultRecoveryProjects.length > 0
+      ? { level: 'warning', code: 'result-return-recovery-needed', value: resultRecoveryProjects.length, threshold: 0 }
+      : null,
+    creditMismatchProjects.length > 0
+      ? { level: 'error', code: 'credit-settlement-mismatch', value: creditMismatchProjects.length, threshold: 0 }
+      : null,
+    stalledProcessingProjects.length > 0
+      ? { level: 'warning', code: 'stalled-processing-projects', value: stalledProcessingProjects.length, threshold: 0 }
+      : null
+  ].filter(Boolean);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totals: {
+      projects: projects.length,
+      photos: items.length,
+      completedPhotos: completedItems.length,
+      failedPhotos: failedItems.length,
+      runningHubTasks: runningHubItems.length,
+      resultRecoveryProjects: resultRecoveryProjects.length,
+      creditMismatchProjects: creditMismatchProjects.length,
+      stalledProcessingProjects: stalledProcessingProjects.length
+    },
+    rates: {
+      failedItemRate,
+      runningHubSuccessRate,
+      resultReturnFailureRate
+    },
+    samples: {
+      resultRecoveryProjectIds: resultRecoveryProjects.slice(0, 10).map((project) => project.id),
+      creditMismatchProjectIds: creditMismatchProjects.slice(0, 10).map((project) => project.id),
+      stalledProcessingProjectIds: stalledProcessingProjects.slice(0, 10).map((project) => project.id)
+    },
+    alerts
   };
 }
 
@@ -2435,7 +2607,7 @@ const featureImageUpload = multer({
 app.use(createHelmetMiddleware());
 app.use(traceIdMiddleware);
 app.use(createSecurityHeadersMiddleware(shouldUseSecureCookies));
-app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   if (!isStripeConfigured() || !getStripeWebhookSecret()) {
     res.status(503).json({ error: 'Stripe webhook is not configured.' });
     return;
@@ -2466,7 +2638,8 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req,
   try {
     if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
       const session = event.data.object as Stripe.Checkout.Session;
-      const result = settlePaidStripeCheckoutSession(req, session, 'webhook');
+      const expandedSession = await retrieveStripeCheckoutSessionWithDocuments(session.id);
+      const result = settlePaidStripeCheckoutSession(req, expandedSession, 'webhook');
       if (!result.ok && result.status !== 402) {
         res.status(result.status).json({ error: result.error });
         return;
@@ -2773,7 +2946,7 @@ app.post('/api/billing/checkout/confirm', async (req, res) => {
   }
 
   try {
-    const checkoutSession = await getStripeClient().checkout.sessions.retrieve(parsed.data.sessionId);
+    const checkoutSession = await retrieveStripeCheckoutSessionWithDocuments(parsed.data.sessionId);
     const order = getOrderFromStripeSession(checkoutSession);
     if (!order || order.userKey !== user.userKey) {
       res.status(404).json({ error: '找不到该订单。' });
@@ -3036,14 +3209,44 @@ app.get('/api/admin/projects', (req, res) => {
   }
 
   const limit = Math.max(1, Math.min(500, Math.round(Number(req.query.limit ?? 120))));
-  const projects = store
-    .listUsers()
-    .flatMap((user) => store.listProjects(user.userKey))
-    .sort((left, right) => (left.updatedAt < right.updatedAt ? 1 : -1));
+  const projects = listAllProjectsForAdmin();
 
   res.json({
     total: projects.length,
     items: projects.slice(0, limit).map((project) => buildPublicProject(project))
+  });
+});
+
+app.get('/api/admin/ops/health', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  res.json(buildAdminOpsHealthPayload());
+});
+
+app.post('/api/admin/projects/:id/recover-runninghub-results', async (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  const projectId = String(req.params.id ?? '').trim();
+  if (!projectId) {
+    res.status(400).json({ error: 'Project id is required.' });
+    return;
+  }
+
+  const summary = await processor.recoverRunningHubResults(projectId);
+  writeAdminAuditLog(req, actor, {
+    action: 'project.recover_runninghub_results',
+    targetProjectId: projectId,
+    details: { ...summary }
+  });
+
+  res.json({
+    summary,
+    project: store.getProject(projectId) ? buildPublicProject(store.getProject(projectId)!) : null
   });
 });
 
@@ -5575,4 +5778,8 @@ app.listen(port, () => {
     .catch((error) => {
       console.error('Failed to recover interrupted project jobs:', error);
     });
+
+  if (RESULT_RECOVERY_ENABLED) {
+    void runResultRecoverySweep('startup');
+  }
 });
