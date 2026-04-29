@@ -183,6 +183,10 @@ export interface UploadProgressSnapshot {
   percent: number;
   uploadedFiles: number;
   totalFiles: number;
+  uploadedBytes?: number;
+  totalBytes?: number;
+  bytesPerSecond?: number;
+  estimatedSecondsRemaining?: number;
   currentFileName?: string;
   attempt?: number;
   maxAttempts?: number;
@@ -527,6 +531,21 @@ class ThroughputSampler {
     const spanSeconds = (this.samples[this.samples.length - 1]!.ts - this.samples[0]!.ts) / 1000;
     return spanSeconds > 0 ? total / spanSeconds : 0;
   }
+}
+
+function buildUploadTelemetry(uploadedBytes: number, totalBytes: number, bytesPerSecond?: number) {
+  const safeUploadedBytes = Math.min(Math.max(0, uploadedBytes), Math.max(1, totalBytes));
+  const safeTotalBytes = Math.max(1, totalBytes);
+  const safeBytesPerSecond = Number.isFinite(bytesPerSecond ?? Number.NaN) && (bytesPerSecond ?? 0) > 0 ? bytesPerSecond : undefined;
+  const estimatedSecondsRemaining = safeBytesPerSecond
+    ? Math.max(0, Math.ceil((safeTotalBytes - safeUploadedBytes) / safeBytesPerSecond))
+    : undefined;
+  return {
+    uploadedBytes: safeUploadedBytes,
+    totalBytes: safeTotalBytes,
+    bytesPerSecond: safeBytesPerSecond,
+    estimatedSecondsRemaining
+  };
 }
 
 function extractErrorMessage(input: unknown): string | null {
@@ -1884,6 +1903,7 @@ async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProg
   let latestProject: ProjectRecord | null = null;
   const batchLoadedBytes = new Array<number>(batches.length).fill(0);
   let nextBatchIndex = 0;
+  const sampler = new ThroughputSampler();
 
   const reportProgress = () => {
     const activeLoadedBytes = batchLoadedBytes.reduce((sum, value) => sum + Math.max(0, value), 0);
@@ -1893,7 +1913,8 @@ async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProg
       stage: percent >= 100 ? 'completed' : 'uploading',
       percent,
       uploadedFiles,
-      totalFiles: files.length
+      totalFiles: files.length,
+      ...buildUploadTelemetry(overallBytes, totalBytes, sampler.bytesPerSecond())
     });
   };
 
@@ -1904,7 +1925,13 @@ async function uploadFilesViaLocalProxy(projectId: string, files: File[], onProg
       const batch = batches[batchIndex] ?? [];
       const batchBytes = batch.reduce((sum, file) => sum + Math.max(1, file.size), 0);
       const response = await uploadFileBatchWithRetry(projectId, batch, (loadedBytes) => {
-        batchLoadedBytes[batchIndex] = Math.min(batchBytes, Math.max(0, loadedBytes));
+        const previousLoaded = Math.max(0, batchLoadedBytes[batchIndex] ?? 0);
+        const nextLoaded = Math.min(batchBytes, Math.max(0, loadedBytes));
+        const deltaBytes = nextLoaded - previousLoaded;
+        batchLoadedBytes[batchIndex] = nextLoaded;
+        if (deltaBytes > 0) {
+          sampler.recordBytes(deltaBytes);
+        }
         reportProgress();
       });
       latestProject = response.project;
@@ -2091,13 +2118,15 @@ async function uploadFilesViaDirectObject(
 
   const reportProgress = (overrides: Partial<UploadProgressSnapshot> = {}) => {
     const activeBytes = loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0);
-    const percent = Math.round((Math.min(totalBytes, completedBytes + activeBytes) / totalBytes) * 95);
+    const overallBytes = Math.min(totalBytes, completedBytes + activeBytes);
+    const percent = Math.round((overallBytes / totalBytes) * 95);
     const safePercent = Math.max(1, Math.min(95, percent));
     onProgress(safePercent, {
       stage: 'uploading',
       percent: safePercent,
       uploadedFiles,
       totalFiles: files.length,
+      ...buildUploadTelemetry(overallBytes, totalBytes),
       ...overrides
     });
   };
@@ -2109,6 +2138,7 @@ async function uploadFilesViaDirectObject(
     throwIfUploadAborted(options.signal);
     reportProgress({ stage: 'preparing' });
     const batchFiles = batch.map((item) => item.file);
+    const sampler = new ThroughputSampler();
     const { targets } = await runWithOfflineRetry(() => createDirectUploadTargets(projectId, batchFiles), {
       signal: options.signal,
       onPause: () => reportProgress({ stage: 'paused', offline: true })
@@ -2121,7 +2151,6 @@ async function uploadFilesViaDirectObject(
     const maxWorkerCount = Math.min(ADAPTIVE_UPLOAD_MAX_CONCURRENCY, batch.length);
     let targetWorkerCount = clampUploadConcurrency(getDirectObjectUploadConcurrency(batchFiles), maxWorkerCount);
     let lastSampleAt = Date.now();
-    const sampler = new ThroughputSampler();
     const recordFileProgress = (fileIndex: number, fileSize: number, loadedBytes: number) => {
       const previousLoaded = Math.max(0, loadedByFile[fileIndex] ?? 0);
       const nextLoaded = Math.min(fileSize, Math.max(0, loadedBytes));
@@ -2131,6 +2160,8 @@ async function uploadFilesViaDirectObject(
         sampler.recordBytes(deltaBytes);
       }
     };
+    const reportUploadProgress = (overrides: Partial<UploadProgressSnapshot> = {}) =>
+      reportProgress({ ...buildUploadTelemetry(completedBytes + loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0), totalBytes, sampler.bytesPerSecond()), ...overrides });
     const maybeAdjustConcurrency = () => {
       const now = Date.now();
       const elapsedMs = now - lastSampleAt;
@@ -2189,7 +2220,7 @@ async function uploadFilesViaDirectObject(
               (loadedBytes) => {
                 recordFileProgress(fileIndex, file.size, loadedBytes);
                 maybeAdjustConcurrency();
-                reportProgress();
+                reportUploadProgress();
               },
               {
                 fileIdentity,
@@ -2203,7 +2234,7 @@ async function uploadFilesViaDirectObject(
             const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
               recordFileProgress(fileIndex, file.size, loadedBytes);
               maybeAdjustConcurrency();
-              reportProgress();
+              reportUploadProgress();
             }, {
               onRetry: ({ attempt, maxAttempts }) => {
                 loadedByFile[fileIndex] = 0;
@@ -2264,7 +2295,7 @@ async function uploadFilesViaDirectObject(
         uploadedFiles += 1;
         loadedByFile[fileIndex] = 0;
         maybeAdjustConcurrency();
-        reportProgress();
+        reportUploadProgress();
       }
     }
 

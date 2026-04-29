@@ -930,6 +930,7 @@ const UI_TEXT = {
     uploadPreparingProgress: (uploaded: number, total: number) =>
       uploaded > 0 ? `正在准备上传，已找到 ${uploaded}/${total} 张已上传文件` : `正在准备上传 ${total} 张，申请上传通道...`,
     uploadFileProgress: (uploaded: number, total: number) => `已上传 ${uploaded}/${total} 张`,
+    uploadSpeedEtaProgress: (speed: string, eta: string) => `正在以 ${speed} 上传，还剩 ${eta}`,
     uploadVerifyingProgress: (uploaded: number, total: number) => `正在校验已上传 ${uploaded}/${total} 张，缺失文件将自动补传`,
     uploadRetryProgress: (name: string, attempt: number, maxAttempts: number, uploaded: number, total: number) =>
       `正在重试 ${name}（${attempt}/${maxAttempts}）· 已上传 ${uploaded}/${total} 张`,
@@ -1316,6 +1317,7 @@ const UI_TEXT = {
     uploadPreparingProgress: (uploaded: number, total: number) =>
       uploaded > 0 ? `Preparing upload; found ${uploaded}/${total} already uploaded` : `Preparing ${total} files and requesting upload slots...`,
     uploadFileProgress: (uploaded: number, total: number) => `Uploaded ${uploaded}/${total}`,
+    uploadSpeedEtaProgress: (speed: string, eta: string) => `Uploading at ${speed}, ${eta} remaining`,
     uploadVerifyingProgress: (uploaded: number, total: number) => `Verifying uploaded files ${uploaded}/${total}; missing files will resume`,
     uploadRetryProgress: (name: string, attempt: number, maxAttempts: number, uploaded: number, total: number) =>
       `Retrying ${name} (${attempt}/${maxAttempts}) · Uploaded ${uploaded}/${total}`,
@@ -2158,6 +2160,41 @@ function formatGroupSummary(groupCount: number, photoCount: number, locale: UiLo
     : `${groupCount} 组 / ${photoCount} 张照片`;
 }
 
+function formatUploadSpeed(bytesPerSecond: number) {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '';
+  const megabytesPerSecond = bytesPerSecond / (1024 * 1024);
+  if (megabytesPerSecond >= 0.95) {
+    return `${megabytesPerSecond.toFixed(1)} MB/s`;
+  }
+  const kilobytesPerSecond = bytesPerSecond / 1024;
+  return `${Math.max(1, Math.round(kilobytesPerSecond))} KB/s`;
+}
+
+function formatUploadRemainingTime(seconds: number, copy: (typeof UI_TEXT)[UiLocale]) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '';
+  const safeSeconds = Math.max(1, Math.ceil(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+  if (copy === UI_TEXT.en) {
+    if (hours > 0) return `${hours} hr ${minutes} min`;
+    if (minutes > 0) return `${minutes} min ${remainingSeconds} sec`;
+    return `${remainingSeconds} sec`;
+  }
+  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`;
+  if (minutes > 0) return `${minutes} 分 ${remainingSeconds} 秒`;
+  return `${remainingSeconds} 秒`;
+}
+
+function formatUploadTelemetryLabel(snapshot: UploadProgressSnapshot | null, copy: (typeof UI_TEXT)[UiLocale]) {
+  if (!snapshot?.bytesPerSecond || !snapshot.estimatedSecondsRemaining || snapshot.stage !== 'uploading') {
+    return '';
+  }
+  const speed = formatUploadSpeed(snapshot.bytesPerSecond);
+  const remaining = formatUploadRemainingTime(snapshot.estimatedSecondsRemaining, copy);
+  return speed && remaining ? copy.uploadSpeedEtaProgress(speed, remaining) : '';
+}
+
 function formatUploadProgressLabel(
   snapshot: UploadProgressSnapshot | null,
   fallbackPercent: number,
@@ -2204,7 +2241,9 @@ function formatUploadProgressLabel(
     return `${copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles)} · ${pausedLabel}`;
   }
 
-  return copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles);
+  const telemetryLabel = formatUploadTelemetryLabel(snapshot, copy);
+  const fileProgressLabel = copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles);
+  return telemetryLabel ? `${fileProgressLabel} · ${telemetryLabel}` : fileProgressLabel;
 }
 
 function isHdrItemProcessing(status: HdrItem['status']) {
@@ -5753,6 +5792,16 @@ function App() {
           uploadedObjects.map((uploaded) => getUploadReferenceIdentity(uploaded))
         );
         const inFlightGroupProgress = new Map<string, number>();
+        const inFlightGroupByteProgress = new Map<string, { uploadedBytes: number; bytesPerSecond: number }>();
+        const uploadTotalBytes = Math.max(1, draftFiles.reduce((sum, file) => sum + Math.max(1, file.size), 0));
+        const getConfirmedUploadedBytes = () =>
+          draftFiles.reduce(
+            (sum, file) =>
+              completedFileIdentities.has(getUploadReferenceIdentity({ originalName: file.name, size: file.size }))
+                ? sum + Math.max(1, file.size)
+                : sum,
+            0
+          );
         const updateAggregateUploadProgress = (
           stage: UploadProgressSnapshot['stage'] = 'uploading',
           details: Pick<Partial<UploadProgressSnapshot>, 'currentFileName' | 'attempt' | 'maxAttempts' | 'offline'> = {}
@@ -5760,6 +5809,20 @@ function App() {
           const inFlightFiles = Array.from(inFlightGroupProgress.values()).reduce((sum, value) => sum + value, 0);
           const uploadedFiles = Math.min(uploadTotalFiles, completedFileIdentities.size);
           const progressFiles = Math.min(uploadTotalFiles, uploadedFiles + inFlightFiles);
+          const confirmedUploadedBytes = getConfirmedUploadedBytes();
+          const activeUploadedBytes = Array.from(inFlightGroupByteProgress.values()).reduce(
+            (sum, value) => sum + Math.max(0, value.uploadedBytes),
+            0
+          );
+          const uploadedBytes = Math.min(uploadTotalBytes, confirmedUploadedBytes + activeUploadedBytes);
+          const bytesPerSecond = Array.from(inFlightGroupByteProgress.values()).reduce(
+            (sum, value) => sum + Math.max(0, value.bytesPerSecond),
+            0
+          );
+          const estimatedSecondsRemaining =
+            bytesPerSecond > 0 && stage === 'uploading'
+              ? Math.max(0, Math.ceil((uploadTotalBytes - uploadedBytes) / bytesPerSecond))
+              : undefined;
           const percent =
             stage === 'completed'
               ? 100
@@ -5770,6 +5833,10 @@ function App() {
             percent,
             uploadedFiles,
             totalFiles: uploadTotalFiles,
+            uploadedBytes,
+            totalBytes: uploadTotalBytes,
+            bytesPerSecond: bytesPerSecond > 0 ? bytesPerSecond : undefined,
+            estimatedSecondsRemaining,
             ...details
           });
         };
@@ -5844,6 +5911,19 @@ function App() {
                     snapshot?.uploadedFiles ?? Math.round(((_percent || 0) / 100) * groupFiles.length)
                   );
                   inFlightGroupProgress.set(hdrItem.id, uploadedInGroup);
+                  const groupTotalBytes = groupFiles.reduce((sum, file) => sum + Math.max(1, file.size), 0);
+                  const groupConfirmedBytes = groupFiles.reduce(
+                    (sum, file) =>
+                      completedFileIdentities.has(getUploadReferenceIdentity({ originalName: file.name, size: file.size }))
+                        ? sum + Math.max(1, file.size)
+                        : sum,
+                    0
+                  );
+                  const groupUploadedBytes = Math.min(groupTotalBytes, snapshot?.uploadedBytes ?? 0);
+                  inFlightGroupByteProgress.set(hdrItem.id, {
+                    uploadedBytes: Math.max(0, groupUploadedBytes - groupConfirmedBytes),
+                    bytesPerSecond: snapshot?.bytesPerSecond ?? 0
+                  });
                   const stage =
                     snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' || snapshot?.stage === 'verifying'
                       ? snapshot.stage
@@ -5868,6 +5948,7 @@ function App() {
                 );
               } catch (error) {
                 inFlightGroupProgress.delete(hdrItem.id);
+                inFlightGroupByteProgress.delete(hdrItem.id);
                 if (error instanceof DOMException && error.name === 'AbortError') {
                   throw error;
                 }
@@ -5875,6 +5956,7 @@ function App() {
                 continue;
               } finally {
                 inFlightGroupProgress.delete(hdrItem.id);
+                inFlightGroupByteProgress.delete(hdrItem.id);
               }
             }
             if (retryUploadFileIdentity) {
