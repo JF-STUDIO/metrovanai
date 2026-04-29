@@ -38,6 +38,7 @@ import {
   getProjectDownloadFileName,
   streamProjectDownloadArchive
 } from './downloads.js';
+import { cancelDownloadJob, enqueueDownloadJob, getDownloadJob } from './download-jobs.js';
 import { buildHdrItemsFromFrontendLayout } from './importer.js';
 import { extractPreviewOrConvertToJpeg } from './images.js';
 import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js';
@@ -4243,6 +4244,109 @@ app.post('/api/projects/:id/download', async (req, res) => {
   } catch (error) {
     handleDownloadError(req, res, project, user, error);
   }
+});
+
+app.post('/api/projects/:id/download/jobs', async (req, res) => {
+  const user = requireAuthenticatedUser(req, res);
+  if (!user) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, user, {
+      scope: 'project-download',
+      limit: 30,
+      windowMs: 1000 * 60 * 15
+    }))
+  ) {
+    return;
+  }
+
+  const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found.' });
+    return;
+  }
+
+  const parsed = downloadRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await assertProjectDownloadAssetsReady(project);
+    const { job, reused } = enqueueDownloadJob({
+      project,
+      userKey: user.userKey,
+      options: {
+        ...getDefaultDownloadOptions(),
+        ...parsed.data
+      }
+    });
+    res.status(reused ? 200 : 202).json({ job, reused });
+  } catch (error) {
+    handleDownloadError(req, res, project, user, error);
+  }
+});
+
+app.get('/api/projects/:id/download/jobs/:jobId', async (req, res) => {
+  const user = requireAuthenticatedUser(req, res);
+  if (!user) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, user, {
+      scope: 'project-download-status',
+      limit: 180,
+      windowMs: 1000 * 60 * 15
+    }))
+  ) {
+    return;
+  }
+
+  const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found.' });
+    return;
+  }
+
+  const job = getDownloadJob(project.id, String(req.params.jobId ?? ''), user.userKey);
+  if (!job) {
+    res.status(404).json({ error: 'Download job not found.' });
+    return;
+  }
+
+  res.json({ job });
+});
+
+app.delete('/api/projects/:id/download/jobs/:jobId', async (req, res) => {
+  const user = requireAuthenticatedUser(req, res);
+  if (!user) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, user, {
+      scope: 'project-download-cancel',
+      limit: 30,
+      windowMs: 1000 * 60 * 15
+    }))
+  ) {
+    return;
+  }
+
+  const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found.' });
+    return;
+  }
+
+  const cancelled = cancelDownloadJob(project.id, String(req.params.jobId ?? ''), user.userKey);
+  if (!cancelled) {
+    res.status(404).json({ error: 'Download job not found.' });
+    return;
+  }
+
+  res.json({ ok: true });
 });
 
 app.post('/api/projects/:id/uploads/multipart/init', async (req, res) => {

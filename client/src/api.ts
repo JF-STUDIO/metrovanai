@@ -106,6 +106,15 @@ export interface DownloadRequestPayload {
   variants: DownloadVariantInput[];
 }
 
+export interface DownloadJobPayload {
+  jobId: string;
+  status: 'queued' | 'preflight' | 'packaging' | 'uploading' | 'ready' | 'failed' | 'cancelled';
+  progress: number;
+  downloadUrl: string | null;
+  expiresAt: string | null;
+  error: string | null;
+}
+
 export interface BillingPayload {
   summary: BillingSummary;
   entries: BillingEntry[];
@@ -922,8 +931,18 @@ export function buildProjectDownloadUrl(projectId: string, input: DownloadReques
   )}`;
 }
 
-export async function downloadProjectArchive(projectId: string, input: DownloadRequestPayload) {
-  const response = await fetch(`${API_ROOT}/api/projects/${encodeURIComponent(projectId)}/download`, {
+async function throwDownloadResponseError(response: Response): Promise<never> {
+  if (response.status === 409) {
+    const payload = (await response.json().catch(() => null)) as { missingFiles?: unknown } | null;
+    const missingFiles = Array.isArray(payload?.missingFiles) ? payload.missingFiles.filter((item) => typeof item === 'string') : [];
+    const suffix = missingFiles.length ? ` Missing: ${missingFiles.slice(0, 5).join(', ')}` : '';
+    throw new ApiRequestError(`Project results are incomplete.${suffix}`, response.status);
+  }
+  throw new ApiRequestError(await readErrorMessage(response), response.status);
+}
+
+async function startDownloadJob(projectId: string, input: DownloadRequestPayload) {
+  const response = await fetch(`${API_ROOT}/api/projects/${encodeURIComponent(projectId)}/download/jobs`, {
     method: 'POST',
     credentials: 'include',
     headers: buildRequestHeaders({
@@ -933,21 +952,52 @@ export async function downloadProjectArchive(projectId: string, input: DownloadR
   });
 
   if (!response.ok) {
-    if (response.status === 409) {
-      const payload = (await response.json().catch(() => null)) as { missingFiles?: unknown } | null;
-      const missingFiles = Array.isArray(payload?.missingFiles) ? payload.missingFiles.filter((item) => typeof item === 'string') : [];
-      const suffix = missingFiles.length ? ` Missing: ${missingFiles.slice(0, 5).join(', ')}` : '';
-      throw new ApiRequestError(`Project results are incomplete.${suffix}`, response.status);
-    }
-    throw new ApiRequestError(await readErrorMessage(response), response.status);
+    await throwDownloadResponseError(response);
   }
 
-  const blob = await response.blob();
-  const downloadUrl = URL.createObjectURL(blob);
+  const payload = (await response.json()) as { job: DownloadJobPayload };
+  captureCsrfToken(payload);
+  return payload.job;
+}
+
+async function fetchDownloadJob(projectId: string, jobId: string) {
+  return await jsonRequest<{ job: DownloadJobPayload }>(
+    `/api/projects/${encodeURIComponent(projectId)}/download/jobs/${encodeURIComponent(jobId)}`
+  );
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForDownloadJob(projectId: string, initialJob: DownloadJobPayload) {
+  let job = initialJob;
+  let delayMs = 1000;
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (job.status === 'ready') {
+      return job;
+    }
+    if (job.status === 'failed' || job.status === 'cancelled') {
+      throw new ApiRequestError(job.error ?? 'Download job failed.', 400);
+    }
+    await sleep(delayMs);
+    delayMs = Math.min(delayMs + 500, 5000);
+    job = (await fetchDownloadJob(projectId, job.jobId)).job;
+  }
+  throw new ApiRequestError('Download job timed out.', 408);
+}
+
+export async function downloadProjectArchive(projectId: string, input: DownloadRequestPayload) {
+  const job = await waitForDownloadJob(projectId, await startDownloadJob(projectId, input));
+  if (!job.downloadUrl) {
+    throw new ApiRequestError('Download job finished without a download URL.', 400);
+  }
+
   return {
-    downloadUrl,
+    downloadUrl: job.downloadUrl,
     fileName: `${projectId}.zip`,
-    revoke: () => URL.revokeObjectURL(downloadUrl)
+    revoke: () => undefined
   };
 }
 
