@@ -1487,7 +1487,7 @@ export class LocalStore {
         type: 'charge',
         points: delta,
         amountUsd: Number((delta * amountUsdPerPoint).toFixed(2)),
-        note: `Project processing final charge: ${project.name}`,
+        note: `Project processing final charge: ${project.name} [${project.id}]`,
         projectId: project.id,
         projectName: project.name,
         createdAt: now
@@ -1504,7 +1504,7 @@ export class LocalStore {
       type: 'credit',
       points: refundPoints,
       amountUsd: 0,
-      note: `Project processing refund: ${project.name}`,
+      note: `Project processing refund: ${project.name} [${project.id}]`,
       projectId: project.id,
       projectName: project.name,
       createdAt: now

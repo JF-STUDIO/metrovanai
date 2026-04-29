@@ -295,7 +295,7 @@ function isActivationCodeAvailable(activationCode: BillingActivationCode) {
 
   if (activationCode.expiresAt) {
     const expiresAt = Date.parse(activationCode.expiresAt);
-    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       return false;
     }
   }
@@ -2655,6 +2655,10 @@ app.post('/api/billing/checkout', async (req, res) => {
   if (!user) {
     return;
   }
+  if (isUserDisabled(user)) {
+    res.status(403).json({ error: '该账号已被停用，无法充值。请联系客服。' });
+    return;
+  }
   if (
     !(await checkUserRateLimit(req, res, user, {
       scope: 'billing-checkout',
@@ -2796,6 +2800,10 @@ app.post('/api/billing/activation-code/redeem', async (req, res) => {
   if (!user) {
     return;
   }
+  if (isUserDisabled(user)) {
+    res.status(403).json({ error: '该账号已被停用，无法兑换激活码。请联系客服。' });
+    return;
+  }
   if (
     !(await checkUserRateLimit(req, res, user, {
       scope: 'billing-activation-code-redeem',
@@ -2866,6 +2874,10 @@ app.post('/api/billing/top-up', async (req, res) => {
   if (!user) {
     return;
   }
+  if (isUserDisabled(user)) {
+    res.status(403).json({ error: '该账号已被停用，无法充值。请联系客服。' });
+    return;
+  }
   if (
     !(await checkUserRateLimit(req, res, user, {
       scope: 'billing-internal-top-up',
@@ -2929,6 +2941,18 @@ app.post('/api/billing/top-up', async (req, res) => {
   if (activationCode) {
     store.redeemActivationCode(activationCode.id);
   }
+
+  writeSecurityAuditLog(req, {
+    action: 'billing.internal_top_up',
+    targetUserId: user.id,
+    details: {
+      packageId: selectedPackage.id,
+      packageName: selectedPackage.name,
+      points: effectivePackage.points,
+      amountUsd: effectivePackage.amountUsd,
+      activationCodeId: activationCode?.id ?? null
+    }
+  });
 
   res.status(201).json(buildBillingPayload(user.userKey));
 });
@@ -5366,7 +5390,6 @@ app.post('/api/projects/:id/start', async (req, res) => {
       return;
     }
 
-    await commitStagedOriginals(projectId);
     const reservation = store.reserveProjectProcessingCredits(projectId, POINT_PRICE_USD);
     if (!reservation.ok) {
       res.status(402).json({
@@ -5376,6 +5399,8 @@ app.post('/api/projects/:id/start', async (req, res) => {
       });
       return;
     }
+
+    await commitStagedOriginals(projectId);
 
     writeSecurityAuditLog(req, {
       action: 'project.processing.reserve_credits',
