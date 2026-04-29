@@ -78,7 +78,7 @@ export function AuthModal({
             <span>{authSubtitle}</span>
           </div>
           <button className="close-button" type="button" onClick={onClose}>
-            脳
+            ×
           </button>
         </div>
         {!isAuthLinkMode && (
@@ -127,7 +127,7 @@ export function AuthModal({
                 disabled={authBusy}
                 value={auth.name}
                 onChange={(event) => onAuthChange({ name: event.target.value })}
-                placeholder="zhou jin"
+                placeholder="Your name"
               />
             </label>
           )}

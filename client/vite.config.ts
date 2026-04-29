@@ -11,6 +11,8 @@ export default defineConfig({
           if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
             return 'react';
           }
+          if (id.includes('node_modules/@sentry/')) return 'sentry';
+          if (id.includes('node_modules/exifr')) return 'exifr';
           return undefined;
         }
       }
