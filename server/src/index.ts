@@ -196,6 +196,7 @@ rateLimitCleanupTimer.unref?.();
 const MIN_CUSTOM_TOP_UP_USD = 1;
 const MAX_CUSTOM_TOP_UP_USD = 50000;
 const clientEventSchema = z.object({
+  type: z.enum(['client.error', 'upload.attempt-failed', 'upload.batch-completed', 'upload.batch-failed-files']).optional(),
   level: z.enum(['info', 'warning', 'error']).optional(),
   message: z.string().min(1).max(1000),
   stack: z.string().max(6000).nullable().optional(),
@@ -2430,7 +2431,7 @@ app.post('/api/observability/client-event', (req, res) => {
   const traceId = (req as express.Request & { traceId?: string }).traceId ?? null;
   logServerEvent({
     level: parsed.data.level,
-    event: 'client.event',
+    event: parsed.data.type ?? 'client.event',
     traceId,
     userKey: auth?.user.userKey ?? null,
     projectId: parsed.data.projectId ?? null,
@@ -2441,6 +2442,7 @@ app.post('/api/observability/client-event', (req, res) => {
       route: parsed.data.route ?? null,
       userAgent: parsed.data.userAgent ?? null,
       occurredAt: parsed.data.occurredAt ?? null,
+      type: parsed.data.type ?? null,
       context: parsed.data.context ?? {}
     }
   });

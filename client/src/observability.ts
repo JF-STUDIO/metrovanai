@@ -1,8 +1,8 @@
-import { getApiRoot } from './api';
-
 type ClientEventLevel = 'info' | 'warning' | 'error';
+type ClientEventType = 'client.error' | 'upload.attempt-failed' | 'upload.batch-completed' | 'upload.batch-failed-files';
 
 interface ClientEventInput {
+  type?: ClientEventType;
   level?: ClientEventLevel;
   message: string;
   stack?: string | null;
@@ -14,6 +14,22 @@ interface ClientEventInput {
 
 let initialized = false;
 let sentryReady: Promise<unknown> | null = null;
+const LOCAL_API_ROOT = 'http://127.0.0.1:8787';
+const PRODUCTION_API_ROOT = 'https://api.metrovanai.com';
+
+function getApiRoot() {
+  const configured = import.meta.env.VITE_METROVAN_API_URL?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname.toLowerCase();
+    return hostname === 'localhost' || hostname === '127.0.0.1' ? LOCAL_API_ROOT : PRODUCTION_API_ROOT;
+  }
+
+  return LOCAL_API_ROOT;
+}
 
 function getSentryDsn() {
   return String(import.meta.env.VITE_SENTRY_DSN ?? '').trim();
@@ -60,6 +76,7 @@ async function initSentry() {
 
 export function sendClientEvent(input: ClientEventInput) {
   const payload = {
+    type: input.type ?? 'client.error',
     level: input.level ?? 'error',
     message: input.message.slice(0, 1000),
     stack: input.stack ? input.stack.slice(0, 6000) : null,
@@ -85,6 +102,7 @@ export function sendClientEvent(input: ClientEventInput) {
 export function captureClientError(error: unknown, context: Record<string, unknown> = {}) {
   const normalized = normalizeError(error);
   sendClientEvent({
+    type: 'client.error',
     level: 'error',
     message: normalized.message || 'Client error',
     stack: normalized.stack,

@@ -1,4 +1,5 @@
 import type { BillingEntry, BillingPackage, BillingSummary, PaymentOrderRecord, ProjectRecord } from './types';
+import { sendClientEvent } from './observability';
 import {
   appendPersistedCompleted,
   clearPersistedProject,
@@ -1084,6 +1085,75 @@ function getUploadFailureMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function getUploadErrorClass(error: unknown) {
+  if (error instanceof DirectUploadError) {
+    return `${error.name}:${error.status}`;
+  }
+  return error instanceof Error ? error.name : typeof error;
+}
+
+function getFileExt(fileName: string) {
+  const dot = fileName.lastIndexOf('.');
+  return dot >= 0 ? fileName.slice(dot).toLowerCase() : '';
+}
+
+function getNetworkContext() {
+  const connection = (navigator as Navigator & { connection?: { effectiveType?: string; downlink?: number } }).connection;
+  return {
+    navigatorOnline: navigator.onLine,
+    effectiveType: connection?.effectiveType ?? null,
+    downlinkMbps: connection?.downlink ?? null
+  };
+}
+
+function emitUploadAttemptFailed(input: {
+  projectId?: string;
+  file: File;
+  partNumber?: number;
+  attempt: number;
+  maxAttempts: number;
+  error: unknown;
+}) {
+  sendClientEvent({
+    type: 'upload.attempt-failed',
+    level: 'warning',
+    message: `Upload attempt failed: ${input.file.name}`,
+    projectId: input.projectId ?? null,
+    context: {
+      fileName: input.file.name,
+      fileSize: input.file.size,
+      fileExt: getFileExt(input.file.name),
+      partNumber: input.partNumber ?? null,
+      attempt: input.attempt,
+      maxAttempts: input.maxAttempts,
+      errorMessage: getUploadFailureMessage(input.error),
+      errorClass: getUploadErrorClass(input.error),
+      ...getNetworkContext()
+    }
+  });
+}
+
+function emitUploadBatchEvent(
+  type: 'upload.batch-completed' | 'upload.batch-failed-files',
+  input: { projectId: string; files: File[]; uploadedFiles: number; failedFiles: FailedUploadFile[] }
+) {
+  sendClientEvent({
+    type,
+    level: input.failedFiles.length ? 'warning' : 'info',
+    message: type === 'upload.batch-completed' ? 'Upload batch completed' : 'Upload batch has failed files',
+    projectId: input.projectId,
+    context: {
+      totalFiles: input.files.length,
+      uploadedFiles: input.uploadedFiles,
+      failedFiles: input.failedFiles.map((file) => ({
+        fileName: file.fileName,
+        reason: file.reason,
+        lastError: file.lastError
+      }))
+    }
+  });
+}
+
 function shouldRefreshDirectUploadTarget(error: unknown) {
   if (!(error instanceof DirectUploadError)) {
     return true;
@@ -1273,6 +1343,7 @@ async function uploadDirectObjectFileWithRetry(
     onRetry?: (retry: { attempt: number; maxAttempts: number; error: unknown }) => void;
     onOfflinePause?: () => void;
     refreshTarget?: () => Promise<DirectUploadTarget>;
+    projectId?: string;
     signal?: AbortSignal;
   } = {}
 ) {
@@ -1292,6 +1363,13 @@ async function uploadDirectObjectFileWithRetry(
         throw error;
       }
       lastError = error;
+      emitUploadAttemptFailed({
+        projectId: options.projectId,
+        file,
+        attempt,
+        maxAttempts: MAX_UPLOAD_BATCH_RETRIES,
+        error
+      });
       onProgress(0);
       if (isBrowserOffline()) {
         await waitIfOffline(options.signal, options.onOfflinePause);
@@ -1492,6 +1570,14 @@ async function uploadDirectObjectFileMultipart(
             throw error;
           }
           lastError = error;
+          emitUploadAttemptFailed({
+            projectId,
+            file,
+            partNumber,
+            attempt,
+            maxAttempts: MULTIPART_PART_RETRIES,
+            error
+          });
           partProgress.delete(partNumber);
           reportProgress();
           if (isBrowserOffline()) {
@@ -1751,6 +1837,7 @@ async function uploadFilesViaDirectObject(
         })
     });
     await clearPersistedProject(projectId);
+    emitUploadBatchEvent('upload.batch-completed', { projectId, files, uploadedFiles: files.length, failedFiles: [] });
     onProgress(100, {
       stage: 'completed',
       percent: 100,
@@ -1775,6 +1862,7 @@ async function uploadFilesViaDirectObject(
   const alreadyCompletedFiles = files.filter((file) => findCompletedObjectForFile(completedByIdentity, file));
   let completedBytes = alreadyCompletedFiles.reduce((sum, file) => sum + Math.max(1, file.size), 0);
   let uploadedFiles = alreadyCompletedFiles.length;
+  const failedFiles: FailedUploadFile[] = [];
 
   const reportProgress = (overrides: Partial<UploadProgressSnapshot> = {}) => {
     const activeBytes = loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0);
@@ -1910,6 +1998,7 @@ async function uploadFilesViaDirectObject(
                 return nextTarget;
               },
               onOfflinePause: () => reportProgress({ stage: 'paused', offline: true }),
+              projectId,
               signal: options.signal
             });
             targets[batchFileIndex] = latestTarget;
@@ -1929,6 +2018,7 @@ async function uploadFilesViaDirectObject(
               lastError: getUploadFailureMessage(error)
             };
             options.onFileFailed?.(failedFile);
+            failedFiles.push(failedFile);
             if (options.continueOnFileError) {
               loadedByFile[fileIndex] = 0;
               reportProgress();
@@ -1967,6 +2057,7 @@ async function uploadFilesViaDirectObject(
     .map((file) => findCompletedObjectForFile(completedByIdentity, file))
     .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
   if (options.continueOnFileError && !completedObjects.length) {
+    emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
     throw new Error('No files uploaded.');
   }
   const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
@@ -1981,6 +2072,10 @@ async function uploadFilesViaDirectObject(
       })
   });
   await clearPersistedProject(projectId);
+  if (failedFiles.length) {
+    emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
+  }
+  emitUploadBatchEvent('upload.batch-completed', { projectId, files, uploadedFiles, failedFiles });
   onProgress(100, {
     stage: 'completed',
     percent: 100,
