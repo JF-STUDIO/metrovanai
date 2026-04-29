@@ -1,4 +1,5 @@
 import type { BillingEntry, BillingPackage, BillingSummary, PaymentOrderRecord, ProjectRecord } from './types';
+import { appendPersistedCompleted, clearPersistedProject, readPersistedCompleted } from './upload-resume';
 
 const LOCAL_API_ROOT = 'http://127.0.0.1:8787';
 const PRODUCTION_API_ROOT = 'https://api.metrovanai.com';
@@ -1174,9 +1175,41 @@ function getDirectObjectUploadConcurrency(files: File[]) {
   return DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY;
 }
 
-function getUploadObjectIdentity(file: Pick<File, 'name' | 'size'> | Pick<UploadedObjectReference, 'originalName' | 'size'>) {
-  const name = 'name' in file ? file.name : file.originalName;
-  return `${name.trim().toLowerCase()}:${file.size}`;
+function getUploadedObjectIdentity(file: Pick<UploadedObjectReference, 'originalName' | 'size'>) {
+  return `${file.originalName.trim().toLowerCase()}:${file.size}`;
+}
+
+function getFileRelativePath(file: File) {
+  const maybePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+  return typeof maybePath === 'string' ? maybePath.trim().toLowerCase() : '';
+}
+
+function getFileUploadIdentity(file: File) {
+  return `${file.name.trim().toLowerCase()}:${file.size}:${file.lastModified}:${getFileRelativePath(file)}`;
+}
+
+function getLegacyFileUploadIdentity(file: Pick<File, 'name' | 'size'>) {
+  return `${file.name.trim().toLowerCase()}:${file.size}`;
+}
+
+function getFileUploadIdentityCandidates(file: File) {
+  return [getFileUploadIdentity(file), getLegacyFileUploadIdentity(file)];
+}
+
+function findCompletedObjectForFile(completedByIdentity: Map<string, UploadedObjectReference>, file: File) {
+  for (const identity of getFileUploadIdentityCandidates(file)) {
+    const uploaded = completedByIdentity.get(identity);
+    if (uploaded) {
+      return uploaded;
+    }
+  }
+  return null;
+}
+
+function collectCompletedObjects(files: File[], completedByIdentity: Map<string, UploadedObjectReference>) {
+  return files
+    .map((file) => findCompletedObjectForFile(completedByIdentity, file))
+    .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
 }
 
 function normalizeDirectUploadTargetLimits(limits?: UploadCapabilitiesPayload['directUploadTargets']): DirectUploadTargetLimits {
@@ -1227,12 +1260,18 @@ async function uploadFilesViaDirectObject(
   targetLimits?: UploadCapabilitiesPayload['directUploadTargets']
 ) {
   throwIfUploadAborted(options.signal);
-  const completedByIdentity = new Map(
-    (options.completedObjects ?? []).map((uploaded) => [getUploadObjectIdentity(uploaded), uploaded])
-  );
-  const pendingFiles = files.filter((file) => !completedByIdentity.has(getUploadObjectIdentity(file)));
+  const completedByIdentity = new Map<string, UploadedObjectReference>();
+  for (const uploaded of options.completedObjects ?? []) {
+    completedByIdentity.set(getUploadedObjectIdentity(uploaded), uploaded);
+  }
+  for (const persisted of await readPersistedCompleted(projectId)) {
+    completedByIdentity.set(persisted.fileIdentity, persisted.object);
+    completedByIdentity.set(getUploadedObjectIdentity(persisted.object), persisted.object);
+  }
+
+  const pendingFiles = files.filter((file) => !findCompletedObjectForFile(completedByIdentity, file));
   if (!pendingFiles.length) {
-    const completedObjects = Array.from(completedByIdentity.values());
+    const completedObjects = collectCompletedObjects(files, completedByIdentity);
     onProgress(96, {
       stage: 'finalizing',
       percent: 96,
@@ -1240,6 +1279,7 @@ async function uploadFilesViaDirectObject(
       totalFiles: files.length
     });
     const response = await completeDirectObjectUploadReferences(projectId, completedObjects);
+    await clearPersistedProject(projectId);
     onProgress(100, {
       stage: 'completed',
       percent: 100,
@@ -1261,8 +1301,9 @@ async function uploadFilesViaDirectObject(
     files.reduce((sum, file) => sum + Math.max(1, file.size), 0)
   );
   const loadedByFile = new Array<number>(pendingFiles.length).fill(0);
-  let completedBytes = Array.from(completedByIdentity.values()).reduce((sum, uploaded) => sum + Math.max(1, uploaded.size), 0);
-  let uploadedFiles = files.length - pendingFiles.length;
+  const alreadyCompletedFiles = files.filter((file) => findCompletedObjectForFile(completedByIdentity, file));
+  let completedBytes = alreadyCompletedFiles.reduce((sum, file) => sum + Math.max(1, file.size), 0);
+  let uploadedFiles = alreadyCompletedFiles.length;
 
   const reportProgress = (overrides: Partial<UploadProgressSnapshot> = {}) => {
     const activeBytes = loadedByFile.reduce((sum, value) => sum + Math.max(0, value), 0);
@@ -1336,7 +1377,10 @@ async function uploadFilesViaDirectObject(
           size: file.size || latestTarget.size,
           storageKey: latestTarget.storageKey
         };
-        completedByIdentity.set(getUploadObjectIdentity(uploadedObject), uploadedObject);
+        const fileIdentity = getFileUploadIdentity(file);
+        completedByIdentity.set(fileIdentity, uploadedObject);
+        completedByIdentity.set(getUploadedObjectIdentity(uploadedObject), uploadedObject);
+        await appendPersistedCompleted(projectId, fileIdentity, uploadedObject);
         options.onFileUploaded?.(uploadedObject);
         completedBytes += Math.max(1, file.size);
         uploadedFiles += 1;
@@ -1360,9 +1404,10 @@ async function uploadFilesViaDirectObject(
     totalFiles: files.length
   });
   const completedObjects = files
-    .map((file) => completedByIdentity.get(getUploadObjectIdentity(file)))
+    .map((file) => findCompletedObjectForFile(completedByIdentity, file))
     .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
   const response = await completeDirectObjectUploadReferences(projectId, completedObjects);
+  await clearPersistedProject(projectId);
   onProgress(100, {
     stage: 'completed',
     percent: 100,
