@@ -463,8 +463,9 @@ def parse_lcp_distortion_models(profile_path: Path) -> list[dict[str, Any]]:
         return []
 
     models: list[dict[str, Any]] = []
-    perspectives = re.finditer(r"<stCamera:(PerspectiveModel|FisheyeModel)\b(?P<attrs>[^>]*)/?>", text, re.DOTALL)
+    perspectives = re.finditer(r"<stCamera:(PerspectiveModel|FisheyeModel)\b(?P<attrs>[^>]*)>", text, re.DOTALL)
     for perspective in perspectives:
+        model_type = perspective.group(1)
         description_start = text.rfind("<rdf:Description", 0, perspective.start())
         if description_start < 0:
             continue
@@ -473,6 +474,13 @@ def parse_lcp_distortion_models(profile_path: Path) -> list[dict[str, Any]]:
             continue
         common = lcp_attrs(text[description_start : description_end + 1])
         attrs = lcp_attrs(perspective.group("attrs"))
+        if not any(key.startswith("RadialDistortParam") for key in attrs):
+            model_end = text.find(f"</stCamera:{model_type}>", perspective.end())
+            if model_end > perspective.end():
+                nested_block = text[perspective.end() : model_end]
+                nested = re.search(r"<rdf:Description\b(?P<attrs>[^>]*)/?>", nested_block, re.DOTALL)
+                if nested:
+                    attrs = {**attrs, **lcp_attrs(nested.group("attrs"))}
         params = [
             lcp_float(attrs, "RadialDistortParam1"),
             lcp_float(attrs, "RadialDistortParam2"),
@@ -494,7 +502,7 @@ def parse_lcp_distortion_models(profile_path: Path) -> list[dict[str, Any]]:
                 "center_y": lcp_float(attrs, "ImageYCenter", 0.5),
                 "params": params,
                 "mean_error": lcp_float(attrs, "ResidualMeanError", 0.0),
-                "fisheye": perspective.group(1) == "FisheyeModel",
+                "fisheye": model_type == "FisheyeModel",
             }
         )
 
