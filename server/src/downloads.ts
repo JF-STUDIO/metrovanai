@@ -4,7 +4,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 import { createJpegVariantStream, writeJpegVariant } from './images.js';
-import { createObjectDownloadUrl, restoreObjectToFileIfAvailable } from './object-storage.js';
+import { createObjectDownloadUrl, getObjectStorageMetadata, restoreObjectToFileIfAvailable } from './object-storage.js';
 import type { ProjectRecord } from './types.js';
 import { sanitizeSegment } from './utils.js';
 
@@ -202,6 +202,33 @@ class ZipWriteCursor {
 }
 
 type DownloadAsset = ProjectRecord['resultAssets'][number];
+
+export class DownloadIncompleteError extends Error {
+  constructor(public readonly missingFiles: string[]) {
+    super(`Download incomplete: ${missingFiles.length} files missing`);
+    this.name = 'DownloadIncompleteError';
+  }
+}
+
+export async function assertProjectDownloadAssetsReady(project: ProjectRecord) {
+  const missing: string[] = [];
+  for (const asset of project.resultAssets) {
+    if (fs.existsSync(asset.storagePath)) {
+      continue;
+    }
+    if (!asset.storageKey) {
+      missing.push(asset.fileName);
+      continue;
+    }
+    const metadata = await getObjectStorageMetadata(asset.storageKey).catch(() => null);
+    if (!metadata) {
+      missing.push(asset.fileName);
+    }
+  }
+  if (missing.length) {
+    throw new DownloadIncompleteError(Array.from(new Set(missing)));
+  }
+}
 
 type PreparedDownloadSource = {
   stream: AsyncIterable<Buffer | Uint8Array | string>;

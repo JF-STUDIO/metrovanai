@@ -4582,7 +4582,7 @@ function App() {
     setDownloadBusy(true);
     try {
       const payload = buildDownloadPayload();
-      const { downloadUrl, fileName } = await downloadProjectArchive(downloadProject.id, payload);
+      const { downloadUrl, fileName, revoke } = await downloadProjectArchive(downloadProject.id, payload);
       const anchor = document.createElement('a');
       anchor.href = downloadUrl;
       anchor.download = fileName;
@@ -4590,9 +4590,14 @@ function App() {
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
+      window.setTimeout(revoke, 30_000);
       closeDownloadDialog(true);
     } catch (error) {
-      setMessage(getUserFacingErrorMessage(error, copy.downloadFailed, locale));
+      if (error instanceof ApiRequestError && error.status === 409) {
+        setMessage(locale === 'en' ? error.message : '项目结果不完整，缺少结果图。请重新生成缺失项后再下载。');
+      } else {
+        setMessage(getUserFacingErrorMessage(error, copy.downloadFailed, locale));
+      }
     } finally {
       setDownloadBusy(false);
     }

@@ -31,7 +31,13 @@ import {
   sanitizeReturnTo,
   verifyPassword
 } from './auth.js';
-import { getDefaultDownloadOptions, getProjectDownloadFileName, streamProjectDownloadArchive } from './downloads.js';
+import {
+  DownloadIncompleteError,
+  assertProjectDownloadAssetsReady,
+  getDefaultDownloadOptions,
+  getProjectDownloadFileName,
+  streamProjectDownloadArchive
+} from './downloads.js';
 import { buildHdrItemsFromFrontendLayout } from './importer.js';
 import { extractPreviewOrConvertToJpeg } from './images.js';
 import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js';
@@ -4144,8 +4150,34 @@ async function sendProjectDownloadArchive(
   options: ReturnType<typeof getDefaultDownloadOptions>,
   res: express.Response
 ) {
+  await assertProjectDownloadAssetsReady(project);
   setArchiveDownloadHeaders(res, getProjectDownloadFileName(project));
   await streamProjectDownloadArchive(project, res, options);
+}
+
+function handleDownloadError(
+  req: express.Request,
+  res: express.Response,
+  project: ProjectRecord,
+  user: NonNullable<ReturnType<typeof requireAuthenticatedUser>>,
+  error: unknown
+) {
+  if (error instanceof DownloadIncompleteError) {
+    writeSecurityAuditLog(req, {
+      action: 'project.download.incomplete',
+      targetUserId: user.id,
+      targetProjectId: project.id,
+      details: { missingFiles: error.missingFiles }
+    });
+    res.status(409).json({ error: 'incomplete', missingFiles: error.missingFiles });
+    return;
+  }
+
+  if (!res.headersSent) {
+    res.status(400).json({ error: getPublicErrorMessage(error, '下载生成失败，请稍后再试。') });
+  } else {
+    res.destroy(error instanceof Error ? error : new Error(String(error)));
+  }
 }
 
 app.get('/api/projects/:id/download', async (req, res) => {
@@ -4172,11 +4204,7 @@ app.get('/api/projects/:id/download', async (req, res) => {
   try {
     await sendProjectDownloadArchive(project, parseDownloadQueryOptions(req.query.options), res);
   } catch (error) {
-    if (!res.headersSent) {
-      res.status(400).json({ error: getPublicErrorMessage(error, '下载生成失败，请稍后再试。') });
-    } else {
-      res.destroy(error instanceof Error ? error : new Error(String(error)));
-    }
+    handleDownloadError(req, res, project, user, error);
   }
 });
 
@@ -4213,11 +4241,7 @@ app.post('/api/projects/:id/download', async (req, res) => {
       ...parsed.data
     }, res);
   } catch (error) {
-    if (!res.headersSent) {
-      res.status(400).json({ error: getPublicErrorMessage(error, '下载生成失败，请稍后再试。') });
-    } else {
-      res.destroy(error instanceof Error ? error : new Error(String(error)));
-    }
+    handleDownloadError(req, res, project, user, error);
   }
 });
 

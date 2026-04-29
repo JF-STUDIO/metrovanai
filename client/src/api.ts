@@ -923,9 +923,31 @@ export function buildProjectDownloadUrl(projectId: string, input: DownloadReques
 }
 
 export async function downloadProjectArchive(projectId: string, input: DownloadRequestPayload) {
+  const response = await fetch(`${API_ROOT}/api/projects/${encodeURIComponent(projectId)}/download`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: buildRequestHeaders({
+      headers: { 'Content-Type': 'application/json' }
+    }),
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    if (response.status === 409) {
+      const payload = (await response.json().catch(() => null)) as { missingFiles?: unknown } | null;
+      const missingFiles = Array.isArray(payload?.missingFiles) ? payload.missingFiles.filter((item) => typeof item === 'string') : [];
+      const suffix = missingFiles.length ? ` Missing: ${missingFiles.slice(0, 5).join(', ')}` : '';
+      throw new ApiRequestError(`Project results are incomplete.${suffix}`, response.status);
+    }
+    throw new ApiRequestError(await readErrorMessage(response), response.status);
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = URL.createObjectURL(blob);
   return {
-    downloadUrl: buildProjectDownloadUrl(projectId, input),
-    fileName: `${projectId}.zip`
+    downloadUrl,
+    fileName: `${projectId}.zip`,
+    revoke: () => URL.revokeObjectURL(downloadUrl)
   };
 }
 
