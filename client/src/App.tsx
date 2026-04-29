@@ -2249,6 +2249,10 @@ function formatUploadProgressLabel(
     );
   }
 
+  if (snapshot.stage === 'paused') {
+    return `${copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles)} · waiting for network`;
+  }
+
   return copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles);
 }
 
@@ -5419,7 +5423,10 @@ function App() {
           uploadedObjects.map((uploaded) => getUploadReferenceIdentity(uploaded))
         );
         const inFlightGroupProgress = new Map<string, number>();
-        const updateAggregateUploadProgress = (stage: UploadProgressSnapshot['stage'] = 'uploading') => {
+        const updateAggregateUploadProgress = (
+          stage: UploadProgressSnapshot['stage'] = 'uploading',
+          details: Pick<Partial<UploadProgressSnapshot>, 'currentFileName' | 'attempt' | 'maxAttempts' | 'offline'> = {}
+        ) => {
           const inFlightFiles = Array.from(inFlightGroupProgress.values()).reduce((sum, value) => sum + value, 0);
           const uploadedFiles = Math.min(uploadTotalFiles, completedFileIdentities.size + inFlightFiles);
           const percent =
@@ -5431,7 +5438,8 @@ function App() {
             stage,
             percent,
             uploadedFiles,
-            totalFiles: uploadTotalFiles
+            totalFiles: uploadTotalFiles,
+            ...details
           });
         };
         const uploadAbortController = new AbortController();
@@ -5497,7 +5505,13 @@ function App() {
                 snapshot?.uploadedFiles ?? Math.round(((_percent || 0) / 100) * groupFiles.length)
               );
               inFlightGroupProgress.set(hdrItem.id, uploadedInGroup);
-              updateAggregateUploadProgress('uploading');
+              const stage = snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' ? snapshot.stage : 'uploading';
+              updateAggregateUploadProgress(stage, {
+                currentFileName: snapshot?.currentFileName,
+                attempt: snapshot?.attempt,
+                maxAttempts: snapshot?.maxAttempts,
+                offline: snapshot?.offline
+              });
             }, {
               signal: uploadAbortController.signal,
               completedObjects: existingGroupUploads,
