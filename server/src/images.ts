@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { toolPaths, runProcess } from './native-tools.js';
 import { ensureDir, isRawExtension } from './utils.js';
@@ -435,6 +437,60 @@ export async function writeJpegVariant(
   }
 
   await convertToJpegWithMagick(sourcePath, destinationPath, quality, resize);
+}
+
+export function createJpegVariantStream(sourcePath: string, quality: number, resize?: number | JpegVariantSize) {
+  if (!toolPaths.magick) {
+    throw new Error('ImageMagick is not available.');
+  }
+
+  const args = [sourcePath];
+  const resizeExpression = resolveResizeExpression(resize);
+  if (resizeExpression) {
+    args.push('-resize', resizeExpression);
+  }
+  args.push('-quality', String(quality), 'jpg:-');
+
+  const output = new PassThrough();
+  const child = spawn(toolPaths.magick, args, {
+    cwd: path.dirname(sourcePath),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
+  });
+  const stderrChunks: Buffer[] = [];
+  let childClosed = false;
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill();
+  }, 180 * 1000);
+
+  child.stdout.pipe(output, { end: false });
+  child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+  child.on('error', (error) => {
+    clearTimeout(timeout);
+    output.destroy(error);
+  });
+  child.on('close', (exitCode) => {
+    childClosed = true;
+    clearTimeout(timeout);
+    if (timedOut) {
+      output.destroy(new Error('magick jpeg stream timed out.'));
+      return;
+    }
+    if (exitCode !== 0) {
+      output.destroy(new Error(`magick jpeg stream failed: ${trimError(Buffer.concat(stderrChunks).toString('utf8'))}`));
+      return;
+    }
+    output.end();
+  });
+  output.on('close', () => {
+    if (!childClosed) {
+      child.kill();
+    }
+  });
+
+  return output;
 }
 
 function buildRawTherapeeProfile(mode: RawWhiteBalanceMode, resizeLongEdge = HDR_LONG_EDGE, lcpProfilePath: string | null = null) {

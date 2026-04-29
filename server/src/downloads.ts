@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { Readable, Writable } from 'node:stream';
-import { writeJpegVariant } from './images.js';
+import { createJpegVariantStream, writeJpegVariant } from './images.js';
 import { createObjectDownloadUrl, restoreObjectToFileIfAvailable } from './object-storage.js';
 import type { ProjectRecord } from './types.js';
 import { sanitizeSegment } from './utils.js';
@@ -233,15 +233,9 @@ async function prepareAssetDownloadSource(
       return null;
     }
 
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), `metrovan-download-${project.id}-`));
-    const variantPath = path.join(tempRoot, `${sanitizeSegment(path.basename(asset.fileName, path.extname(asset.fileName))) || asset.id}.jpg`);
-    await writeJpegVariant(asset.storagePath, variantPath, 95, resize);
     return {
-      stream: fs.createReadStream(variantPath),
-      mtime: fs.statSync(asset.storagePath).mtime,
-      cleanup: () => {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
-      }
+      stream: createJpegVariantStream(asset.storagePath, 95, resize),
+      mtime: fs.statSync(asset.storagePath).mtime
     };
   }
 
