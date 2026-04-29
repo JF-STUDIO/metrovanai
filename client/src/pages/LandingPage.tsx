@@ -143,7 +143,13 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
       return;
     }
 
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
     let activated = false;
+    let activationTimerId: number | null = null;
+    let activationIdleId: number | null = null;
     const activateVideo = () => {
       if (activated) {
         attemptLandingVideoPlayback(video);
@@ -157,6 +163,36 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
       }
       video.load();
       attemptLandingVideoPlayback(video);
+    };
+    const clearScheduledActivation = () => {
+      if (activationTimerId !== null) {
+        window.clearTimeout(activationTimerId);
+        activationTimerId = null;
+      }
+      if (activationIdleId !== null) {
+        idleWindow.cancelIdleCallback?.(activationIdleId);
+        activationIdleId = null;
+      }
+    };
+    const scheduleActivation = () => {
+      if (activated) {
+        activateVideo();
+        return;
+      }
+      if (activationTimerId !== null || activationIdleId !== null) {
+        return;
+      }
+
+      const start = () => {
+        activationTimerId = null;
+        activationIdleId = null;
+        activateVideo();
+      };
+      if (typeof idleWindow.requestIdleCallback === 'function') {
+        activationIdleId = idleWindow.requestIdleCallback(start, { timeout: 2400 });
+      } else {
+        activationTimerId = window.setTimeout(start, 1200);
+      }
     };
     const retryPlayback = () => activateVideo();
     const retryWhenVisible = () => {
@@ -172,15 +208,15 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
       observer = new IntersectionObserverCtor(
         (entries) => {
           if (entries.some((entry) => entry.isIntersecting)) {
-            activateVideo();
+            scheduleActivation();
             observer?.disconnect();
           }
         },
-        { rootMargin: '280px 0px' }
+        { rootMargin: '100px 0px' }
       );
       observer.observe(video);
     } else {
-      fallbackFrameId = window.requestAnimationFrame(activateVideo);
+      fallbackFrameId = window.requestAnimationFrame(scheduleActivation);
     }
 
     window.addEventListener('pageshow', retryPlayback);
@@ -190,6 +226,7 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
 
     return () => {
       observer?.disconnect();
+      clearScheduledActivation();
       if (fallbackFrameId !== null) {
         window.cancelAnimationFrame(fallbackFrameId);
       }

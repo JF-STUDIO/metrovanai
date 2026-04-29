@@ -1349,3 +1349,189 @@
   color: rgba(255, 255, 255, 0.94) !important;
   border-color: rgba(255, 255, 255, 0.14) !important;
 }
+
+/* ============================================================ */
+/* App notifications, upload, download, and auth polish          */
+/* ============================================================ */
+
+@keyframes toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+.global-message {
+  background: linear-gradient(
+    135deg,
+    rgba(16, 18, 28, 0.97) 0%,
+    rgba(10, 12, 20, 0.97) 100%
+  ) !important;
+  border: 1px solid rgba(var(--accent-rgb), 0.22) !important;
+  border-left: 3px solid rgba(var(--accent-rgb), 0.9) !important;
+  box-shadow:
+    0 8px 40px -8px rgba(0, 0, 0, 0.72),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 0 28px -10px rgba(var(--accent-rgb), 0.18) !important;
+  font-family: var(--hp-body, sans-serif) !important;
+  font-size: 0.875rem !important;
+  line-height: 1.5 !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  pointer-events: auto !important;
+  animation: toast-slide-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+}
+
+@keyframes upload-shimmer {
+  from { background-position: -200% center; }
+  to { background-position: 200% center; }
+}
+
+.review-upload-status {
+  border: 1px solid rgba(var(--accent-rgb), 0.28) !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(var(--accent-rgb), 0.09) 0%,
+      rgba(8, 10, 18, 0.88) 100%
+    ) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 4px 24px -8px rgba(var(--accent-rgb), 0.16) !important;
+  border-radius: 14px !important;
+  padding: 1.1rem 1.2rem !important;
+  gap: 0.55rem !important;
+}
+
+.review-upload-status > div > strong {
+  font-family: var(--hp-display, sans-serif) !important;
+  font-size: 0.9rem !important;
+  letter-spacing: -0.01em !important;
+  color: rgba(255, 255, 255, 0.96) !important;
+}
+
+.review-upload-status > div > span {
+  font-family: var(--hp-mono, monospace) !important;
+  font-size: 0.73rem !important;
+  color: rgba(var(--accent-rgb), 0.75) !important;
+  letter-spacing: 0.01em !important;
+  margin-top: 0.18rem !important;
+}
+
+.upload-progress-bar {
+  height: 4px !important;
+  background: rgba(255, 255, 255, 0.07) !important;
+}
+
+.upload-progress-bar span {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--accent-rgb), 0.65) 0%,
+    var(--accent) 45%,
+    rgba(var(--accent-rgb), 0.65) 100%
+  ) !important;
+  background-size: 200% 100% !important;
+  animation: upload-shimmer 1.8s linear infinite !important;
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.5) !important;
+  transition: width 200ms ease !important;
+}
+
+.download-card {
+  max-width: 540px !important;
+  background:
+    linear-gradient(180deg, rgba(14, 18, 24, 0.98), rgba(8, 10, 14, 0.97)),
+    radial-gradient(70% 50% at 50% -8%, rgba(var(--accent-rgb), 0.1), transparent 55%) !important;
+  border: 1px solid rgba(var(--accent-rgb), 0.14) !important;
+  border-radius: 18px !important;
+  box-shadow:
+    0 28px 64px -20px rgba(0, 0, 0, 0.75),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset !important;
+}
+
+.download-card .modal-head strong {
+  font-family: var(--hp-display, sans-serif) !important;
+  font-size: 1.06rem !important;
+  letter-spacing: -0.01em !important;
+  color: #fff !important;
+}
+
+.download-card .download-section-label {
+  color: rgba(var(--accent-rgb), 0.62) !important;
+  font-size: 0.67rem !important;
+  letter-spacing: 0.09em !important;
+}
+
+.download-card .download-variant-row {
+  border-color: rgba(255, 255, 255, 0.07) !important;
+  background: rgba(255, 255, 255, 0.025) !important;
+  border-radius: 10px !important;
+  transition: border-color 0.14s, background 0.14s !important;
+  cursor: pointer !important;
+}
+
+.download-card .download-variant-row:hover {
+  border-color: rgba(var(--accent-rgb), 0.28) !important;
+  background: rgba(var(--accent-rgb), 0.05) !important;
+}
+
+.download-card .download-variant-row:has(input:checked) {
+  border-color: rgba(var(--accent-rgb), 0.42) !important;
+  background: rgba(var(--accent-rgb), 0.08) !important;
+}
+
+.download-card .download-progress {
+  border: 1px solid rgba(var(--accent-rgb), 0.18) !important;
+  background: rgba(var(--accent-rgb), 0.06) !important;
+  color: rgba(var(--accent-rgb), 0.85) !important;
+  border-radius: 9px !important;
+}
+
+.download-card .download-progress-spinner {
+  border-color: rgba(var(--accent-rgb), 0.2) !important;
+  border-top-color: var(--accent) !important;
+}
+
+.download-card .download-note {
+  color: rgba(255, 255, 255, 0.4) !important;
+  font-size: 0.74rem !important;
+}
+
+.auth-card {
+  border: 1px solid rgba(var(--accent-rgb), 0.18) !important;
+  background:
+    linear-gradient(180deg, rgba(13, 15, 22, 0.98), rgba(8, 10, 16, 0.97)),
+    radial-gradient(70% 55% at 50% -5%, rgba(var(--accent-rgb), 0.15), transparent 56%) !important;
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.65),
+    0 0 48px -20px rgba(var(--accent-rgb), 0.22),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset !important;
+}
+
+.auth-card .auth-copy strong {
+  font-family: var(--hp-display, sans-serif) !important;
+  font-size: 1.18rem !important;
+  letter-spacing: -0.02em !important;
+  color: #fff !important;
+}
+
+.auth-card .auth-copy span {
+  font-size: 0.82rem !important;
+  color: rgba(255, 255, 255, 0.5) !important;
+  line-height: 1.45 !important;
+}
+
+.auth-card .auth-tab.active {
+  background: rgba(var(--accent-rgb), 0.18) !important;
+  color: var(--accent) !important;
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.35) !important;
+}
+
+.auth-card .auth-feedback {
+  border-color: rgba(255, 80, 80, 0.3) !important;
+  background: rgba(255, 60, 60, 0.06) !important;
+  color: rgba(255, 180, 180, 0.92) !important;
+  font-size: 0.8rem !important;
+}

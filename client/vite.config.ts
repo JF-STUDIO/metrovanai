@@ -12,7 +12,6 @@ export default defineConfig({
             return 'react';
           }
           if (id.includes('node_modules/@sentry/')) return 'sentry';
-          if (id.includes('node_modules/exifr')) return 'exifr';
           return undefined;
         }
       }

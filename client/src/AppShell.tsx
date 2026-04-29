@@ -1,8 +1,8 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
-import { fetchSession } from './api';
 import { LANDING_COPY, getStoredLandingLocale } from './landing-copy';
 import { captureClientError, initClientObservability } from './observability';
 import { LandingPage } from './pages/LandingPage';
+import { fetchShellSession } from './shell-api';
 
 const PRELOAD_RECOVERY_STORAGE_KEY = 'metrovanai.preload-recovery-at';
 const PRELOAD_RECOVERY_THROTTLE_MS = 15_000;
@@ -162,7 +162,7 @@ export default function AppShell() {
     }
 
     let cancelled = false;
-    fetchSession()
+    fetchShellSession()
       .then(({ session }) => {
         if (!cancelled) {
           setHasSession(Boolean(session));
