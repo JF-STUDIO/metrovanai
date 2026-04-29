@@ -84,6 +84,10 @@ function publicJob(job: DownloadJob | ProjectDownloadJobRecord) {
   };
 }
 
+function logJobEvent(event: 'created' | 'reused', job: DownloadJob | ProjectDownloadJobRecord) {
+  console.log(`[download-job] ${event}: project=${job.projectId} job=${job.jobId} status=${job.status}`);
+}
+
 function persistJob(job: DownloadJob) {
   jobStore?.upsertProjectDownloadJob({
     jobId: job.jobId,
@@ -190,10 +194,12 @@ export function enqueueDownloadJob(input: {
   const requestKey = getRequestKey(input.project.id, input.options);
   const reused = getReusableJob(requestKey);
   if (reused) {
+    logJobEvent('reused', reused);
     return { job: publicJob(reused), reused: true };
   }
   const persisted = jobStore?.findReusableProjectDownloadJob(input.project.id, input.userKey, requestKey, JOB_RETENTION_MS) ?? null;
   if (persisted) {
+    logJobEvent('reused', persisted);
     return { job: publicJob(persisted), reused: true };
   }
 
@@ -216,6 +222,7 @@ export function enqueueDownloadJob(input: {
   jobs.set(job.jobId, job);
   activeByRequest.set(job.requestKey, job.jobId);
   persistJob(job);
+  logJobEvent('created', job);
   queue.push(job);
   startWorker();
   return { job: publicJob(job), reused: false };
