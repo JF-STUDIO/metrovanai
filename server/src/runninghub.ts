@@ -87,6 +87,10 @@ function isTransientRunningHubError(error: unknown) {
   );
 }
 
+function describeError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function ensureSuccess(response: Response) {
   const bodyText = await response.text();
   if (!response.ok) {
@@ -357,20 +361,44 @@ export class RunningHubClient {
     }
 
     let outputs: RunningHubOutputsResult | null = null;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      outputs = await this.getOutputs(apiKey, taskId);
+    let lastOutputError: unknown = null;
+    for (let attempt = 1; attempt <= 30 && Date.now() < deadline; attempt += 1) {
+      try {
+        outputs = await this.getOutputs(apiKey, taskId);
+      } catch (error) {
+        lastOutputError = error;
+        if (!isTransientRunningHubError(error)) {
+          throw error;
+        }
+        onProgress?.({
+          taskStatus: 'RUNNING',
+          monitorState: 'outputs-retrying',
+          detail: `outputs fetch retry ${attempt}/30: ${describeError(error)}`,
+          remoteProgress: 100,
+          queuePosition: 0
+        });
+        await delay(Math.min(15000, 3000 + attempt * 1000));
+        continue;
+      }
       if (isOutputsReady(outputs.raw) && outputs.fileUrls.length > 0) {
         return outputs;
       }
-      await delay(3000);
+      onProgress?.({
+        taskStatus: 'RUNNING',
+        monitorState: 'outputs-waiting',
+        detail: `outputs not ready ${attempt}/30`,
+        remoteProgress: 100,
+        queuePosition: 0
+      });
+      await delay(Math.min(15000, 3000 + attempt * 1000));
     }
 
-    throw new Error('RunningHub outputs are not ready.');
+    throw new Error(`RunningHub outputs are not ready.${lastOutputError ? ` ${describeError(lastOutputError)}` : ''}`);
   }
 
   async downloadFile(url: string, targetPath: string) {
     let lastError: unknown = null;
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
+    for (let attempt = 1; attempt <= 10; attempt += 1) {
       try {
         const response = await fetch(url);
         if (!response.ok) {
@@ -385,13 +413,13 @@ export class RunningHubClient {
         return;
       } catch (error) {
         lastError = error;
-        if (attempt >= 4 || !isTransientRunningHubError(error)) {
+        if (attempt >= 10 || !isTransientRunningHubError(error)) {
           break;
         }
-        await delay(2000 * attempt);
+        await delay(Math.min(20000, 2000 * attempt));
       }
     }
 
-    throw new Error(lastError instanceof Error ? lastError.message : String(lastError));
+    throw new Error(`RunningHub file download failed after retries. ${describeError(lastError)}`);
   }
 }

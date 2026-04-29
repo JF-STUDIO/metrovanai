@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream } from 'node:stream/web';
 import { nanoid } from 'nanoid';
-import { ensureDir, sanitizeSegment, toUnixPath } from './utils.js';
+import { delay, ensureDir, sanitizeSegment, toUnixPath } from './utils.js';
 
 const DEFAULT_UPLOAD_EXPIRES_SECONDS = 60 * 60;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -71,6 +71,26 @@ function parsePositiveInt(value: string, fallback: number) {
 
 function isEnabledEnv(name: string) {
   return ['true', '1', 'yes'].includes(env(name).toLowerCase());
+}
+
+function describeError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTransientObjectStorageError(error: unknown) {
+  const normalized = describeError(error).toLowerCase();
+  return (
+    normalized.includes('fetch failed') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('etimedout') ||
+    normalized.includes('timeout') ||
+    normalized.includes('temporarily') ||
+    normalized.includes('socket')
+  );
+}
+
+function isTransientObjectStorageStatus(status: number) {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
 }
 
 function getObjectStorageConfig(options: { requireDirectUpload?: boolean } = {}): ObjectStorageConfig | null {
@@ -673,22 +693,41 @@ export async function uploadFileToObjectStorage(input: {
   if (input.contentType) {
     headers['Content-Type'] = input.contentType;
   }
-  const requestInit = {
-    method: 'PUT',
-    headers,
-    body: fs.createReadStream(input.sourcePath) as unknown as BodyInit,
-    duplex: 'half'
-  } as RequestInit & { duplex: 'half' };
-  const response = await fetch(uploadUrl, requestInit);
 
-  if (!response.ok) {
-    throw new Error(`Object upload failed: ${response.status} ${await response.text().catch(() => '')}`.trim());
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      const response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers,
+        body: fs.createReadStream(input.sourcePath) as unknown as BodyInit,
+        duplex: 'half'
+      } as RequestInit & { duplex: 'half' });
+
+      if (response.ok) {
+        return {
+          storageKey: input.storageKey,
+          downloadUrl: createObjectDownloadUrl(input.storageKey)
+        };
+      }
+
+      const message = `Object upload failed: ${response.status} ${await response.text().catch(() => '')}`.trim();
+      const error = new Error(message);
+      lastError = error;
+      if (attempt >= 6 || !isTransientObjectStorageStatus(response.status)) {
+        throw error;
+      }
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 6 || !isTransientObjectStorageError(error)) {
+        throw new Error(`Object upload failed after retries. ${describeError(error)}`);
+      }
+    }
+
+    await delay(Math.min(15000, 1500 * attempt));
   }
 
-  return {
-    storageKey: input.storageKey,
-    downloadUrl: createObjectDownloadUrl(input.storageKey)
-  };
+  throw new Error(`Object upload failed after retries. ${describeError(lastError)}`);
 }
 
 export async function mirrorLocalFileToObjectStorage(input: {
