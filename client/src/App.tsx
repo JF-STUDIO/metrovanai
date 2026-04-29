@@ -4,10 +4,10 @@ import { startTransition, useLayoutEffect } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import { AuthModal } from './components/AuthModal';
 import { LandingPage } from './pages/LandingPage';
-import logoMark from './assets/metrovan-logo-mark.png';
-import showcaseExteriorAfter from './assets/showcase-exterior-after.jpg';
-import showcaseInteriorAfter from './assets/showcase-interior-after.jpg';
-import showcaseInteriorBefore from './assets/showcase-interior-before.jpg';
+import logoMark from './assets/metrovan-logo-mark.webp';
+import showcaseExteriorAfter from './assets/showcase-exterior-after.webp';
+import showcaseInteriorAfter from './assets/showcase-interior-after.webp';
+import showcaseInteriorBefore from './assets/showcase-interior-before.webp';
 import type { LocalExposureDraft, LocalHdrItemDraft, LocalImportDraft } from './local-import';
 import {
   ApiRequestError,
@@ -746,6 +746,12 @@ const UI_TEXT = {
     downloadFailed: '下载生成失败。',
     downloadCustomRequired: '自定义尺寸至少填写长边或宽高。',
     downloadVariantRequired: '至少选择一种下载输出。',
+    downloadSectionOrganize: '文件组织',
+    downloadSectionSizes: '导出尺寸',
+    downloadStageQueued: '排队中…',
+    downloadStagePreflight: '检查文件…',
+    downloadStagePackaging: '正在打包…',
+    downloadStageUploading: '上传云端…',
     topUpDemo: '演示模式下不执行真实充值。',
     topUpSuccess: '积分充值成功。',
     topUpFailed: '积分充值失败。',
@@ -921,6 +927,8 @@ const UI_TEXT = {
     addPhotos: '添加照片',
     uploadStarting: '正在读取照片...',
     uploadProgress: (value: number) => `导入 ${value}%`,
+    uploadPreparingProgress: (uploaded: number, total: number) =>
+      uploaded > 0 ? `正在准备上传，已找到 ${uploaded}/${total} 张已上传文件` : `正在准备上传 ${total} 张，申请上传通道...`,
     uploadFileProgress: (uploaded: number, total: number) => `已上传 ${uploaded}/${total} 张`,
     uploadVerifyingProgress: (uploaded: number, total: number) => `正在校验已上传 ${uploaded}/${total} 张，缺失文件将自动补传`,
     uploadRetryProgress: (name: string, attempt: number, maxAttempts: number, uploaded: number, total: number) =>
@@ -1124,6 +1132,12 @@ const UI_TEXT = {
     downloadFailed: 'Failed to generate the download package.',
     downloadCustomRequired: 'Enter either a long edge or a width and height for the custom size.',
     downloadVariantRequired: 'Select at least one output variant.',
+    downloadSectionOrganize: 'File organization',
+    downloadSectionSizes: 'Export sizes',
+    downloadStageQueued: 'Queued…',
+    downloadStagePreflight: 'Checking files…',
+    downloadStagePackaging: 'Packaging…',
+    downloadStageUploading: 'Uploading…',
     topUpDemo: 'Demo mode does not perform real top-ups.',
     topUpSuccess: 'Credits added successfully.',
     topUpFailed: 'Top-up failed.',
@@ -1299,6 +1313,8 @@ const UI_TEXT = {
     addPhotos: 'Add Photos',
     uploadStarting: 'Reading photos...',
     uploadProgress: (value: number) => `Importing ${value}%`,
+    uploadPreparingProgress: (uploaded: number, total: number) =>
+      uploaded > 0 ? `Preparing upload; found ${uploaded}/${total} already uploaded` : `Preparing ${total} files and requesting upload slots...`,
     uploadFileProgress: (uploaded: number, total: number) => `Uploaded ${uploaded}/${total}`,
     uploadVerifyingProgress: (uploaded: number, total: number) => `Verifying uploaded files ${uploaded}/${total}; missing files will resume`,
     uploadRetryProgress: (name: string, attempt: number, maxAttempts: number, uploaded: number, total: number) =>
@@ -2159,6 +2175,10 @@ function formatUploadProgressLabel(
     return copy.uploadFileProgress(snapshot.totalFiles, snapshot.totalFiles);
   }
 
+  if (snapshot.stage === 'preparing') {
+    return copy.uploadPreparingProgress(snapshot.uploadedFiles, snapshot.totalFiles);
+  }
+
   if (snapshot.stage === 'verifying') {
     return copy.uploadVerifyingProgress(snapshot.uploadedFiles, snapshot.totalFiles);
   }
@@ -2632,6 +2652,7 @@ function App() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [downloadDialogProjectId, setDownloadDialogProjectId] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [downloadStageText, setDownloadStageText] = useState('');
   const [downloadDraft, setDownloadDraft] = useState<DownloadDraft>(DEFAULT_DOWNLOAD_DRAFT);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectAddress, setNewProjectAddress] = useState('');
@@ -4772,9 +4793,20 @@ function App() {
     }
 
     setDownloadBusy(true);
+    setDownloadStageText('');
     try {
       const payload = buildDownloadPayload();
-      const { downloadUrl, fileName, revoke } = await downloadProjectArchive(downloadProject.id, payload);
+      const stageLabels: Record<string, string> = {
+        queued: copy.downloadStageQueued,
+        preflight: copy.downloadStagePreflight,
+        packaging: copy.downloadStagePackaging,
+        uploading: copy.downloadStageUploading,
+      };
+      const { downloadUrl, fileName, revoke } = await downloadProjectArchive(
+        downloadProject.id,
+        payload,
+        (job) => { setDownloadStageText(stageLabels[job.status] ?? ''); }
+      );
       const anchor = document.createElement('a');
       anchor.href = downloadUrl;
       anchor.download = fileName;
@@ -4792,6 +4824,7 @@ function App() {
       }
     } finally {
       setDownloadBusy(false);
+      setDownloadStageText('');
     }
   }
 
@@ -5725,11 +5758,12 @@ function App() {
           details: Pick<Partial<UploadProgressSnapshot>, 'currentFileName' | 'attempt' | 'maxAttempts' | 'offline'> = {}
         ) => {
           const inFlightFiles = Array.from(inFlightGroupProgress.values()).reduce((sum, value) => sum + value, 0);
-          const uploadedFiles = Math.min(uploadTotalFiles, completedFileIdentities.size + inFlightFiles);
+          const uploadedFiles = Math.min(uploadTotalFiles, completedFileIdentities.size);
+          const progressFiles = Math.min(uploadTotalFiles, uploadedFiles + inFlightFiles);
           const percent =
             stage === 'completed'
               ? 100
-              : Math.max(1, Math.min(96, Math.round((uploadedFiles / uploadTotalFiles) * 96)));
+              : Math.max(1, Math.min(96, Math.round((progressFiles / uploadTotalFiles) * 96)));
           setUploadPercent(percent);
           setUploadSnapshot({
             stage,
@@ -9272,167 +9306,180 @@ function App() {
               </button>
             </div>
 
-            <div className="form-grid download-grid">
-              <label>
-                <span>{copy.downloadFolderMode}</span>
-                <select
-                  value={downloadDraft.folderMode}
-                  onChange={(event) =>
-                    setDownloadDraft((current) => ({
-                      ...current,
-                      folderMode: event.target.value as DownloadDraft['folderMode']
-                    }))
-                  }
-                  disabled={downloadBusy}
-                >
-                  <option value="grouped">{copy.downloadFolderGrouped}</option>
-                  <option value="flat">{copy.downloadFolderFlat}</option>
-                </select>
-              </label>
-
-              <label>
-                <span>{copy.downloadNamingMode}</span>
-                <select
-                  value={downloadDraft.namingMode}
-                  onChange={(event) =>
-                    setDownloadDraft((current) => ({
-                      ...current,
-                      namingMode: event.target.value as DownloadDraft['namingMode']
-                    }))
-                  }
-                  disabled={downloadBusy}
-                >
-                  <option value="sequence">{copy.downloadNamingSequence}</option>
-                  <option value="original">{copy.downloadNamingOriginal}</option>
-                  <option value="custom-prefix">{copy.downloadNamingCustomPrefix}</option>
-                </select>
-              </label>
-
-              {downloadDraft.namingMode === 'custom-prefix' && (
+            <div className="download-section">
+              <p className="download-section-label">{copy.downloadSectionOrganize}</p>
+              <div className="form-grid download-grid">
                 <label>
-                  <span>{copy.downloadCustomPrefix}</span>
-                  <input
-                    value={downloadDraft.customPrefix}
+                  <span>{copy.downloadFolderMode}</span>
+                  <select
+                    value={downloadDraft.folderMode}
                     onChange={(event) =>
                       setDownloadDraft((current) => ({
                         ...current,
-                        customPrefix: event.target.value
+                        folderMode: event.target.value as DownloadDraft['folderMode']
                       }))
                     }
-                    placeholder="metrovan"
                     disabled={downloadBusy}
-                  />
+                  >
+                    <option value="grouped">{copy.downloadFolderGrouped}</option>
+                    <option value="flat">{copy.downloadFolderFlat}</option>
+                  </select>
                 </label>
-              )}
+
+                <label>
+                  <span>{copy.downloadNamingMode}</span>
+                  <select
+                    value={downloadDraft.namingMode}
+                    onChange={(event) =>
+                      setDownloadDraft((current) => ({
+                        ...current,
+                        namingMode: event.target.value as DownloadDraft['namingMode']
+                      }))
+                    }
+                    disabled={downloadBusy}
+                  >
+                    <option value="sequence">{copy.downloadNamingSequence}</option>
+                    <option value="original">{copy.downloadNamingOriginal}</option>
+                    <option value="custom-prefix">{copy.downloadNamingCustomPrefix}</option>
+                  </select>
+                </label>
+
+                {downloadDraft.namingMode === 'custom-prefix' && (
+                  <label>
+                    <span>{copy.downloadCustomPrefix}</span>
+                    <input
+                      value={downloadDraft.customPrefix}
+                      onChange={(event) =>
+                        setDownloadDraft((current) => ({
+                          ...current,
+                          customPrefix: event.target.value
+                        }))
+                      }
+                      placeholder="metrovan"
+                      disabled={downloadBusy}
+                    />
+                  </label>
+                )}
+              </div>
             </div>
 
-            <div className="download-variants">
-              <label className="download-variant-row">
-                <input
-                  type="checkbox"
-                  checked={downloadDraft.includeHd}
-                  onChange={(event) =>
-                    setDownloadDraft((current) => ({
-                      ...current,
-                      includeHd: event.target.checked
-                    }))
-                  }
-                  disabled={downloadBusy}
-                />
-                <div>
-                  <strong>{copy.downloadHdTitle}</strong>
-                  <span>{copy.downloadHdHint}</span>
-                </div>
-              </label>
+            <div className="download-section">
+              <p className="download-section-label">{copy.downloadSectionSizes}</p>
+              <div className="download-variants">
+                <label className="download-variant-row">
+                  <input
+                    type="checkbox"
+                    checked={downloadDraft.includeHd}
+                    onChange={(event) =>
+                      setDownloadDraft((current) => ({
+                        ...current,
+                        includeHd: event.target.checked
+                      }))
+                    }
+                    disabled={downloadBusy}
+                  />
+                  <div>
+                    <strong>{copy.downloadHdTitle}</strong>
+                    <span>{copy.downloadHdHint}</span>
+                  </div>
+                </label>
 
-              <label className="download-variant-row">
-                <input
-                  type="checkbox"
-                  checked={downloadDraft.includeCustom}
-                  onChange={(event) =>
-                    setDownloadDraft((current) => ({
-                      ...current,
-                      includeCustom: event.target.checked
-                    }))
-                  }
-                  disabled={downloadBusy}
-                />
-                <div>
-                  <strong>{copy.downloadCustomTitle}</strong>
-                  <span>{copy.downloadCustomHint}</span>
-                </div>
-              </label>
+                <label className="download-variant-row">
+                  <input
+                    type="checkbox"
+                    checked={downloadDraft.includeCustom}
+                    onChange={(event) =>
+                      setDownloadDraft((current) => ({
+                        ...current,
+                        includeCustom: event.target.checked
+                      }))
+                    }
+                    disabled={downloadBusy}
+                  />
+                  <div>
+                    <strong>{copy.downloadCustomTitle}</strong>
+                    <span>{copy.downloadCustomHint}</span>
+                  </div>
+                </label>
 
-              {downloadDraft.includeCustom && (
-                <div className="form-grid download-custom-grid">
-                  <label>
-                    <span>{copy.downloadFolderLabel}</span>
-                    <input
-                      value={downloadDraft.customLabel}
-                      onChange={(event) =>
-                        setDownloadDraft((current) => ({
-                          ...current,
-                          customLabel: event.target.value
-                        }))
-                      }
-                      placeholder="Custom"
-                      disabled={downloadBusy}
-                    />
-                  </label>
-                  <label>
-                    <span>{copy.downloadLongEdge}</span>
-                    <input
-                      value={downloadDraft.customLongEdge}
-                      onChange={(event) =>
-                        setDownloadDraft((current) => ({
-                          ...current,
-                          customLongEdge: event.target.value
-                        }))
-                      }
-                      placeholder="3000"
-                      disabled={downloadBusy}
-                    />
-                  </label>
-                  <label>
-                    <span>{copy.downloadWidth}</span>
-                    <input
-                      value={downloadDraft.customWidth}
-                      onChange={(event) =>
-                        setDownloadDraft((current) => ({
-                          ...current,
-                          customWidth: event.target.value
-                        }))
-                      }
-                      placeholder="2048"
-                      disabled={downloadBusy}
-                    />
-                  </label>
-                  <label>
-                    <span>{copy.downloadHeight}</span>
-                    <input
-                      value={downloadDraft.customHeight}
-                      onChange={(event) =>
-                        setDownloadDraft((current) => ({
-                          ...current,
-                          customHeight: event.target.value
-                        }))
-                      }
-                      placeholder="1365"
-                      disabled={downloadBusy}
-                    />
-                  </label>
-                </div>
-              )}
+                {downloadDraft.includeCustom && (
+                  <div className="form-grid download-custom-grid">
+                    <label>
+                      <span>{copy.downloadFolderLabel}</span>
+                      <input
+                        value={downloadDraft.customLabel}
+                        onChange={(event) =>
+                          setDownloadDraft((current) => ({
+                            ...current,
+                            customLabel: event.target.value
+                          }))
+                        }
+                        placeholder="Custom"
+                        disabled={downloadBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>{copy.downloadLongEdge}</span>
+                      <input
+                        value={downloadDraft.customLongEdge}
+                        onChange={(event) =>
+                          setDownloadDraft((current) => ({
+                            ...current,
+                            customLongEdge: event.target.value
+                          }))
+                        }
+                        placeholder="3000"
+                        disabled={downloadBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>{copy.downloadWidth}</span>
+                      <input
+                        value={downloadDraft.customWidth}
+                        onChange={(event) =>
+                          setDownloadDraft((current) => ({
+                            ...current,
+                            customWidth: event.target.value
+                          }))
+                        }
+                        placeholder="2048"
+                        disabled={downloadBusy}
+                      />
+                    </label>
+                    <label>
+                      <span>{copy.downloadHeight}</span>
+                      <input
+                        value={downloadDraft.customHeight}
+                        onChange={(event) =>
+                          setDownloadDraft((current) => ({
+                            ...current,
+                            customHeight: event.target.value
+                          }))
+                        }
+                        placeholder="1365"
+                        disabled={downloadBusy}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
             </div>
 
             <p className="download-note">{copy.downloadNote}</p>
+
+            {downloadBusy && (
+              <div className="download-progress">
+                <span className="download-progress-spinner" />
+                <span>{downloadStageText || copy.downloadGenerating}</span>
+              </div>
+            )}
 
             <div className="modal-actions">
               <button className="ghost-button" type="button" onClick={() => closeDownloadDialog()} disabled={downloadBusy}>
                 {copy.cancel}
               </button>
               <button className="solid-button" type="button" onClick={() => void handleConfirmDownload()} disabled={downloadBusy}>
-                {downloadBusy ? copy.downloadGenerating : copy.downloadGenerate}
+                {copy.downloadGenerate}
               </button>
             </div>
           </div>

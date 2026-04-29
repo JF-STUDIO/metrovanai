@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
-import logoFull from '../assets/metrovan-logo-full.png';
-import jinSignatureAvatar from '../assets/jin-signature-avatar.jpg';
-import showcaseInteriorAfter from '../assets/showcase-interior-after.jpg';
-import showcaseInteriorBefore from '../assets/showcase-interior-before.jpg';
+import logoFull from '../assets/metrovan-logo-full.webp';
+import jinSignatureAvatar from '../assets/jin-signature-avatar.webp';
+import showcaseInteriorAfter from '../assets/showcase-interior-after.webp';
+import showcaseInteriorBefore from '../assets/showcase-interior-before.webp';
 import landingVideoPoster from '../assets/landing-video-poster.webp';
 import type { PlansPageCopy } from './PlansPage';
 

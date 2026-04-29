@@ -1101,8 +1101,13 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function waitForDownloadJob(projectId: string, initialJob: DownloadJobPayload) {
+async function waitForDownloadJob(
+  projectId: string,
+  initialJob: DownloadJobPayload,
+  onProgress?: (job: DownloadJobPayload) => void
+) {
   let job = initialJob;
+  onProgress?.(job);
   let delayMs = 1000;
   const deadline = Date.now() + 30 * 60 * 1000;
   while (Date.now() < deadline) {
@@ -1115,12 +1120,17 @@ async function waitForDownloadJob(projectId: string, initialJob: DownloadJobPayl
     await sleep(delayMs);
     delayMs = Math.min(delayMs + 500, 5000);
     job = (await fetchDownloadJob(projectId, job.jobId)).job;
+    onProgress?.(job);
   }
   throw new ApiRequestError('Download job timed out.', 408);
 }
 
-export async function downloadProjectArchive(projectId: string, input: DownloadRequestPayload) {
-  const job = await waitForDownloadJob(projectId, await startDownloadJob(projectId, input));
+export async function downloadProjectArchive(
+  projectId: string,
+  input: DownloadRequestPayload,
+  onProgress?: (job: DownloadJobPayload) => void
+) {
+  const job = await waitForDownloadJob(projectId, await startDownloadJob(projectId, input), onProgress);
   if (!job.downloadUrl) {
     throw new ApiRequestError('Download job finished without a download URL.', 400);
   }
