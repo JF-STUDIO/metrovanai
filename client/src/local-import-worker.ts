@@ -501,10 +501,22 @@ self.addEventListener('message', (event: MessageEvent<ParseRequest>) => {
 
   void (async () => {
     try {
+      const PARSE_CONCURRENCY = 4;
       const frames: ParsedFramePayload[] = [];
-      for (let index = 0; index < request.files.length; index += 1) {
-        frames.push(await parseFrame(request.files[index]!, index));
-        self.postMessage({ type: 'progress', id: request.id, completed: index + 1, total: request.files.length });
+      let completed = 0;
+      for (let start = 0; start < request.files.length; start += PARSE_CONCURRENCY) {
+        const end = Math.min(start + PARSE_CONCURRENCY, request.files.length);
+        const chunkFrames = await Promise.all(
+          Array.from({ length: end - start }, (_unused, i) => {
+            const fileIndex = start + i;
+            return parseFrame(request.files[fileIndex]!, fileIndex).then((frame) => {
+              completed += 1;
+              self.postMessage({ type: 'progress', id: request.id, completed, total: request.files.length });
+              return frame;
+            });
+          })
+        );
+        frames.push(...chunkFrames);
       }
       self.postMessage({ type: 'result', id: request.id, frames });
     } catch (error) {
