@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
 :root {
   color: #f5f7fb;
   background: #040404;
@@ -732,7 +730,12 @@ img {
 .asset-delete,
 .viewer-arrow,
 .close-button {
-  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    opacity 0.18s ease;
 }
 
 .solid-button,
@@ -800,4 +803,35 @@ img {
 .viewer-arrow:hover,
 .close-button:hover {
   transform: translateY(-1px);
+}
+
+.solid-button:disabled,
+.ghost-button:disabled,
+.primary-button:disabled,
+.text-link:disabled,
+.segmented button:disabled,
+.asset-delete:disabled,
+.viewer-arrow:disabled,
+.close-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+  transform: none;
+  box-shadow: none;
+}
+
+.solid-button:focus-visible,
+.ghost-button:focus-visible,
+.primary-button:focus-visible,
+.text-link:focus-visible,
+.segmented button:focus-visible,
+.asset-delete:focus-visible,
+.viewer-arrow:focus-visible,
+.close-button:focus-visible,
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(124, 232, 255, 0.92);
+  outline-offset: 3px;
 }

@@ -2131,6 +2131,22 @@
   to { transform: rotate(360deg); }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .asset-spinner,
+  .download-progress-spinner {
+    animation: none;
+  }
+
+  .result-card,
+  .asset-card,
+  .project-tile,
+  .segmented button,
+  .solid-button,
+  .ghost-button {
+    transition-duration: 0.01ms;
+  }
+}
+
 @media (max-width: 1200px) {
   .studio-layout {
     grid-template-columns: 1fr;
