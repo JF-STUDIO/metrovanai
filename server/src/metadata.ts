@@ -21,6 +21,9 @@ const { Pool } = pg;
 export const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
 export const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
 export const DEFAULT_RUNPOD_HDR_BATCH_SIZE = 10;
+export const MAX_RUNNINGHUB_MAX_IN_FLIGHT = 200;
+export const MIN_RUNNINGHUB_MAX_IN_FLIGHT = 1;
+export const DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT = 48;
 
 export interface DatabaseShape {
   projects: ProjectRecord[];
@@ -74,6 +77,7 @@ function createEmptyDatabase(): DatabaseShape {
     auditLogs: [],
     systemSettings: {
       runpodHdrBatchSize: DEFAULT_RUNPOD_HDR_BATCH_SIZE,
+      runningHubMaxInFlight: DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT,
       billingPackages: normalizeBillingPackages(undefined),
       studioFeatures: DEFAULT_STUDIO_FEATURES
     }
@@ -82,12 +86,22 @@ function createEmptyDatabase(): DatabaseShape {
 
 function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): SystemSettings {
   const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? DEFAULT_RUNPOD_HDR_BATCH_SIZE);
+  const parsedRunningHubMaxInFlight = Number(input?.runningHubMaxInFlight ?? DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT);
   return {
     runpodHdrBatchSize: Math.max(
       MIN_RUNPOD_HDR_BATCH_SIZE,
       Math.min(
         MAX_RUNPOD_HDR_BATCH_SIZE,
         Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : DEFAULT_RUNPOD_HDR_BATCH_SIZE
+      )
+    ),
+    runningHubMaxInFlight: Math.max(
+      MIN_RUNNINGHUB_MAX_IN_FLIGHT,
+      Math.min(
+        MAX_RUNNINGHUB_MAX_IN_FLIGHT,
+        Number.isFinite(parsedRunningHubMaxInFlight)
+          ? Math.round(parsedRunningHubMaxInFlight)
+          : DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT
       )
     ),
     billingPackages: normalizeBillingPackages(input?.billingPackages),

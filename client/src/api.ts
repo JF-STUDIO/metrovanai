@@ -344,6 +344,7 @@ export interface AdminActivationCodesPayload {
 
 export interface AdminSystemSettings {
   runpodHdrBatchSize: number;
+  runningHubMaxInFlight: number;
   billingPackages: BillingPackage[];
   studioFeatures: StudioFeatureConfig[];
 }

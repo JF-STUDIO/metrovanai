@@ -40,8 +40,11 @@ import { normalizeBillingPackages } from './billing-packages.js';
 import {
   createMetadataProvider,
   DEFAULT_RUNPOD_HDR_BATCH_SIZE,
+  DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT,
   MAX_RUNPOD_HDR_BATCH_SIZE,
+  MAX_RUNNINGHUB_MAX_IN_FLIGHT,
   MIN_RUNPOD_HDR_BATCH_SIZE,
+  MIN_RUNNINGHUB_MAX_IN_FLIGHT,
   type DatabaseShape,
   type MetadataProvider
 } from './metadata.js';
@@ -83,12 +86,22 @@ const PROJECT_DELETE_RETENTION_DAYS: Record<TrashRetentionCategory, number> = {
 
 function normalizeSystemSettings(input: Partial<SystemSettings> | undefined): SystemSettings {
   const parsedBatchSize = Number(input?.runpodHdrBatchSize ?? DEFAULT_RUNPOD_HDR_BATCH_SIZE);
+  const parsedRunningHubMaxInFlight = Number(input?.runningHubMaxInFlight ?? DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT);
   return {
     runpodHdrBatchSize: Math.max(
       MIN_RUNPOD_HDR_BATCH_SIZE,
       Math.min(
         MAX_RUNPOD_HDR_BATCH_SIZE,
         Number.isFinite(parsedBatchSize) ? Math.round(parsedBatchSize) : DEFAULT_RUNPOD_HDR_BATCH_SIZE
+      )
+    ),
+    runningHubMaxInFlight: Math.max(
+      MIN_RUNNINGHUB_MAX_IN_FLIGHT,
+      Math.min(
+        MAX_RUNNINGHUB_MAX_IN_FLIGHT,
+        Number.isFinite(parsedRunningHubMaxInFlight)
+          ? Math.round(parsedRunningHubMaxInFlight)
+          : DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT
       )
     ),
     billingPackages: normalizeBillingPackages(input?.billingPackages),

@@ -805,6 +805,7 @@ class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
 
   createRunContext(): TaskExecutionRunContext {
     const workflowConfig = loadWorkflowConfig(this.repoRoot);
+    const runningHubMaxInFlight = this.store.getSystemSettings().runningHubMaxInFlight;
     const runningHub = new RunningHubClient();
     const localMerge = createLocalHdrMergeContext(this.store);
 
@@ -834,7 +835,7 @@ class LocalRunningHubTaskExecutionProvider implements TaskExecutionProvider {
         return Math.max(1, Math.min(resolveLocalMergeMaxInFlight(), totalPendingItems));
       },
       getMaxConcurrency(totalPendingItems: number) {
-        return Math.max(1, Math.min(workflowConfig.settings.workflowMaxInFlight || 90, totalPendingItems));
+        return Math.max(1, Math.min(runningHubMaxInFlight, totalPendingItems));
       },
       ensureMergedHdrItem: localMerge.ensureMergedHdrItem,
       executeWorkflowTask,
@@ -1077,10 +1078,10 @@ class RunpodNativeTaskExecutionProvider implements TaskExecutionProvider {
     const postWorkflowEnabled = shouldRunpodPostWorkflow();
     const workflowConfig = postWorkflowEnabled ? loadWorkflowConfig(this.repoRoot) : null;
     const runningHub = postWorkflowEnabled ? new RunningHubClient() : null;
-    const runningHubMaxInFlight = postWorkflowEnabled ? Math.max(1, workflowConfig?.settings.workflowMaxInFlight ?? 90) : 1;
+    const runningHubMaxInFlight = postWorkflowEnabled ? this.store.getSystemSettings().runningHubMaxInFlight : 1;
     const runningHubWorkflowSemaphore = postWorkflowEnabled
       ? getRunningHubWorkflowSemaphore(
-          `runninghub:${workflowConfig?.active ?? 'default'}:${workflowConfig?.settings.workflowMaxInFlight ?? 90}`,
+          `runninghub:${workflowConfig?.active ?? 'default'}:${runningHubMaxInFlight}`,
           runningHubMaxInFlight
         )
       : null;

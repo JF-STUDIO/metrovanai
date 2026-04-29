@@ -113,6 +113,9 @@ type FailedUploadEntry = FailedUploadFile & { hdrItemId: string };
 
 const MAX_RUNPOD_HDR_BATCH_SIZE = 100;
 const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
+const MAX_RUNNINGHUB_MAX_IN_FLIGHT = 200;
+const MIN_RUNNINGHUB_MAX_IN_FLIGHT = 1;
+const DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT = 48;
 const LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY = 4;
 const ADMIN_POINT_PRICE_USD = 0.25;
 const ADMIN_MAX_BATCH_CODES = 100;
@@ -2670,7 +2673,10 @@ function App() {
   const [adminSystemSettings, setAdminSystemSettings] = useState<AdminSystemSettings | null>(null);
   const [adminSystemLoaded, setAdminSystemLoaded] = useState(false);
   const [adminSystemBusy, setAdminSystemBusy] = useState(false);
-  const [adminSystemDraft, setAdminSystemDraft] = useState({ runpodHdrBatchSize: '10' });
+  const [adminSystemDraft, setAdminSystemDraft] = useState({
+    runpodHdrBatchSize: '10',
+    runningHubMaxInFlight: String(DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT)
+  });
   const [adminFeatureDrafts, setAdminFeatureDrafts] = useState<StudioFeatureConfig[]>([]);
   const [adminExpandedFeatureIds, setAdminExpandedFeatureIds] = useState<Record<string, boolean>>({});
   const [adminFeatureImageBusy, setAdminFeatureImageBusy] = useState<string | null>(null);
@@ -2692,6 +2698,12 @@ function App() {
     expiresAt: '',
     active: true
   });
+  const [adminSettingsTab, setAdminSettingsTab] = useState<'basic' | 'api' | 'account'>('basic');
+  const [adminWorksSearch, setAdminWorksSearch] = useState('');
+  const [adminOrdersSearch, setAdminOrdersSearch] = useState('');
+  const [adminOrdersStatusFilter, setAdminOrdersStatusFilter] = useState<'all' | 'paid' | 'checkout_created' | 'failed'>('all');
+  const [adminLogsSearch, setAdminLogsSearch] = useState('');
+  const [adminCodesStatusFilter, setAdminCodesStatusFilter] = useState<'all' | 'available' | 'used' | 'expired' | 'inactive'>('all');
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const showLegacyCreateDialog = import.meta.env.VITE_ENABLE_LEGACY_CREATE_DIALOG === 'true';
@@ -3419,7 +3431,10 @@ function App() {
 
   function syncAdminSystemSettings(settings: AdminSystemSettings) {
     setAdminSystemSettings(settings);
-    setAdminSystemDraft({ runpodHdrBatchSize: String(settings.runpodHdrBatchSize) });
+    setAdminSystemDraft({
+      runpodHdrBatchSize: String(settings.runpodHdrBatchSize),
+      runningHubMaxInFlight: String(settings.runningHubMaxInFlight ?? DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT)
+    });
     setAdminFeatureDrafts(normalizeStudioFeatureDrafts(settings.studioFeatures));
     setAdminActivationPackages(settings.billingPackages);
     setBillingPackages(settings.billingPackages);
@@ -4196,7 +4211,7 @@ function App() {
               ...current,
               settings: {
                 ...current.settings,
-                workflowMaxInFlight: response.settings.runpodHdrBatchSize
+                workflowMaxInFlight: response.settings.runningHubMaxInFlight
               }
             }
           : current
@@ -4321,6 +4336,7 @@ function App() {
 
   async function handleAdminSaveSystemSettings() {
     const runpodHdrBatchSize = Number(adminSystemDraft.runpodHdrBatchSize);
+    const runningHubMaxInFlight = Number(adminSystemDraft.runningHubMaxInFlight);
     if (
       !Number.isFinite(runpodHdrBatchSize) ||
       runpodHdrBatchSize < MIN_RUNPOD_HDR_BATCH_SIZE ||
@@ -4329,12 +4345,21 @@ function App() {
       setAdminMessage(`云处理批量数量必须是 ${MIN_RUNPOD_HDR_BATCH_SIZE} 到 ${MAX_RUNPOD_HDR_BATCH_SIZE}。`);
       return;
     }
+    if (
+      !Number.isFinite(runningHubMaxInFlight) ||
+      runningHubMaxInFlight < MIN_RUNNINGHUB_MAX_IN_FLIGHT ||
+      runningHubMaxInFlight > MAX_RUNNINGHUB_MAX_IN_FLIGHT
+    ) {
+      setAdminMessage(`RunningHub 并发数量必须是 ${MIN_RUNNINGHUB_MAX_IN_FLIGHT} 到 ${MAX_RUNNINGHUB_MAX_IN_FLIGHT}。`);
+      return;
+    }
 
     setAdminSystemBusy(true);
     setAdminMessage('');
     try {
       const response = await updateAdminSettings({
         runpodHdrBatchSize: Math.round(runpodHdrBatchSize),
+        runningHubMaxInFlight: Math.round(runningHubMaxInFlight),
         billingPackages: adminSystemSettings?.billingPackages ?? adminActivationPackages,
         studioFeatures: adminFeatureDrafts.length ? adminFeatureDrafts : adminSystemSettings?.studioFeatures ?? []
       });
@@ -4350,12 +4375,14 @@ function App() {
               ...current,
               settings: {
                 ...current.settings,
-                workflowMaxInFlight: response.settings.runpodHdrBatchSize
+                workflowMaxInFlight: response.settings.runningHubMaxInFlight
               }
             }
           : current
       );
-      setAdminMessage(`已更新：每个云处理任务 ${response.settings.runpodHdrBatchSize} 组 HDR。`);
+      setAdminMessage(
+        `已更新：Runpod 每批 ${response.settings.runpodHdrBatchSize} 组 HDR，RunningHub 并发 ${response.settings.runningHubMaxInFlight} 张。`
+      );
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '系统设置保存失败。', locale));
     } finally {
@@ -4415,6 +4442,7 @@ function App() {
       const nextPackages = [nextPackage, ...currentPackages.filter((item) => item.id !== nextPackage.id)];
       const response = await updateAdminSettings({
         runpodHdrBatchSize: baseSettings.runpodHdrBatchSize,
+        runningHubMaxInFlight: baseSettings.runningHubMaxInFlight,
         billingPackages: nextPackages,
         studioFeatures: baseSettings.studioFeatures
       });
@@ -4544,6 +4572,41 @@ function App() {
     } finally {
       setAdminActivationBusy(false);
     }
+  }
+
+  function downloadCSV(filename: string, header: string, rows: string[]) {
+    const BOM = '\uFEFF';
+    const content = BOM + [header, ...rows].join('\r\n');
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  function exportAdminUsersCSV() {
+    const header = ['ID', 'Email', '姓名', '角色', '状态', '积分余额', '累计充值USD', '照片数', '注册时间'].join(',');
+    const rows = adminUsers.map((u) =>
+      [u.id, u.email, u.displayName ?? '', u.role, u.accountStatus,
+        u.billingSummary.availablePoints, u.billingSummary.totalTopUpUsd.toFixed(2),
+        u.photoCount, u.createdAt
+      ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')
+    );
+    downloadCSV(`metrovan-users-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+  }
+
+  function exportAdminOrdersCSV() {
+    const header = ['订单ID', 'Email', '套餐', '金额USD', '积分', '状态', '优惠码', '创建时间', '支付时间'].join(',');
+    const rows = adminOrders.map((o) =>
+      [o.id, o.email, o.packageName, o.amountUsd.toFixed(2), o.points, o.status,
+        o.activationCode ?? '', o.createdAt, o.paidAt ?? ''
+      ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')
+    );
+    downloadCSV(`metrovan-orders-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
   }
 
   function closeDownloadDialog(force = false) {
@@ -6462,11 +6525,11 @@ function App() {
             今天 · 2026 年 4 月 28 日 · <span className="status-dot live" /> 系统运行中
           </>,
           <>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadOrders()}>
-              导出报表
+            <button className="btn btn-ghost" type="button" onClick={exportAdminOrdersCSV} disabled={!adminOrders.length}>
+              导出订单 CSV
             </button>
-            <button className="btn btn-primary" type="button" onClick={() => setAdminConsolePage('users')}>
-              + 快速操作
+            <button className="btn btn-primary" type="button" onClick={() => void Promise.all([handleAdminLoadUsers(), handleAdminLoadOrders(), handleAdminLoadProjects()])}>
+              刷新全部数据
             </button>
           </>
         )}
@@ -6559,9 +6622,9 @@ function App() {
           '用户管理',
           <>共 <span className="mono accent-text">{(adminTotalUsers || adminUsers.length).toLocaleString()}</span> 位注册用户 · 当前页 <span className="mono success-text">{adminUsers.length}</span> 位</>,
           <>
-            <button className="btn btn-ghost" type="button">导出 CSV</button>
-            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadUsers()}>
-              {adminBusy ? '刷新中...' : '+ 邀请用户'}
+            <button className="btn btn-ghost" type="button" onClick={exportAdminUsersCSV} disabled={!adminUsers.length}>导出 CSV</button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadUsers()} disabled={adminBusy}>
+              {adminBusy ? '刷新中...' : '刷新用户'}
             </button>
           </>
         )}
@@ -6600,12 +6663,18 @@ function App() {
               <option value="active">正常</option>
               <option value="disabled">已封禁</option>
             </select>
-            <div className="filter-pills">
-              <span className="pill active">全部</span>
-              <span className="pill">付费</span>
-              <span className="pill">免费</span>
-              <span className="pill">企业</span>
-            </div>
+            <select
+              value={adminVerifiedFilter}
+              onChange={(event) => {
+                setAdminVerifiedFilter(event.target.value as AdminUserListQuery['emailVerified']);
+                setAdminPage(1);
+                setAdminLoaded(false);
+              }}
+            >
+              <option value="all">邮箱验证：全部</option>
+              <option value="yes">已验证</option>
+              <option value="no">未验证</option>
+            </select>
           </div>
           {adminUsers.length ? (
             <>
@@ -6725,45 +6794,44 @@ function App() {
           <>所有用户的 AI 修图作品 · 当前载入 <span className="mono accent-text">{adminProjects.length.toLocaleString()}</span> 项</>,
           <>
             <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadProjects()} disabled={adminProjectsBusy}>
-              批量审核
+              {adminProjectsBusy ? '刷新中...' : '刷新作品'}
             </button>
             <button className="btn btn-primary" type="button" onClick={() => setAdminConsolePage('content')}>+ 添加精选</button>
           </>
         )}
         <div className="card">
           <div className="toolbar">
-            <input placeholder="搜索 作品ID / 用户" />
-            <select><option>所有场景</option><option>HDR</option><option>室内</option><option>室外</option></select>
-            <div className="filter-pills">
-              <span className="pill active">全部 ({adminProjects.length})</span>
-              <span className="pill">待审核 {pendingProjectCount}</span>
-              <span className="pill">已审核</span>
-              <span className="pill">已驳回</span>
-              <span className="pill">精选</span>
-            </div>
+            <input
+              value={adminWorksSearch}
+              onChange={(event) => setAdminWorksSearch(event.target.value)}
+              placeholder="搜索 作品名称 / 用户"
+            />
           </div>
-          {adminProjects.length ? (
-            <div className="works-grid">
-              {adminProjects.slice(0, 16).map((project, index) => {
-                const preview = project.resultAssets[0]?.previewUrl ?? project.resultAssets[0]?.storageUrl ?? project.hdrItems[0]?.previewUrl ?? null;
-                return (
-                  <button key={project.id} className="work-card" type="button" onClick={() => void handleAdminSelectProject(project.id)}>
-                    <div className={projectToneClass(index)}>
-                      {preview ? <img src={resolveMediaUrl(preview)} alt={project.name} loading="lazy" decoding="async" /> : null}
-                      <div className="badge-row">
-                        <span className="ai-badge">{project.studioFeatureTitle ?? project.workflowId ?? 'HDR ENHANCE'}</span>
-                        <span className="check">{project.status === 'completed' ? '✓' : project.status === 'failed' ? '⚠' : '⋯'}</span>
+          {adminProjects.length ? (() => {
+            const filtered = adminProjects.filter((p) => !adminWorksSearch || p.name.toLowerCase().includes(adminWorksSearch.toLowerCase()) || (p.userDisplayName ?? p.userKey ?? '').toLowerCase().includes(adminWorksSearch.toLowerCase())).slice(0, 32);
+            return filtered.length ? (
+              <div className="works-grid">
+                {filtered.map((project, index) => {
+                  const preview = project.resultAssets[0]?.previewUrl ?? project.resultAssets[0]?.storageUrl ?? project.hdrItems[0]?.previewUrl ?? null;
+                  return (
+                    <button key={project.id} className="work-card" type="button" onClick={() => void handleAdminSelectProject(project.id)}>
+                      <div className={projectToneClass(index)}>
+                        {preview ? <img src={resolveMediaUrl(preview)} alt={project.name} loading="lazy" decoding="async" /> : null}
+                        <div className="badge-row">
+                          <span className="ai-badge">{project.studioFeatureTitle ?? project.workflowId ?? 'HDR ENHANCE'}</span>
+                          <span className="check">{project.status === 'completed' ? '✓' : project.status === 'failed' ? '⚠' : '⋯'}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="work-meta">
-                      <div className="name">{project.name}</div>
-                      <div className="by"><span>{project.userDisplayName || project.userKey}</span><span>{formatAdminShortDate(project.updatedAt)}</span></div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
+                      <div className="work-meta">
+                        <div className="name">{project.name}</div>
+                        <div className="by"><span>{project.userDisplayName || project.userKey}</span><span>{formatAdminShortDate(project.updatedAt)}</span></div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : <div className="empty-tip">没有匹配 "{adminWorksSearch}" 的作品</div>;
+          })() : (
             <div className="empty-tip">{adminProjectsBusy ? '正在读取作品...' : '暂无作品'}</div>
           )}
         </div>
@@ -6801,8 +6869,8 @@ function App() {
           '订单管理',
           <>本月营收 <span className="mono accent-text">${paidOrderRevenue.toFixed(2)}</span> · 退款 <span className="mono danger-text">{adminOrders.filter((order) => order.status === 'cancelled').length}</span></>,
           <>
-            <button className="btn btn-ghost" type="button">导出账单</button>
-            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadOrders()}>+ 手动开单</button>
+            <button className="btn btn-ghost" type="button" onClick={exportAdminOrdersCSV} disabled={!adminOrders.length}>导出账单 CSV</button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadOrders()} disabled={adminOrdersBusy}>{adminOrdersBusy ? '刷新中...' : '刷新订单'}</button>
           </>
         )}
         <div className="kpi-grid">
@@ -6813,18 +6881,30 @@ function App() {
         </div>
         <div className="card">
           <div className="toolbar">
-            <input placeholder="搜索 订单号 / 用户" />
-            <select><option>所有套餐</option></select>
-            <select><option>所有渠道</option></select>
-            <div className="filter-pills">
-              <span className="pill active">全部</span>
-              <span className="pill">已支付</span>
-              <span className="pill">处理中</span>
-              <span className="pill">已退款</span>
-              <span className="pill">失败</span>
-            </div>
+            <input
+              value={adminOrdersSearch}
+              onChange={(event) => setAdminOrdersSearch(event.target.value)}
+              placeholder="搜索 订单号 / 邮箱"
+            />
+            <select
+              value={adminOrdersStatusFilter}
+              onChange={(event) => setAdminOrdersStatusFilter(event.target.value as typeof adminOrdersStatusFilter)}
+            >
+              <option value="all">所有状态</option>
+              <option value="paid">已支付</option>
+              <option value="checkout_created">处理中</option>
+              <option value="failed">失败</option>
+            </select>
           </div>
-          {adminOrders.length ? renderAdminOrdersTable(adminOrders) : <div className="empty-tip">{adminOrdersBusy ? '正在读取订单...' : '暂无订单'}</div>}
+          {adminOrders.length ? (() => {
+            const filtered = adminOrders.filter((o) =>
+              (!adminOrdersSearch || o.email.toLowerCase().includes(adminOrdersSearch.toLowerCase()) || String(o.id).includes(adminOrdersSearch)) &&
+              (adminOrdersStatusFilter === 'all' || o.status === adminOrdersStatusFilter)
+            );
+            return filtered.length
+              ? renderAdminOrdersTable(filtered)
+              : <div className="empty-tip">没有匹配的订单{adminOrdersSearch ? `（关键词："${adminOrdersSearch}"）` : ''}</div>;
+          })() : <div className="empty-tip">{adminOrdersBusy ? '正在读取订单...' : '暂无订单'}</div>}
         </div>
       </div>
     );
@@ -6835,7 +6915,7 @@ function App() {
           '套餐配置',
           <>编辑前台 Plans 页展示的 <span className="mono accent-text">{planPackages.length}</span> 档套餐 · 改动会即时生效</>,
           <>
-            <button className="btn btn-ghost" type="button">预览前台</button>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadSystemSettings()} disabled={adminSystemBusy}>{adminSystemBusy ? '刷新中...' : '刷新套餐'}</button>
             <button className="btn btn-primary" type="button" onClick={handleAdminOpenNewPlanPackage} disabled={adminSystemBusy}>+ 新增套餐</button>
           </>
         )}
@@ -6998,18 +7078,28 @@ function App() {
               {planPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
             <input value={adminActivationDraft.bonusPoints} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, bonusPoints: event.target.value }))} placeholder="积分面值" />
-            <div className="filter-pills">
-              <span className="pill active">全部</span>
-              <span className="pill">未使用</span>
-              <span className="pill">已使用</span>
-              <span className="pill">已过期</span>
-            </div>
+            <select value={adminCodesStatusFilter} onChange={(event) => setAdminCodesStatusFilter(event.target.value as typeof adminCodesStatusFilter)}>
+              <option value="all">所有状态</option>
+              <option value="available">活跃可用</option>
+              <option value="used">已用完</option>
+              <option value="expired">已过期</option>
+              <option value="inactive">已停用</option>
+            </select>
           </div>
           <div className="table-wrap">
             <table>
               <thead><tr><th>兑换码</th><th>类型</th><th>面值</th><th>剩余 / 总量</th><th>有效期</th><th>使用情况</th><th>状态</th><th></th></tr></thead>
               <tbody>
-                {adminActivationCodes.map((item) => (
+                {adminActivationCodes.filter((item) => {
+                  const isExpired = !!item.expiresAt && new Date(item.expiresAt) < new Date();
+                  const isUsedUp = !item.available && item.active && !isExpired &&
+                    item.maxRedemptions !== null && item.redemptionCount >= item.maxRedemptions;
+                  if (adminCodesStatusFilter === 'available') return item.available;
+                  if (adminCodesStatusFilter === 'used') return isUsedUp;
+                  if (adminCodesStatusFilter === 'expired') return isExpired;
+                  if (adminCodesStatusFilter === 'inactive') return !item.active;
+                  return true;
+                }).map((item) => (
                   <tr key={item.id}>
                     <td className="mono code-text">{item.code}</td>
                     <td><span className={`tag ${item.packageName ? 'tag-purple' : 'tag-cyan'}`}>{item.packageName ? '套餐优惠' : '积分'}</span></td>
@@ -7035,34 +7125,46 @@ function App() {
           'AI 引擎',
           '管理所有 AI 修图引擎 · 监控调用量、成本、错误率',
           <>
-            <button className="btn btn-ghost" type="button">成本报表</button>
-            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadWorkflows()}>+ 新增引擎</button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>{adminWorkflowBusy ? '刷新中...' : '刷新引擎'}</button>
           </>
         )}
         <div className="kpi-grid">
           {kpi('总引擎数', <>{enabledWorkflowCount}<span className="unit">/ {Math.max(enabledWorkflowCount, 1)}</span></>, <span className="vs">{adminWorkflowSummary?.active ?? '未加载'}</span>)}
           {kpi('本月调用', totalProjectPhotos.toLocaleString(), <span>▲ 实时项目</span>)}
           {kpi('本月成本', `$${(totalProjectPhotos * 0.04).toFixed(0)}`, <span>▲ 估算</span>, 'down')}
-          {kpi('平均响应', <>{adminSystemSettings?.runpodHdrBatchSize ?? adminWorkflowSummary?.settings.workflowMaxInFlight ?? 0}<span className="unit">组/批</span></>, <span>▼ 批量设置</span>)}
+          {kpi('Runpod 批量', <>{adminSystemSettings?.runpodHdrBatchSize ?? 0}<span className="unit">组/批</span></>, <span>▼ 批量设置</span>)}
         </div>
         <div className="engine-grid">
-          {workflowItems.length ? workflowItems.map((item, index) => (
-            <div key={`${item.name}-${item.workflowId ?? index}`} className="engine-card live">
+          {workflowItems.length ? workflowItems.map((item, index) => {
+            const isActive = adminWorkflowSummary?.active?.trim().toLowerCase() === item.name.trim().toLowerCase();
+            const isMissingWorkflow = !item.workflowId;
+            const isApiMissing = !adminWorkflowSummary?.apiKeyConfigured;
+            const statusTag = isMissingWorkflow
+              ? <span className="tag tag-orange">未配置</span>
+              : isApiMissing
+                ? <span className="tag tag-red">API 缺失</span>
+                : isActive
+                  ? <span className="tag tag-purple">主流程</span>
+                  : <span className="tag tag-green">就绪</span>;
+            return (
+              <div key={`${item.name}-${item.workflowId ?? index}`} className={`engine-card${isMissingWorkflow || isApiMissing ? '' : ' live'}`}>
               <div className="engine-head">
                 <div className="engine-icon">{['✨', '☁️', '🛋️', '🌿', '🧹', '🌅'][index % 6]}</div>
                 <div>
                   <div className="engine-title">{item.name}</div>
                   <div className="engine-sub">workflow: {item.workflowId ?? '未配置'} · type: {item.type}</div>
                 </div>
-                <div className="engine-toggle" />
+                {statusTag}
               </div>
               <div className="engine-stats">
                 <div className="engine-stat"><div className="label">输入节点</div><div className="value">{item.inputCount}</div></div>
                 <div className="engine-stat"><div className="label">输出节点</div><div className="value">{item.outputCount}</div></div>
-                <div className="engine-stat"><div className="label">Prompt</div><div className="value success-text">{item.promptNodeId ?? '—'}</div></div>
+                <div className="engine-stat"><div className="label">Prompt 节点</div><div className="value success-text">{item.promptNodeId ?? '—'}</div></div>
+                <div className="engine-stat"><div className="label">颜色卡</div><div className="value">{item.colorCardNo ?? '—'}</div></div>
               </div>
             </div>
-          )) : (
+            );
+          }) : (
             <div className="empty-tip">{adminWorkflowBusy ? '正在读取 AI 引擎...' : '暂无工作流数据'}</div>
           )}
         </div>
@@ -7071,7 +7173,7 @@ function App() {
 
     const renderPromptsPage = () => (
       <div className="page-content active">
-        {adminPageTitle('Prompt 模板', '每个 AI 引擎背后的提示词配置 · 改动需重新评测', <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadWorkflows()}>+ 新建模板</button>)}
+        {adminPageTitle('Prompt 模板', '每个 AI 引擎背后的提示词配置 · 改动需重新评测', <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>{adminWorkflowBusy ? '刷新中...' : '刷新模板'}</button>)}
         <div className="card">
           <div className="card-body prompt-grid">
             {workflowItems.length ? workflowItems.map((item) => (
@@ -7151,64 +7253,140 @@ function App() {
 
     const renderLogsPage = () => (
       <div className="page-content active">
-        {adminPageTitle('操作日志', '所有管理员操作 · 不可编辑、不可删除', <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadAuditLogs()}>导出日志</button>)}
+        {adminPageTitle('操作日志', '所有管理员操作 · 不可编辑、不可删除', <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadAuditLogs()} disabled={adminActionBusy}>读取日志</button>)}
         <div className="card">
           <div className="toolbar">
-            <input placeholder="搜索 操作员 / 操作类型" />
-            <select><option>所有操作员</option></select>
-            <select><option>所有模块</option></select>
+            <input
+              value={adminLogsSearch}
+              onChange={(event) => setAdminLogsSearch(event.target.value)}
+              placeholder="搜索 操作员 / 操作类型"
+            />
           </div>
           <div className="table-wrap">
             <table>
               <thead><tr><th>时间</th><th>操作员</th><th>模块</th><th>操作</th><th>对象</th><th>IP</th></tr></thead>
               <tbody>
-                {adminAuditLogs.map((entry, index) => (
-                  <tr key={entry.id}>
-                    <td className="cell-id">{formatAdminDate(entry.createdAt)}</td>
-                    <td><div className="user-cell"><div className="user-avatar" style={userAvatarStyle(index)}>{getAdminInitials(entry.actorEmail ?? entry.actorType)}</div><div><div className="name">{entry.actorEmail ?? entry.actorType}</div></div></div></td>
-                    <td><span className="tag tag-cyan">{entry.action.split('.')[0] || '系统'}</span></td>
-                    <td>{entry.action}</td>
-                    <td className="mono">{entry.targetUserId ?? entry.targetProjectId ?? '—'}</td>
-                    <td className="cell-id">{entry.ipAddress}</td>
-                  </tr>
-                ))}
+                {adminAuditLogs
+                  .filter((entry) => !adminLogsSearch ||
+                    (entry.actorEmail ?? entry.actorType ?? '').toLowerCase().includes(adminLogsSearch.toLowerCase()) ||
+                    entry.action.toLowerCase().includes(adminLogsSearch.toLowerCase())
+                  )
+                  .map((entry, index) => (
+                    <tr key={entry.id}>
+                      <td className="cell-id">{formatAdminDate(entry.createdAt)}</td>
+                      <td><div className="user-cell"><div className="user-avatar" style={userAvatarStyle(index)}>{getAdminInitials(entry.actorEmail ?? entry.actorType)}</div><div><div className="name">{entry.actorEmail ?? entry.actorType}</div></div></div></td>
+                      <td><span className="tag tag-cyan">{entry.action.split('.')[0] || '系统'}</span></td>
+                      <td>{entry.action}</td>
+                      <td className="mono">{entry.targetUserId ?? entry.targetProjectId ?? '—'}</td>
+                      <td className="cell-id">{entry.ipAddress}</td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
-          {!adminAuditLogs.length && <div className="empty-tip">暂无日志</div>}
+          {adminAuditLogs.length > 0 && adminLogsSearch && !adminAuditLogs.some((e) =>
+            (e.actorEmail ?? e.actorType ?? '').toLowerCase().includes(adminLogsSearch.toLowerCase()) ||
+            e.action.toLowerCase().includes(adminLogsSearch.toLowerCase())
+          ) && <div className="empty-tip">没有匹配 "{adminLogsSearch}" 的日志记录</div>}
+          {!adminAuditLogs.length && <div className="empty-tip">{adminActionBusy ? '正在读取日志...' : '暂无日志，点击"读取日志"加载'}</div>}
         </div>
       </div>
     );
 
     const renderSettingsPage = () => (
       <div className="page-content active">
-        {adminPageTitle('系统设置', '站点配置、API 密钥、管理员、通知', null)}
+        {adminPageTitle('系统设置', '站点配置、AI 引擎、管理员账号', <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadSystemSettings()} disabled={adminSystemBusy}>{adminSystemBusy ? '读取中...' : '刷新配置'}</button>)}
         <div className="settings-tabs">
-          <div className="settings-tab active">基础</div>
-          <div className="settings-tab">API 密钥</div>
-          <div className="settings-tab">管理员</div>
-          <div className="settings-tab">通知</div>
-          <div className="settings-tab">备份</div>
+          <button type="button" className={`settings-tab${adminSettingsTab === 'basic' ? ' active' : ''}`} onClick={() => setAdminSettingsTab('basic')}>基础</button>
+          <button type="button" className={`settings-tab${adminSettingsTab === 'api' ? ' active' : ''}`} onClick={() => { setAdminSettingsTab('api'); void handleAdminLoadWorkflows(); }}>AI &amp; API</button>
+          <button type="button" className={`settings-tab${adminSettingsTab === 'account' ? ' active' : ''}`} onClick={() => setAdminSettingsTab('account')}>管理员账号</button>
         </div>
-        <div className="card">
-          <div className="card-body">
-            <div className="settings-row">
-              <div className="label-side"><div className="name">云处理 HDR 批量</div><div className="desc">新启动的处理任务会使用最新设置</div></div>
-              <div className="admin-inline-form">
-                <input value={adminSystemDraft.runpodHdrBatchSize} onChange={(event) => setAdminSystemDraft({ runpodHdrBatchSize: event.target.value })} inputMode="numeric" min={MIN_RUNPOD_HDR_BATCH_SIZE} max={MAX_RUNPOD_HDR_BATCH_SIZE} />
-                <button className="btn btn-primary" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy}>保存设置</button>
+        {adminSettingsTab === 'basic' && (
+          <div className="card">
+            <div className="card-body">
+              <div className="settings-row">
+                <div className="label-side"><div className="name">云处理 HDR 批量</div><div className="desc">每个 Runpod 任务包含的 HDR 组数，支持 {MIN_RUNPOD_HDR_BATCH_SIZE}–{MAX_RUNPOD_HDR_BATCH_SIZE}，新任务即时生效</div></div>
+                <div className="admin-inline-form">
+                  <input value={adminSystemDraft.runpodHdrBatchSize} onChange={(event) => setAdminSystemDraft((current) => ({ ...current, runpodHdrBatchSize: event.target.value }))} inputMode="numeric" min={MIN_RUNPOD_HDR_BATCH_SIZE} max={MAX_RUNPOD_HDR_BATCH_SIZE} />
+                  <button className="btn btn-primary" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy}>{adminSystemBusy ? '保存中...' : '保存'}</button>
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">RunningHub 并发</div><div className="desc">后续修图工作流同时提交的照片数，建议 48；支持 {MIN_RUNNINGHUB_MAX_IN_FLIGHT}–{MAX_RUNNINGHUB_MAX_IN_FLIGHT}，新任务即时生效</div></div>
+                <div className="admin-inline-form">
+                  <input value={adminSystemDraft.runningHubMaxInFlight} onChange={(event) => setAdminSystemDraft((current) => ({ ...current, runningHubMaxInFlight: event.target.value }))} inputMode="numeric" min={MIN_RUNNINGHUB_MAX_IN_FLIGHT} max={MAX_RUNNINGHUB_MAX_IN_FLIGHT} />
+                  <button className="btn btn-primary" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy}>{adminSystemBusy ? '保存中...' : '保存'}</button>
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">当前生效设置</div><div className="desc">最近从服务器读取的批量和并发值</div></div>
+                <div>
+                  <span className="tag tag-cyan">{adminSystemSettings?.runpodHdrBatchSize ?? '未读取'} 组 / Runpod 批</span>
+                  <span className="tag tag-gray" style={{marginLeft: 8}}>{adminSystemSettings?.runningHubMaxInFlight ?? '未读取'} 张 / RunningHub 并发</span>
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">套餐数量</div><div className="desc">前台 Plans 页展示的充值档位数</div></div>
+                <div><span className="tag tag-gray">{adminSystemSettings?.billingPackages?.length ?? planPackages.length} 档</span> <button className="btn btn-ghost" type="button" onClick={() => setAdminConsolePage('plans')} style={{marginLeft: 8}}>管理套餐 →</button></div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">功能卡片</div><div className="desc">前台 Studio 展示的 AI 功能卡片数</div></div>
+                <div><span className="tag tag-gray">{adminSystemSettings?.studioFeatures?.length ?? adminFeatureDrafts.length} 个</span> <button className="btn btn-ghost" type="button" onClick={() => setAdminConsolePage('content')} style={{marginLeft: 8}}>管理卡片 →</button></div>
               </div>
             </div>
-            <div className="settings-row">
-              <div className="label-side"><div className="name">当前管理员</div><div className="desc">当前登录后台账号</div></div>
-              <div><input readOnly value={session?.email ?? ''} /></div>
-            </div>
-            <div className="settings-row">
-              <div className="label-side"><div className="name">API 状态</div><div className="desc">工作流与 Runpod 配置</div></div>
-              <div><span className={adminWorkflowSummary?.apiKeyConfigured ? 'tag tag-green' : 'tag tag-orange'}>{adminWorkflowSummary?.apiKeyConfigured ? 'API 已配置' : 'API 未配置'}</span></div>
+          </div>
+        )}
+        {adminSettingsTab === 'api' && (
+          <div className="card">
+            <div className="card-body">
+              <div className="settings-row">
+                <div className="label-side"><div className="name">API 密钥状态</div><div className="desc">Runpod / ComfyUI 工作流 API 配置</div></div>
+                <div><span className={adminWorkflowSummary?.apiKeyConfigured ? 'tag tag-green' : 'tag tag-orange'}>{adminWorkflowSummary?.apiKeyConfigured ? '已配置' : '未配置'}</span></div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">执行器</div><div className="desc">当前 AI 工作流引擎提供商</div></div>
+                <div><span className="tag tag-cyan">{adminWorkflowSummary?.executor.provider ?? '未读取'}</span></div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">当前主流程</div><div className="desc">活跃的工作流名称</div></div>
+                <div><span className="mono">{adminWorkflowSummary?.active ?? '—'}</span></div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">工作流并发</div><div className="desc">后台最大同时运行任务数</div></div>
+                <div><span className="tag tag-gray">{adminSystemSettings?.runningHubMaxInFlight ?? adminWorkflowSummary?.settings.workflowMaxInFlight ?? '—'} 张</span></div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">引擎数量</div><div className="desc">已加载的工作流条目数</div></div>
+                <div><button className="btn btn-ghost" type="button" onClick={() => setAdminConsolePage('engine')}>查看 AI 引擎 →</button></div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+        {adminSettingsTab === 'account' && (
+          <div className="card">
+            <div className="card-body">
+              <div className="settings-row">
+                <div className="label-side"><div className="name">当前管理员账号</div><div className="desc">已登录的超级管理员</div></div>
+                <div>
+                  <div className="name">{session?.displayName ?? '—'}</div>
+                  <div className="email" style={{color: 'var(--text-dim)', fontSize: 12}}>{session?.email ?? '—'}</div>
+                </div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">角色</div><div className="desc">账号权限等级</div></div>
+                <div><span className={session?.role === 'admin' ? 'tag tag-purple' : 'tag tag-gray'}>{session?.role === 'admin' ? '超级管理员' : '普通用户'}</span></div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">活跃会话</div><div className="desc">当前已登录设备数量</div></div>
+                <div><span className="tag tag-cyan">{session ? '1 个活跃会话' : '未登录'}</span></div>
+              </div>
+              <div className="settings-row">
+                <div className="label-side"><div className="name">退出登录</div><div className="desc">结束当前管理员会话</div></div>
+                <div><button className="btn btn-ghost" type="button" onClick={() => void signOut()}>退出后台</button></div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
 
@@ -7676,7 +7854,7 @@ function App() {
                 <span className="admin-kicker">Plans</span>
                 <h2>套餐配置</h2>
               </div>
-              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadActivationCodes()} disabled={adminActivationBusy}>
+              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadSystemSettings()} disabled={adminSystemBusy}>
                 刷新套餐
               </button>
             </div>
@@ -8090,17 +8268,33 @@ function App() {
                 <span>每个云处理任务包含 HDR 组数</span>
                 <input
                   value={adminSystemDraft.runpodHdrBatchSize}
-                  onChange={(event) => setAdminSystemDraft({ runpodHdrBatchSize: event.target.value })}
+                  onChange={(event) =>
+                    setAdminSystemDraft((current) => ({ ...current, runpodHdrBatchSize: event.target.value }))
+                  }
                   inputMode="numeric"
                   min={MIN_RUNPOD_HDR_BATCH_SIZE}
                   max={MAX_RUNPOD_HDR_BATCH_SIZE}
                   disabled={adminSystemBusy}
                 />
               </label>
+              <label className="admin-toggle-field">
+                <span>RunningHub 最大并发照片数</span>
+                <input
+                  value={adminSystemDraft.runningHubMaxInFlight}
+                  onChange={(event) =>
+                    setAdminSystemDraft((current) => ({ ...current, runningHubMaxInFlight: event.target.value }))
+                  }
+                  inputMode="numeric"
+                  min={MIN_RUNNINGHUB_MAX_IN_FLIGHT}
+                  max={MAX_RUNNINGHUB_MAX_IN_FLIGHT}
+                  disabled={adminSystemBusy}
+                />
+              </label>
               <div className="admin-session-card">
                 <span>当前生效</span>
-                <strong>{adminSystemSettings?.runpodHdrBatchSize ?? '—'} 组 / 任务</strong>
-                <small>支持 {MIN_RUNPOD_HDR_BATCH_SIZE}-{MAX_RUNPOD_HDR_BATCH_SIZE}。新启动的处理任务会使用最新设置。</small>
+                <strong>{adminSystemSettings?.runpodHdrBatchSize ?? '—'} 组 / Runpod 批</strong>
+                <strong>{adminSystemSettings?.runningHubMaxInFlight ?? '—'} 张 / RunningHub 并发</strong>
+                <small>Runpod 批量支持 {MIN_RUNPOD_HDR_BATCH_SIZE}-{MAX_RUNPOD_HDR_BATCH_SIZE}；RunningHub 并发支持 {MIN_RUNNINGHUB_MAX_IN_FLIGHT}-{MAX_RUNNINGHUB_MAX_IN_FLIGHT}。新启动的处理任务会使用最新设置。</small>
               </div>
               <div className="admin-activation-actions">
                 <button
@@ -8151,7 +8345,7 @@ function App() {
                   </article>
                   <article>
                     <span>工作流并发</span>
-                    <strong>{adminWorkflowSummary.settings.workflowMaxInFlight}</strong>
+                    <strong>{adminSystemSettings?.runningHubMaxInFlight ?? adminWorkflowSummary.settings.workflowMaxInFlight}</strong>
                     <small>回传后进入后续修图队列</small>
                   </article>
                 </div>

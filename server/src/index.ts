@@ -48,7 +48,12 @@ import {
 import { buildHdrItemsFromFrontendLayout } from './importer.js';
 import { extractPreviewOrConvertToJpeg } from './images.js';
 import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js';
-import { MAX_RUNPOD_HDR_BATCH_SIZE, MIN_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
+import {
+  MAX_RUNPOD_HDR_BATCH_SIZE,
+  MAX_RUNNINGHUB_MAX_IN_FLIGHT,
+  MIN_RUNPOD_HDR_BATCH_SIZE,
+  MIN_RUNNINGHUB_MAX_IN_FLIGHT
+} from './metadata.js';
 import {
   abortMultipartObjectUpload,
   assertDirectObjectUploadConfigured,
@@ -1060,6 +1065,7 @@ function getProjectForAuthenticatedRead(user: UserRecord, projectId: string) {
 
 function buildAdminWorkflowPayload() {
   const workflowConfig = loadWorkflowConfig(repoRoot);
+  const systemSettings = store.getSystemSettings();
   return {
     executor: processor.getExecutionInfo(),
     apiKeyConfigured: Boolean(workflowConfig.apiKey?.trim()),
@@ -1069,7 +1075,7 @@ function buildAdminWorkflowPayload() {
       groupMode: workflowConfig.settings.groupMode,
       saveHDR: workflowConfig.settings.saveHDR,
       saveGroups: workflowConfig.settings.saveGroups,
-      workflowMaxInFlight: workflowConfig.settings.workflowMaxInFlight
+      workflowMaxInFlight: systemSettings.runningHubMaxInFlight
     },
     items: workflowConfig.items.map((item) => ({
       name: item.name,
@@ -2256,6 +2262,12 @@ const adminBillingPackageSchema = z.object({
 
 const adminSystemSettingsSchema = z.object({
   runpodHdrBatchSize: z.number().int().min(MIN_RUNPOD_HDR_BATCH_SIZE).max(MAX_RUNPOD_HDR_BATCH_SIZE),
+  runningHubMaxInFlight: z
+    .number()
+    .int()
+    .min(MIN_RUNNINGHUB_MAX_IN_FLIGHT)
+    .max(MAX_RUNNINGHUB_MAX_IN_FLIGHT)
+    .optional(),
   billingPackages: z.array(adminBillingPackageSchema).max(24).optional(),
   studioFeatures: z
     .array(
@@ -3164,6 +3176,7 @@ app.patch('/api/admin/settings', (req, res) => {
   const before = store.getSystemSettings();
   const settings = store.updateSystemSettings({
     runpodHdrBatchSize: parsed.data.runpodHdrBatchSize,
+    runningHubMaxInFlight: parsed.data.runningHubMaxInFlight ?? before.runningHubMaxInFlight,
     billingPackages: parsed.data.billingPackages ?? before.billingPackages,
     studioFeatures: parsed.data.studioFeatures ?? before.studioFeatures
   });
