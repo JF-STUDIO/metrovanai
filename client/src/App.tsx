@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import { AuthModal } from './components/AuthModal';
 import { LandingPage } from './pages/LandingPage';
-import logoFull from './assets/metrovan-logo-full.png';
 import logoMark from './assets/metrovan-logo-mark.png';
 import showcaseExteriorAfter from './assets/showcase-exterior-after.jpg';
 import showcaseInteriorAfter from './assets/showcase-interior-after.jpg';
@@ -385,115 +384,6 @@ const DEFAULT_DOWNLOAD_DRAFT: DownloadDraft = {
   customWidth: '',
   customHeight: ''
 };
-const STUDIO_FEATURES_LEGACY: StudioFeatureDefinition[] = [
-  {
-    id: 'hdr-true-color',
-    category: 'interior',
-    status: 'available',
-    tag: { zh: '室内 · HDR', en: 'Interior · HDR' },
-    title: { zh: 'HDR 真实色彩', en: 'HDR True Color' },
-    description: {
-      zh: '约 90% 还原墙壁颜色，平衡窗景与室内曝光；结果区可替换错误墙面颜色。',
-      en: 'Restores wall color with about 90% fidelity, balances windows and interior light, and supports wall color correction in results.'
-    },
-    detail: {
-      zh: '适合有真实墙色、木地板、自然光和窗景的室内房源。保留原始墙面色彩，不做统一去色。',
-      en: 'Best for interiors with real wall colors, wood floors, natural light, and window views. Keeps the original wall tone instead of washing color out.'
-    },
-    exposureLabel: { zh: '3-7 张曝光', en: '3-7 exposures' },
-    pointLabel: { zh: '1 积分 / 张', en: '1 pt / photo' },
-    defaultName: { zh: 'HDR 真实色彩', en: 'HDR True Color' },
-    tone: 'warm',
-    beforeImage: showcaseInteriorBefore,
-    afterImage: showcaseInteriorAfter
-  },
-  {
-    id: 'hdr-white-wall',
-    category: 'interior',
-    status: 'beta',
-    tag: { zh: '室内 · 白墙', en: 'Interior · White Wall' },
-    title: { zh: 'HDR 白墙', en: 'HDR White Wall' },
-    description: {
-      zh: '适用于白墙空间，可 100% 准确统一白墙；彩色墙面会按白墙逻辑去色。',
-      en: 'For white-wall rooms. White walls stay fully neutral; colored walls are desaturated by white-wall logic.'
-    },
-    detail: {
-      zh: '适合公寓、样板间、极简白墙空间。彩色墙面项目建议使用 HDR 真实色彩。',
-      en: 'Best for apartments, staging rooms, and minimal white-wall spaces. Use HDR True Color for colored wall projects.'
-    },
-    exposureLabel: { zh: '3-7 张曝光', en: '3-7 exposures' },
-    pointLabel: { zh: '1 积分 / 张', en: '1 pt / photo' },
-    defaultName: { zh: 'HDR 白墙', en: 'HDR White Wall' },
-    tone: 'white',
-    beforeImage: showcaseInteriorBefore,
-    afterImage: showcaseInteriorAfter
-  },
-  {
-    id: 'dusk-exterior',
-    category: 'exterior',
-    status: 'locked',
-    tag: { zh: '室外 · 黄昏', en: 'Exterior · Dusk' },
-    title: { zh: '白天变黄昏室外修图', en: 'Day to Dusk Exterior' },
-    description: {
-      zh: '把白天外景转换成黄昏氛围，增强建筑灯光和天空层次。',
-      en: 'Turns daytime exteriors into a dusk look with stronger building glow and sky depth.'
-    },
-    detail: {
-      zh: '建设中。上线后用于室外门头、车道、前院和建筑立面。',
-      en: 'Coming soon. Designed for exterior fronts, driveways, yards, and facades.'
-    },
-    exposureLabel: { zh: '单张或 HDR', en: 'Single or HDR' },
-    pointLabel: { zh: '建设中', en: 'Coming soon' },
-    defaultName: { zh: '白天变黄昏', en: 'Day to Dusk' },
-    tone: 'dusk',
-    beforeImage: showcaseExteriorAfter,
-    afterImage: showcaseExteriorAfter
-  },
-  {
-    id: 'blue-hour',
-    category: 'exterior',
-    status: 'locked',
-    tag: { zh: '室外 · 蓝调', en: 'Exterior · Blue Hour' },
-    title: { zh: '蓝调时刻照片修图', en: 'Blue Hour Retouch' },
-    description: {
-      zh: '适用于窗外蓝调和夜景外观，统一天空、灯光和建筑质感。',
-      en: 'For blue-hour window and exterior looks, balancing sky, lights, and facade texture.'
-    },
-    detail: {
-      zh: '建设中。适合室外蓝调、窗外蓝调和夜景营销图。',
-      en: 'Coming soon. Built for exterior blue hour, window blue hour, and night listing images.'
-    },
-    exposureLabel: { zh: '单张或 HDR', en: 'Single or HDR' },
-    pointLabel: { zh: '建设中', en: 'Coming soon' },
-    defaultName: { zh: '蓝调时刻', en: 'Blue Hour' },
-    tone: 'blue',
-    beforeImage: showcaseExteriorAfter,
-    afterImage: showcaseExteriorAfter
-  },
-  {
-    id: 'season-shift',
-    category: 'special',
-    status: 'locked',
-    tag: { zh: '特殊场景', en: 'Special Scene' },
-    title: { zh: '季节转换', en: 'Season Shift' },
-    description: {
-      zh: '转换草地、树木和环境季节氛围，用于不同销售季节的房源展示。',
-      en: 'Changes grass, trees, and seasonal atmosphere for different listing campaigns.'
-    },
-    detail: {
-      zh: '建设中。后续用于春夏秋冬氛围转换。',
-      en: 'Coming soon. Planned for spring, summer, fall, and winter scene conversions.'
-    },
-    exposureLabel: { zh: '单张照片', en: 'Single image' },
-    pointLabel: { zh: '建设中', en: 'Coming soon' },
-    defaultName: { zh: '季节转换', en: 'Season Shift' },
-    tone: 'season',
-    beforeImage: showcaseExteriorAfter,
-    afterImage: showcaseExteriorAfter
-  }
-];
-void STUDIO_FEATURES_LEGACY;
-
 const STUDIO_FEATURES: StudioFeatureDefinition[] = [
   {
     id: 'hdr-true-color',
@@ -1737,29 +1627,6 @@ function getCustomRechargePoints(amountUsd: number) {
   return Math.max(1, Math.floor(amountUsd / CREDIT_PRICE_USD));
 }
 
-function generateActivationCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const randomValues = new Uint32Array(8);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(randomValues);
-  } else {
-    for (let index = 0; index < randomValues.length; index += 1) {
-      randomValues[index] = Math.floor(Math.random() * alphabet.length);
-    }
-  }
-
-  const code = Array.from(randomValues, (value) => alphabet[value % alphabet.length]).join('');
-  return `BETA-${code.slice(0, 4)}-${code.slice(4)}`;
-}
-
-function getBillingOverdrawnPoints(summary: BillingSummary | null | undefined) {
-  if (!summary) {
-    return 0;
-  }
-
-  return Math.max(0, summary.totalChargedPoints - summary.totalCreditedPoints);
-}
-
 const DEMO_BILLING_SUMMARY: BillingSummary = {
   availablePoints: 408,
   totalCreditedPoints: 420,
@@ -2706,7 +2573,6 @@ function App() {
   const [adminCodesStatusFilter, setAdminCodesStatusFilter] = useState<'all' | 'available' | 'used' | 'expired' | 'inactive'>('all');
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const showLegacyCreateDialog = import.meta.env.VITE_ENABLE_LEGACY_CREATE_DIALOG === 'true';
   const [downloadDialogProjectId, setDownloadDialogProjectId] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [downloadDraft, setDownloadDraft] = useState<DownloadDraft>(DEFAULT_DOWNLOAD_DRAFT);
@@ -4258,13 +4124,6 @@ function App() {
         return { ...feature, ...resolvedPatch };
       })
     );
-  }
-
-  function toggleAdminFeatureDraft(featureId: string) {
-    setAdminExpandedFeatureIds((current) => ({
-      ...current,
-      [featureId]: !current[featureId]
-    }));
   }
 
   function handleAddAdminFeatureCard() {
@@ -6287,6 +6146,86 @@ function App() {
   }
 
   if (activeRoute === 'admin') {
+    const paidOrders = adminOrders.filter((order) => order.status === 'paid');
+    const pendingProjectCount = adminProjects.filter((project) =>
+      ['importing', 'uploading', 'processing', 'failed'].includes(project.status)
+    ).length;
+    const planPackages = adminSystemSettings?.billingPackages?.length
+      ? adminSystemSettings.billingPackages
+      : adminActivationPackages.length
+        ? adminActivationPackages
+        : billingPackages;
+    const totalProjectPhotos = adminProjects.reduce((sum, project) => sum + project.photoCount, 0) || adminTotals.photos;
+    const totalProjectResults = adminProjects.reduce((sum, project) => sum + project.resultAssets.length, 0);
+    const workflowItems = adminWorkflowSummary?.items ?? [];
+    const enabledWorkflowCount = workflowItems.length;
+    const paidOrderRevenue = paidOrders.reduce((sum, order) => sum + order.amountUsd, 0);
+    const resolvedAdminPageCount = Math.max(1, adminPageCount);
+    const availableCodeCount = adminActivationCodes.filter((item) => item.available).length;
+    const usedCodeCount = adminActivationCodes.reduce((sum, item) => sum + item.redemptionCount, 0);
+    const codeCapacity = adminActivationCodes.reduce((sum, item) => sum + (item.maxRedemptions ?? 0), 0);
+    const codeUsageRate = codeCapacity ? Math.round((usedCodeCount / codeCapacity) * 1000) / 10 : 0;
+    const dashboardActivities = [
+      ...adminOrders.slice(0, 3).map((order) => ({
+        id: `order-${order.id}`,
+        tone: order.status === 'paid' ? 'default' : order.status === 'failed' ? 'danger' : 'warn',
+        title: `${order.email} · ${formatPaymentOrderStatus(order.status)}`,
+        meta: `${order.packageName} · $${order.amountUsd.toFixed(2)} · ${formatAdminShortDate(order.createdAt)}`
+      })),
+      ...adminProjects.slice(0, 4).map((project) => ({
+        id: `project-${project.id}`,
+        tone: project.status === 'failed' ? 'danger' : project.status === 'processing' ? 'warn' : 'default',
+        title: `${project.name} · ${getProjectStatusLabel(project, locale)}`,
+        meta: `${project.photoCount} 张 · ${project.resultAssets.length} 结果 · ${formatAdminShortDate(project.updatedAt)}`
+      })),
+      ...adminAuditLogs.slice(0, 3).map((entry) => ({
+        id: `audit-${entry.id}`,
+        tone: 'default',
+        title: entry.action,
+        meta: `${entry.actorEmail ?? entry.actorType} · ${formatAdminShortDate(entry.createdAt)}`
+      }))
+    ].slice(0, 6);
+
+    const adminPageTitle = (title: string, subtitle: ReactNode, actions?: ReactNode) => (
+      <div className="page-title-row">
+        <div>
+          <div className="page-title">{title}</div>
+          <div className="page-sub">{subtitle}</div>
+        </div>
+        {actions ? <div className="admin-page-actions">{actions}</div> : null}
+      </div>
+    );
+    const kpi = (label: string, value: ReactNode, trend?: ReactNode, tone: 'up' | 'down' = 'up') => (
+      <div className="kpi">
+        <div className="kpi-label">{label}</div>
+        <div className="kpi-value">{value}</div>
+        {trend ? <div className={`kpi-trend ${tone}`}>{trend}</div> : null}
+      </div>
+    );
+    const tagClassForStatus = (status: string) => {
+      if (['paid', 'active', 'completed', 'ready', 'published'].includes(status)) {
+        return 'tag tag-green';
+      }
+      if (['failed', 'disabled', 'cancelled'].includes(status)) {
+        return 'tag tag-red';
+      }
+      if (['processing', 'uploading', 'checkout_created', 'pending'].includes(status)) {
+        return 'tag tag-orange';
+      }
+      return 'tag tag-gray';
+    };
+    const planToneClass = (index: number) => ['tag-gray', 'tag-cyan', 'tag-purple', 'tag-orange'][index % 4];
+    const projectToneClass = (index: number) => `work-thumb work-thumb-${(index % 8) + 1}`;
+    const userAvatarStyle = (index: number): CSSProperties => {
+      const gradients = [
+        'linear-gradient(135deg,#c69aff,#7ce8ff)',
+        'linear-gradient(135deg,#7ce8ff,#5ce3a5)',
+        'linear-gradient(135deg,#ffc36b,#ff7a8a)',
+        'linear-gradient(135deg,#5ce3a5,#7ce8ff)',
+        'linear-gradient(135deg,#ff7a8a,#c69aff)'
+      ];
+      return { background: gradients[index % gradients.length] };
+    };
     const adminNavIcon = (page: AdminConsolePage) => {
       const paths: Record<AdminConsolePage, ReactNode> = {
         dashboard: (
@@ -6360,103 +6299,12 @@ function App() {
           </>
         )
       };
+
       return (
-        <svg className="admin-console-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <svg className="admin-console-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
           {paths[page]}
         </svg>
       );
-    };
-    const navButton = (page: AdminConsolePage, label: string, badge?: string) => (
-      <button
-        key={page}
-        className={`admin-console-nav-item${adminConsolePage === page ? ' active' : ''}`}
-        type="button"
-        onClick={() => setAdminConsolePage(page)}
-      >
-        {adminNavIcon(page)}
-        <span>{label}</span>
-        {badge ? <em>{badge}</em> : null}
-      </button>
-    );
-    const paidOrders = adminOrders.filter((order) => order.status === 'paid');
-    const orderRevenue = paidOrders.reduce((sum, order) => sum + order.amountUsd, 0);
-    const pendingProjectCount = adminProjects.filter((project) =>
-      ['importing', 'uploading', 'processing', 'failed'].includes(project.status)
-    ).length;
-    const planPackages = adminSystemSettings?.billingPackages?.length
-      ? adminSystemSettings.billingPackages
-      : adminActivationPackages.length
-        ? adminActivationPackages
-        : billingPackages;
-    const totalProjectPhotos = adminProjects.reduce((sum, project) => sum + project.photoCount, 0) || adminTotals.photos;
-    const totalProjectResults = adminProjects.reduce((sum, project) => sum + project.resultAssets.length, 0);
-    const workflowItems = adminWorkflowSummary?.items ?? [];
-    const enabledWorkflowCount = workflowItems.length;
-    const paidOrderRevenue = paidOrders.reduce((sum, order) => sum + order.amountUsd, 0);
-    const availableCodeCount = adminActivationCodes.filter((item) => item.available).length;
-    const usedCodeCount = adminActivationCodes.reduce((sum, item) => sum + item.redemptionCount, 0);
-    const codeCapacity = adminActivationCodes.reduce((sum, item) => sum + (item.maxRedemptions ?? 0), 0);
-    const codeUsageRate = codeCapacity ? Math.round((usedCodeCount / codeCapacity) * 1000) / 10 : 0;
-    const dashboardActivities = [
-      ...adminOrders.slice(0, 3).map((order) => ({
-        id: `order-${order.id}`,
-        tone: order.status === 'paid' ? 'default' : order.status === 'failed' ? 'danger' : 'warn',
-        title: `${order.email} · ${formatPaymentOrderStatus(order.status)}`,
-        meta: `${order.packageName} · $${order.amountUsd.toFixed(2)} · ${formatAdminShortDate(order.createdAt)}`
-      })),
-      ...adminProjects.slice(0, 4).map((project) => ({
-        id: `project-${project.id}`,
-        tone: project.status === 'failed' ? 'danger' : project.status === 'processing' ? 'warn' : 'default',
-        title: `${project.name} · ${getProjectStatusLabel(project, locale)}`,
-        meta: `${project.photoCount} 张 · ${project.resultAssets.length} 结果 · ${formatAdminShortDate(project.updatedAt)}`
-      })),
-      ...adminAuditLogs.slice(0, 3).map((entry) => ({
-        id: `audit-${entry.id}`,
-        tone: 'default',
-        title: entry.action,
-        meta: `${entry.actorEmail ?? entry.actorType} · ${formatAdminShortDate(entry.createdAt)}`
-      }))
-    ].slice(0, 6);
-
-    const adminPageTitle = (title: string, subtitle: ReactNode, actions?: ReactNode) => (
-      <div className="page-title-row">
-        <div>
-          <div className="page-title">{title}</div>
-          <div className="page-sub">{subtitle}</div>
-        </div>
-        {actions ? <div className="admin-page-actions">{actions}</div> : null}
-      </div>
-    );
-    const kpi = (label: string, value: ReactNode, trend?: ReactNode, tone: 'up' | 'down' = 'up') => (
-      <div className="kpi">
-        <div className="kpi-label">{label}</div>
-        <div className="kpi-value">{value}</div>
-        {trend ? <div className={`kpi-trend ${tone}`}>{trend}</div> : null}
-      </div>
-    );
-    const tagClassForStatus = (status: string) => {
-      if (['paid', 'active', 'completed', 'ready', 'published'].includes(status)) {
-        return 'tag tag-green';
-      }
-      if (['failed', 'disabled', 'cancelled'].includes(status)) {
-        return 'tag tag-red';
-      }
-      if (['processing', 'uploading', 'checkout_created', 'pending'].includes(status)) {
-        return 'tag tag-orange';
-      }
-      return 'tag tag-gray';
-    };
-    const planToneClass = (index: number) => ['tag-gray', 'tag-cyan', 'tag-purple', 'tag-orange'][index % 4];
-    const projectToneClass = (index: number) => `work-thumb work-thumb-${(index % 8) + 1}`;
-    const userAvatarStyle = (index: number): CSSProperties => {
-      const gradients = [
-        'linear-gradient(135deg,#c69aff,#7ce8ff)',
-        'linear-gradient(135deg,#7ce8ff,#5ce3a5)',
-        'linear-gradient(135deg,#ffc36b,#ff7a8a)',
-        'linear-gradient(135deg,#5ce3a5,#7ce8ff)',
-        'linear-gradient(135deg,#ff7a8a,#c69aff)'
-      ];
-      return { background: gradients[index % gradients.length] };
     };
     const targetNavButton = (page: AdminConsolePage, label: string, badge?: string) => (
       <button
@@ -6733,12 +6581,12 @@ function App() {
                   </tbody>
                 </table>
               </div>
-              <div className="pagination">
-                <span>显示 1 - {adminUsers.length}，共 {(adminTotalUsers || adminUsers.length).toLocaleString()} 条</span>
+            <div className="pagination">
+                <span>显示 1 - {adminUsers.length}，共 {(adminTotalUsers || adminUsers.length).toLocaleString()} 条 · 第 {adminPage} / {resolvedAdminPageCount} 页</span>
                 <div className="page-btns">
-                  <button className="page-btn" type="button" onClick={() => setAdminPage(Math.max(1, adminPage - 1))}>‹</button>
+                  <button className="page-btn" type="button" onClick={() => setAdminPage(Math.max(1, adminPage - 1))} disabled={adminPage <= 1}>‹</button>
                   <span className="page-btn active">{adminPage}</span>
-                  <button className="page-btn" type="button" onClick={() => setAdminPage(adminPage + 1)}>›</button>
+                  <button className="page-btn" type="button" onClick={() => setAdminPage(Math.min(resolvedAdminPageCount, adminPage + 1))} disabled={adminPage >= resolvedAdminPageCount}>›</button>
                 </div>
               </div>
             </>
@@ -6750,7 +6598,11 @@ function App() {
           <div className="card admin-detail-card">
             <div className="card-header">
               <h3>{adminSelectedUser.displayName} · 积分与项目</h3>
-              <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSelectUser(adminSelectedUser.id)} disabled={adminDetailBusy}>刷新详情</button>
+              <div className="admin-page-actions">
+                <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSelectUser(adminSelectedUser.id)} disabled={adminDetailBusy}>刷新详情</button>
+                <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLogoutUser(adminSelectedUser.id)} disabled={adminActionBusy}>踢下线</button>
+                <button className="btn btn-ghost" type="button" onClick={() => void handleAdminDeleteUser(adminSelectedUser.id)} disabled={adminActionBusy}>删除用户</button>
+              </div>
             </div>
             <div className="admin-detail-grid">
               <div className="settings-row">
@@ -6780,6 +6632,16 @@ function App() {
                   </button>
                 ))}
                 {!adminDetailProjects.length && <p>暂无项目。</p>}
+              </div>
+              <div className="admin-mini-table">
+                <div className="admin-mini-head"><strong>积分流水</strong><span>{adminDetailBillingEntries.length} 条</span></div>
+                {adminDetailBillingEntries.slice(0, 6).map((entry) => (
+                  <div key={entry.id} className="admin-mini-row">
+                    <span>{entry.note || entry.projectName || entry.activationCodeLabel || entry.type}</span>
+                    <small>{entry.type === 'credit' ? '+' : '-'}{entry.points} pts · {formatAdminDate(entry.createdAt)}</small>
+                  </div>
+                ))}
+                {!adminDetailBillingEntries.length && <p>暂无积分流水。</p>}
               </div>
             </div>
           </div>
@@ -6997,6 +6859,9 @@ function App() {
           '兑换码',
           '生成与管理积分兑换码、活动促销码、合作伙伴码',
           <>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadActivationCodes()} disabled={adminActivationBusy}>
+              {adminActivationBusy ? '刷新中...' : '刷新兑换码'}
+            </button>
             <button className="btn btn-ghost" type="button" onClick={handleAdminOpenBatchActivationCodes}>批量生成</button>
             <button className="btn btn-primary" type="button" onClick={() => void handleAdminCreateActivationCode()}>+ 新建兑换码</button>
           </>
@@ -7198,14 +7063,45 @@ function App() {
             <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminFeatureDrafts.length}>保存全部</button>
           </div>
           <div className="card-body feature-admin-grid">
-            {adminFeatureDrafts.map((feature, index) => (
-              <details key={feature.id} className="feature-admin-card">
+            {adminFeatureDrafts.map((feature, index) => {
+              const workflowDisplay = getAdminFeatureWorkflowDisplay(feature);
+              const beforeImageBusy = adminFeatureImageBusy === `${feature.id}:beforeImageUrl`;
+              const afterImageBusy = adminFeatureImageBusy === `${feature.id}:afterImageUrl`;
+              return (
+              <details
+                key={feature.id}
+                className="feature-admin-card"
+                open={Boolean(adminExpandedFeatureIds[feature.id])}
+                onToggle={(event) =>
+                  setAdminExpandedFeatureIds((current) => ({
+                    ...current,
+                    [feature.id]: event.currentTarget.open
+                  }))
+                }
+              >
                 <summary>
                   <span className={`tag ${planToneClass(index)}`}>{feature.status}</span>
                   <strong>{feature.titleZh}</strong>
-                  <small>Workflow: {feature.workflowId || '未配置'} · 输入 {feature.inputNodeId || '—'} · 输出 {feature.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
+                  <small>Workflow: {workflowDisplay.workflowId || '未配置'} · 输入 {workflowDisplay.inputNodeId || '—'} · 输出 {workflowDisplay.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
                 </summary>
                 <div className="feature-admin-form">
+                  <label className="admin-check-field">
+                    <input
+                      type="checkbox"
+                      checked={feature.enabled}
+                      onChange={(event) => updateAdminFeatureDraft(feature.id, { enabled: event.target.checked })}
+                    />
+                    <span>前台启用</span>
+                  </label>
+                  <select value={feature.category} onChange={(event) => updateAdminFeatureDraft(feature.id, { category: event.target.value as StudioFeatureConfig['category'] })}>
+                    {ADMIN_FEATURE_CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                  <select value={feature.status} onChange={(event) => updateAdminFeatureDraft(feature.id, { status: event.target.value as StudioFeatureConfig['status'] })}>
+                    {ADMIN_FEATURE_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                  <select value={feature.tone} onChange={(event) => updateAdminFeatureDraft(feature.id, { tone: event.target.value as StudioFeatureConfig['tone'] })}>
+                    {ADMIN_FEATURE_TONE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
                   <input value={feature.titleZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { titleZh: event.target.value })} placeholder="中文功能名称" />
                   <input value={feature.titleEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { titleEn: event.target.value })} placeholder="英文功能名称" />
                   <textarea value={feature.descriptionZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionZh: event.target.value })} placeholder="中文描述" />
@@ -7219,6 +7115,7 @@ function App() {
                     <input
                       type="file"
                       accept="image/*"
+                      disabled={beforeImageBusy}
                       onChange={(event) => {
                         const file = event.target.files?.[0];
                         if (file) {
@@ -7227,6 +7124,7 @@ function App() {
                         event.currentTarget.value = '';
                       }}
                     />
+                    {beforeImageBusy ? <small>上传中...</small> : null}
                   </div>
                   <div className="feature-upload-row">
                     <span>对比图 After</span>
@@ -7234,6 +7132,7 @@ function App() {
                     <input
                       type="file"
                       accept="image/*"
+                      disabled={afterImageBusy}
                       onChange={(event) => {
                         const file = event.target.files?.[0];
                         if (file) {
@@ -7242,10 +7141,12 @@ function App() {
                         event.currentTarget.value = '';
                       }}
                     />
+                    {afterImageBusy ? <small>上传中...</small> : null}
                   </div>
                 </div>
               </details>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -7418,8 +7319,7 @@ function App() {
       }
     };
 
-    if (adminConsolePage) {
-      return (
+    return (
         <>
           <main className="admin-prototype app">
             <aside className="sidebar">
@@ -7493,1550 +7393,7 @@ function App() {
           </main>
         </>
       );
-    }
 
-    return (
-      <>
-        <main className="admin-shell admin-prototype">
-          <div className="ambient-layer studio-ambient" />
-          <aside className="admin-console-sidebar">
-            <button className="admin-console-brand" type="button" onClick={() => navigateToRoute('studio')}>
-              <span>M</span>
-              <strong>Metrovan AI</strong>
-              <small>Admin Console</small>
-            </button>
-            <div className="admin-console-nav-group">
-              <b>概览</b>
-              {navButton('dashboard', '仪表盘')}
-            </div>
-            <div className="admin-console-nav-group">
-              <b>业务</b>
-              {navButton('users', '用户管理')}
-              {navButton('works', '修图作品', pendingProjectCount ? String(pendingProjectCount) : undefined)}
-              {navButton('orders', '订单管理')}
-              {navButton('plans', '套餐配置')}
-              {navButton('codes', '兑换码')}
-            </div>
-            <div className="admin-console-nav-group">
-              <b>AI</b>
-              {navButton('engine', 'AI 引擎')}
-              {navButton('prompts', 'Prompt 模板')}
-            </div>
-            <div className="admin-console-nav-group">
-              <b>运营 & 系统</b>
-              {navButton('content', '内容运营')}
-              {navButton('logs', '操作日志')}
-              {navButton('settings', '系统设置')}
-            </div>
-            <button className="admin-console-account" type="button" onClick={() => void signOut()}>
-              <span>{getAdminInitials(session?.displayName ?? session?.email ?? 'Admin')}</span>
-              <strong>{session?.displayName ?? 'Admin'}</strong>
-              <small>{session?.role === 'admin' ? '超级管理员' : '未授权'}</small>
-            </button>
-          </aside>
-          <section className="admin-console-main">
-          <header className="admin-header">
-            <button className="brand-button admin-brand" type="button" onClick={() => navigateToRoute('home')}>
-              <img className="landing-brand-logo" src={logoFull} alt="Metrovan AI" decoding="async" />
-            </button>
-            <nav className="admin-nav" aria-label="Admin navigation">
-              <button type="button" onClick={() => navigateToRoute('home')}>
-                /home
-              </button>
-              <button type="button" onClick={() => navigateToRoute('studio')}>
-                /studio
-              </button>
-              <button className="active" type="button">
-                /admin
-              </button>
-            </nav>
-            {session ? (
-              <button className="ghost-button" type="button" onClick={() => void signOut()}>
-                {copy.menuLogout}
-              </button>
-            ) : (
-              <button className="solid-button" type="button" onClick={() => navigateToRoute('studio')}>
-                {copy.landingSignIn}
-              </button>
-            )}
-          </header>
-
-          <div className="admin-console-topbar">
-            <div className="admin-console-breadcrumb">
-              <span>Console /</span>
-              <strong>{ADMIN_CONSOLE_PAGE_LABELS[adminConsolePage]}</strong>
-            </div>
-            <div className="admin-console-search">搜索用户、订单、作品… <kbd>⌘K</kbd></div>
-            <div className="admin-console-topbar-icon">
-              <span className="admin-console-dot" />
-            </div>
-            <div className="admin-console-topbar-icon">?</div>
-            <div className="admin-console-topbar-avatar">{getAdminInitials(session?.displayName ?? session?.email ?? 'Admin')}</div>
-          </div>
-
-          <section className="admin-hero-card" hidden={adminConsolePage !== 'dashboard'}>
-            <div>
-              <span className="admin-kicker">Metrovan AI Admin</span>
-              <h1>用户与业务后台</h1>
-              <p>查看用户、项目、积分和审计日志；支持禁用账号、踢下线、手动补积分。后台不会暴露密码哈希、重置 token 或邮箱验证 token。</p>
-            </div>
-            <div className="admin-key-card">
-              {hasAdminSession ? (
-                <div className="admin-session-card">
-                  <span>Admin Session</span>
-                  <strong>{session?.email}</strong>
-                  <small>已用管理员账号登录，可直接管理用户。</small>
-                </div>
-              ) : (
-                <div className="admin-session-card">
-                  <span>Admin Required</span>
-                  <strong>请先登录管理员账号</strong>
-                  <small>后台只接受管理员账号 session。</small>
-                </div>
-              )}
-              <button
-                className="solid-button"
-                type="button"
-                onClick={() => (hasAdminSession ? void handleAdminLoadUsers() : navigateToRoute('studio'))}
-                disabled={adminBusy}
-              >
-                {adminBusy ? '正在读取...' : hasAdminSession ? '连接后台' : '去登录'}
-              </button>
-            </div>
-          </section>
-
-          {adminMessage && <div className="global-message admin-message">{adminMessage}</div>}
-
-          <section className="admin-stat-grid" aria-label="Admin summary" hidden={adminConsolePage !== 'dashboard'}>
-            <article>
-              <span>用户</span>
-              <strong>{adminTotals.users}</strong>
-            </article>
-            <article>
-              <span>项目</span>
-              <strong>{adminTotals.projects}</strong>
-            </article>
-            <article>
-              <span>照片</span>
-              <strong>{adminTotals.photos}</strong>
-            </article>
-            <article>
-              <span>充值</span>
-              <strong>${adminTotals.revenue.toFixed(2)}</strong>
-            </article>
-          </section>
-
-          <section className="admin-dashboard-grid" hidden={adminConsolePage !== 'dashboard'}>
-            <article className="admin-panel admin-dashboard-card wide">
-              <div className="admin-panel-head">
-                <div>
-                  <span className="admin-kicker">Revenue</span>
-                  <h2>营收与处理概览</h2>
-                </div>
-                <button className="ghost-button" type="button" onClick={() => void handleAdminLoadOrders()} disabled={adminOrdersBusy}>
-                  刷新订单
-                </button>
-              </div>
-              <div className="admin-console-metrics">
-                <div>
-                  <span>已支付订单</span>
-                  <strong>{paidOrders.length}</strong>
-                </div>
-                <div>
-                  <span>订单营收</span>
-                  <strong>${orderRevenue.toFixed(2)}</strong>
-                </div>
-                <div>
-                  <span>待处理项目</span>
-                  <strong>{pendingProjectCount}</strong>
-                </div>
-              </div>
-              <div className="admin-console-chart" aria-hidden="true">
-                <i style={{ height: '38%' }} />
-                <i style={{ height: '52%' }} />
-                <i style={{ height: '44%' }} />
-                <i style={{ height: '66%' }} />
-                <i style={{ height: '58%' }} />
-                <i style={{ height: '78%' }} />
-                <i style={{ height: '70%' }} />
-                <i style={{ height: '86%' }} />
-              </div>
-            </article>
-            <article className="admin-panel admin-dashboard-card">
-              <div className="admin-panel-head">
-                <div>
-                  <span className="admin-kicker">Live</span>
-                  <h2>实时动态</h2>
-                </div>
-              </div>
-              <div className="admin-console-feed">
-                {adminOrders.slice(0, 3).map((order) => (
-                  <div key={order.id}>
-                    <b>{order.email}</b>
-                    <span>{formatPaymentOrderStatus(order.status)} · ${order.amountUsd.toFixed(2)} · {formatAdminShortDate(order.createdAt)}</span>
-                  </div>
-                ))}
-                {adminProjects.slice(0, 3).map((project) => (
-                  <div key={project.id}>
-                    <b>{project.name}</b>
-                    <span>{getProjectStatusLabel(project, locale)} · {project.photoCount} 张 · {formatAdminShortDate(project.updatedAt)}</span>
-                  </div>
-                ))}
-                {!adminOrders.length && !adminProjects.length && <p>{adminOrdersBusy || adminProjectsBusy ? '正在读取实时动态...' : '暂无动态。'}</p>}
-              </div>
-            </article>
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'works'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Works</span>
-                <h2>修图作品</h2>
-              </div>
-              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadProjects()} disabled={adminProjectsBusy}>
-                {adminProjectsBusy ? '刷新中...' : '刷新项目'}
-              </button>
-            </div>
-            {adminProjects.length ? (
-              <div className="admin-console-work-grid">
-                {adminProjects.slice(0, 24).map((project) => {
-                  const preview = project.resultAssets[0]?.previewUrl ?? project.resultAssets[0]?.storageUrl ?? project.hdrItems[0]?.previewUrl ?? null;
-                  return (
-                    <article key={project.id} className="admin-console-work-card">
-                      <div className="admin-console-work-thumb">
-                        {preview ? <img src={resolveMediaUrl(preview)} alt={project.name} loading="lazy" decoding="async" /> : <span>NO PREVIEW</span>}
-                        <em>{getProjectStatusLabel(project, locale)}</em>
-                      </div>
-                      <div>
-                        <strong>{project.name}</strong>
-                        <span>{project.userDisplayName || project.userKey} · {project.photoCount} 张 · {project.resultAssets.length} 结果</span>
-                      </div>
-                      <button
-                        className="ghost-button compact"
-                        type="button"
-                        onClick={() => void handleAdminSelectProject(project.id)}
-                      >
-                        查看项目
-                      </button>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="admin-empty compact">
-                <strong>{adminProjectsBusy ? '正在读取项目...' : '暂无项目'}</strong>
-                <span>这里会显示所有用户的修图项目、状态、照片数量和结果图。</span>
-              </div>
-            )}
-            {adminSelectedProject ? (
-              <div className="admin-project-live admin-console-project-live">
-                <div className="admin-live-summary">
-                  <div>
-                    <span className="admin-kicker">Selected Work</span>
-                    <h3>{adminSelectedProject.name}</h3>
-                    <small>
-                      {getProjectStatusLabel(adminSelectedProject, locale)} · {adminSelectedProject.photoCount} 张照片 ·{' '}
-                      {adminSelectedProject.resultAssets.length} 张结果
-                    </small>
-                  </div>
-                  <div className="admin-live-stats">
-                    <span>失败 {adminSelectedProjectFailedItems.length}</span>
-                    <span>处理中 {adminSelectedProjectProcessingItems.length}</span>
-                    <span>结果 {adminSelectedProjectResults.length}</span>
-                  </div>
-                </div>
-                {adminSelectedProjectResults.length ? (
-                  <div className="admin-live-section">
-                    <strong>处理结果</strong>
-                    <div className="admin-live-grid">
-                      {adminSelectedProjectResults.slice(0, 12).map((asset) => (
-                        <a key={asset.id} className="admin-live-tile" href={resolveMediaUrl(asset.storageUrl)} target="_blank" rel="noreferrer">
-                          <img src={resolveMediaUrl(asset.previewUrl ?? asset.storageUrl)} alt={asset.fileName} loading="lazy" decoding="async" />
-                          <span>{asset.fileName}</span>
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {adminSelectedProjectFailedItems.length ? (
-                  <div className="admin-live-section">
-                    <strong>失败照片</strong>
-                    <div className="admin-live-grid">
-                      {adminSelectedProjectFailedItems.slice(0, 12).map((item) => (
-                        <article key={item.id} className="admin-live-tile failed">
-                          {item.previewUrl ? (
-                            <img src={resolveMediaUrl(item.previewUrl)} alt={item.title} loading="lazy" decoding="async" />
-                          ) : (
-                            <div className="admin-live-placeholder">无预览</div>
-                          )}
-                          <span>{item.title}</span>
-                          <small>{item.errorMessage ?? getHdrItemStatusLabel(item, locale)}</small>
-                        </article>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'orders'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Orders</span>
-                <h2>订单管理</h2>
-              </div>
-              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadOrders()} disabled={adminOrdersBusy}>
-                {adminOrdersBusy ? '刷新中...' : '刷新订单'}
-              </button>
-            </div>
-            <div className="admin-console-metrics">
-              <div>
-                <span>订单总数</span>
-                <strong>{adminOrders.length}</strong>
-              </div>
-              <div>
-                <span>已支付</span>
-                <strong>{paidOrders.length}</strong>
-              </div>
-              <div>
-                <span>已支付金额</span>
-                <strong>${orderRevenue.toFixed(2)}</strong>
-              </div>
-            </div>
-            {adminOrders.length ? (
-              <div className="admin-table-wrap">
-                <table className="admin-table">
-                  <thead>
-                    <tr>
-                      <th>订单号</th>
-                      <th>用户</th>
-                      <th>套餐</th>
-                      <th>金额</th>
-                      <th>状态</th>
-                      <th>激活码</th>
-                      <th>创建时间</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminOrders.map((order) => (
-                      <tr key={order.id}>
-                        <td className="cell-id">{order.id}</td>
-                        <td>
-                          <strong>{order.email}</strong>
-                          <span>{order.userKey}</span>
-                        </td>
-                        <td>{order.packageName}</td>
-                        <td className="mono">${order.amountUsd.toFixed(2)} · {order.points} pts</td>
-                        <td>
-                          <span className={`admin-status ${order.status === 'paid' ? 'ok' : order.status === 'failed' ? 'danger' : 'warn'}`}>
-                            {formatPaymentOrderStatus(order.status)}
-                          </span>
-                        </td>
-                        <td>{order.activationCode ?? '—'}</td>
-                        <td>{formatAdminDate(order.createdAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="admin-empty compact">
-                <strong>{adminOrdersBusy ? '正在读取订单...' : '暂无订单'}</strong>
-                <span>充值订单会在这里显示状态、金额、积分和激活码。</span>
-              </div>
-            )}
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'plans'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Plans</span>
-                <h2>套餐配置</h2>
-              </div>
-              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadSystemSettings()} disabled={adminSystemBusy}>
-                刷新套餐
-              </button>
-            </div>
-            <div className="admin-console-plan-grid">
-              {planPackages.map((item) => (
-                <article key={item.id} className="admin-console-plan-card">
-                  <span>{item.id}</span>
-                  <strong>{item.name}</strong>
-                  <b>${item.amountUsd.toFixed(2)}</b>
-                  <small>{item.points} pts · 原价 ${item.listPriceUsd.toFixed(2)} · 优惠 {item.discountPercent}%</small>
-                </article>
-              ))}
-              {!planPackages.length && (
-                <div className="admin-empty compact">
-                  <strong>暂无套餐数据</strong>
-                  <span>读取充值包后会显示前台充值页使用的套餐。</span>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'prompts'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Prompts</span>
-                <h2>Prompt 模板</h2>
-              </div>
-              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>
-                刷新工作流
-              </button>
-            </div>
-            <div className="admin-console-template-list">
-              {(adminWorkflowSummary?.items ?? []).map((item) => (
-                <article key={`${item.name}-prompt`}>
-                  <strong>{item.name}</strong>
-                  <span>Prompt Node: {item.promptNodeId ?? '未配置'} · Workflow: {item.workflowId ?? '未配置'}</span>
-                </article>
-              ))}
-              {!adminWorkflowSummary?.items.length && (
-                <div className="admin-empty compact">
-                  <strong>暂无 Prompt 模板</strong>
-                  <span>当前后台会从工作流配置中读取 prompt 节点；后续可在这里扩展版本管理和 A/B 对比。</span>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'logs'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Audit</span>
-                <h2>操作日志</h2>
-              </div>
-              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadAuditLogs()} disabled={adminActionBusy}>
-                读取日志
-              </button>
-            </div>
-            {adminAuditLogs.length ? (
-              <div className="admin-table-wrap">
-                <table className="admin-table">
-                  <thead>
-                    <tr>
-                      <th>时间</th>
-                      <th>操作员</th>
-                      <th>操作</th>
-                      <th>对象</th>
-                      <th>IP</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminAuditLogs.map((entry) => (
-                      <tr key={entry.id}>
-                        <td>{formatAdminDate(entry.createdAt)}</td>
-                        <td>{entry.actorEmail ?? entry.actorType}</td>
-                        <td>{entry.action}</td>
-                        <td>{entry.targetUserId ?? entry.targetProjectId ?? '—'}</td>
-                        <td className="cell-id">{entry.ipAddress}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="admin-empty compact">
-                <strong>暂无日志</strong>
-                <span>点击读取日志后显示管理员操作记录。</span>
-              </div>
-            )}
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'content'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Studio Cards</span>
-                <h2>功能卡片配置</h2>
-              </div>
-              <div className="admin-panel-actions">
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={handleAddAdminFeatureCard}
-                  disabled={adminSystemBusy}
-                >
-                  添加卡片
-                </button>
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => void handleAdminLoadSystemSettings()}
-                  disabled={adminSystemBusy}
-                >
-                  刷新卡片
-                </button>
-              </div>
-            </div>
-            <div className="admin-workflow-list admin-feature-list">
-              {adminFeatureDrafts.length ? (
-                adminFeatureDrafts.map((feature) => {
-                  const expanded = Boolean(adminExpandedFeatureIds[feature.id]);
-                  const beforeBusy = adminFeatureImageBusy === `${feature.id}:beforeImageUrl`;
-                  const afterBusy = adminFeatureImageBusy === `${feature.id}:afterImageUrl`;
-                  const workflowDisplay = getAdminFeatureWorkflowDisplay(feature);
-
-                  return (
-                    <article key={feature.id} className="admin-workflow-card admin-feature-editor-card">
-                      <button
-                        className="admin-feature-summary"
-                        type="button"
-                        onClick={() => toggleAdminFeatureDraft(feature.id)}
-                        aria-expanded={expanded}
-                      >
-                        <div className="admin-feature-summary-main">
-                          <span className="admin-feature-chip">
-                            {feature.enabled ? '前台显示' : '已隐藏'} · {feature.status === 'available' ? '可用' : '测试'}
-                          </span>
-                          <strong>{feature.titleZh || feature.id}</strong>
-                          <small>{feature.id}</small>
-                        </div>
-                        <div className="admin-feature-summary-meta">
-                          <span>Workflow: {workflowDisplay.workflowId || '未设置'}</span>
-                          <span>Input: {workflowDisplay.inputNodeId || '未设置'}</span>
-                          <span>Output: {workflowDisplay.outputNodeId || '未设置'}</span>
-                          <span>{feature.pointsPerPhoto} 积分 / 张</span>
-                        </div>
-                        <div className="admin-feature-summary-images" aria-hidden="true">
-                          <span>{feature.beforeImageUrl ? <img src={feature.beforeImageUrl} alt="" /> : 'Before'}</span>
-                          <span>{feature.afterImageUrl ? <img src={feature.afterImageUrl} alt="" /> : 'After'}</span>
-                        </div>
-                        <span className="admin-feature-summary-toggle">{expanded ? '收起' : '展开'}</span>
-                      </button>
-
-                      {expanded ? (
-                        <div className="admin-feature-editor-body">
-                          <label className="admin-toggle-field">
-                            <span>启用前台显示</span>
-                            <input
-                              type="checkbox"
-                              checked={feature.enabled}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { enabled: event.target.checked })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>功能 ID</span>
-                            <input value={feature.id} disabled />
-                          </label>
-                          <label>
-                            <span>分类</span>
-                            <select
-                              value={feature.category}
-                              onChange={(event) =>
-                                updateAdminFeatureDraft(feature.id, {
-                                  category: event.target.value as StudioFeatureConfig['category']
-                                })
-                              }
-                              disabled={adminSystemBusy}
-                            >
-                              {ADMIN_FEATURE_CATEGORY_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            <span>状态</span>
-                            <select
-                              value={feature.status}
-                              onChange={(event) =>
-                                updateAdminFeatureDraft(feature.id, {
-                                  status: event.target.value as StudioFeatureConfig['status']
-                                })
-                              }
-                              disabled={adminSystemBusy}
-                            >
-                              {ADMIN_FEATURE_STATUS_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            <span>中文名字</span>
-                            <input
-                              value={feature.titleZh}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { titleZh: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>英文名字</span>
-                            <input
-                              value={feature.titleEn}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { titleEn: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>标签中文</span>
-                            <input
-                              value={feature.tagZh}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { tagZh: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>标签英文</span>
-                            <input
-                              value={feature.tagEn}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { tagEn: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>中文描述</span>
-                            <textarea
-                              value={feature.descriptionZh}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionZh: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>英文描述</span>
-                            <textarea
-                              value={feature.descriptionEn}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionEn: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>中文详情</span>
-                            <textarea
-                              value={feature.detailZh}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { detailZh: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>英文详情</span>
-                            <textarea
-                              value={feature.detailEn}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { detailEn: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>工作流 ID</span>
-                            <input
-                              value={feature.workflowId}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>输入节点</span>
-                            <input
-                              value={feature.inputNodeId}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { inputNodeId: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>输出节点</span>
-                            <input
-                              value={feature.outputNodeId}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { outputNodeId: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>每张积分</span>
-                            <input
-                              type="number"
-                              min="0"
-                              max="1000"
-                              value={feature.pointsPerPhoto}
-                              onChange={(event) =>
-                                updateAdminFeatureDraft(feature.id, {
-                                  pointsPerPhoto: Math.max(0, Math.round(Number(event.target.value) || 0))
-                                })
-                              }
-                              disabled={adminSystemBusy}
-                            />
-                          </label>
-                          <label>
-                            <span>色调</span>
-                            <select
-                              value={feature.tone}
-                              onChange={(event) =>
-                                updateAdminFeatureDraft(feature.id, {
-                                  tone: event.target.value as StudioFeatureConfig['tone']
-                                })
-                              }
-                              disabled={adminSystemBusy}
-                            >
-                              {ADMIN_FEATURE_TONE_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="admin-feature-image-field">
-                            <span>对比图 Before</span>
-                            {feature.beforeImageUrl ? <img src={feature.beforeImageUrl} alt="" /> : null}
-                            <input
-                              value={feature.beforeImageUrl}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { beforeImageUrl: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                            <input
-                              className="admin-feature-file-input"
-                              type="file"
-                              accept="image/*"
-                              onChange={(event) => {
-                                const file = event.currentTarget.files?.[0];
-                                if (file) {
-                                  void handleAdminFeatureImageUpload(feature.id, 'beforeImageUrl', file);
-                                }
-                                event.currentTarget.value = '';
-                              }}
-                              disabled={adminSystemBusy || beforeBusy}
-                            />
-                            <small>{beforeBusy ? '上传中...' : '支持上传图片或手动填 URL'}</small>
-                          </label>
-                          <label className="admin-feature-image-field">
-                            <span>对比图 After</span>
-                            {feature.afterImageUrl ? <img src={feature.afterImageUrl} alt="" /> : null}
-                            <input
-                              value={feature.afterImageUrl}
-                              onChange={(event) => updateAdminFeatureDraft(feature.id, { afterImageUrl: event.target.value })}
-                              disabled={adminSystemBusy}
-                            />
-                            <input
-                              className="admin-feature-file-input"
-                              type="file"
-                              accept="image/*"
-                              onChange={(event) => {
-                                const file = event.currentTarget.files?.[0];
-                                if (file) {
-                                  void handleAdminFeatureImageUpload(feature.id, 'afterImageUrl', file);
-                                }
-                                event.currentTarget.value = '';
-                              }}
-                              disabled={adminSystemBusy || afterBusy}
-                            />
-                            <small>{afterBusy ? '上传中...' : '支持上传图片或手动填 URL'}</small>
-                          </label>
-                        </div>
-                      ) : null}
-                    </article>
-                  );
-                })
-              ) : (
-                <div className="admin-empty compact">
-                  <strong>功能卡片尚未加载</strong>
-                  <span>点击刷新卡片或刷新工作流后再编辑。</span>
-                </div>
-              )}
-            </div>
-            <div className="admin-activation-actions">
-              <button
-                className="solid-button"
-                type="button"
-                onClick={() => void handleAdminSaveSystemSettings()}
-                disabled={adminSystemBusy || !adminFeatureDrafts.length}
-              >
-                保存卡片配置
-              </button>
-            </div>
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'settings'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Processing Settings</span>
-                <h2>云处理 HDR 批量</h2>
-              </div>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => void handleAdminLoadSystemSettings()}
-                disabled={adminSystemBusy}
-              >
-                刷新设置
-              </button>
-            </div>
-            <div className="admin-activation-editor">
-              <label className="admin-toggle-field">
-                <span>每个云处理任务包含 HDR 组数</span>
-                <input
-                  value={adminSystemDraft.runpodHdrBatchSize}
-                  onChange={(event) =>
-                    setAdminSystemDraft((current) => ({ ...current, runpodHdrBatchSize: event.target.value }))
-                  }
-                  inputMode="numeric"
-                  min={MIN_RUNPOD_HDR_BATCH_SIZE}
-                  max={MAX_RUNPOD_HDR_BATCH_SIZE}
-                  disabled={adminSystemBusy}
-                />
-              </label>
-              <label className="admin-toggle-field">
-                <span>RunningHub 最大并发照片数</span>
-                <input
-                  value={adminSystemDraft.runningHubMaxInFlight}
-                  onChange={(event) =>
-                    setAdminSystemDraft((current) => ({ ...current, runningHubMaxInFlight: event.target.value }))
-                  }
-                  inputMode="numeric"
-                  min={MIN_RUNNINGHUB_MAX_IN_FLIGHT}
-                  max={MAX_RUNNINGHUB_MAX_IN_FLIGHT}
-                  disabled={adminSystemBusy}
-                />
-              </label>
-              <div className="admin-session-card">
-                <span>当前生效</span>
-                <strong>{adminSystemSettings?.runpodHdrBatchSize ?? '—'} 组 / Runpod 批</strong>
-                <strong>{adminSystemSettings?.runningHubMaxInFlight ?? '—'} 张 / RunningHub 并发</strong>
-                <small>Runpod 批量支持 {MIN_RUNPOD_HDR_BATCH_SIZE}-{MAX_RUNPOD_HDR_BATCH_SIZE}；RunningHub 并发支持 {MIN_RUNNINGHUB_MAX_IN_FLIGHT}-{MAX_RUNNINGHUB_MAX_IN_FLIGHT}。新启动的处理任务会使用最新设置。</small>
-              </div>
-              <div className="admin-activation-actions">
-                <button
-                  className="solid-button"
-                  type="button"
-                  onClick={() => void handleAdminSaveSystemSettings()}
-                  disabled={adminSystemBusy}
-                >
-                  保存设置
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'engine'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Workflow Control</span>
-                <h2>工作流管理</h2>
-              </div>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => void handleAdminLoadWorkflows()}
-                disabled={adminWorkflowBusy}
-              >
-                {adminWorkflowBusy ? '刷新中...' : '刷新工作流'}
-              </button>
-            </div>
-
-            {adminWorkflowSummary ? (
-              <>
-                <div className="admin-workflow-grid">
-                  <article>
-                    <span>执行器</span>
-                    <strong>{adminWorkflowSummary.executor.provider}</strong>
-                    <small>{adminWorkflowSummary.executor.workflowEngine ?? adminWorkflowSummary.executor.location ?? 'production'}</small>
-                  </article>
-                  <article>
-                    <span>当前主流程</span>
-                    <strong>{adminWorkflowSummary.active}</strong>
-                    <small>{adminWorkflowSummary.apiKeyConfigured ? 'API 已配置' : 'API 未配置'}</small>
-                  </article>
-                  <article>
-                    <span>Runpod 批量</span>
-                    <strong>{adminSystemSettings?.runpodHdrBatchSize ?? adminWorkflowSummary.settings.workflowMaxInFlight} 组</strong>
-                    <small>每个云端任务包含的 HDR 组数</small>
-                  </article>
-                  <article>
-                    <span>工作流并发</span>
-                    <strong>{adminSystemSettings?.runningHubMaxInFlight ?? adminWorkflowSummary.settings.workflowMaxInFlight}</strong>
-                    <small>回传后进入后续修图队列</small>
-                  </article>
-                </div>
-
-                <div className="admin-workflow-list">
-                  {adminWorkflowSummary.items.length ? (
-                    adminWorkflowSummary.items.map((item) => (
-                      <article key={`${item.name}-${item.workflowId ?? item.type}`} className="admin-workflow-card">
-                        <div>
-                          <strong>{item.name}</strong>
-                          <span>{item.type}{item.purpose ? ` · ${item.purpose}` : ''}</span>
-                        </div>
-                        <small>Workflow ID: {item.workflowId ?? '未配置'}</small>
-                        <small>
-                          输入 {item.inputCount} · 输出 {item.outputCount}
-                          {item.colorCardNo ? ` · 色卡 ${item.colorCardNo}` : ''}
-                        </small>
-                      </article>
-                    ))
-                  ) : (
-                    <div className="admin-empty compact">
-                      <strong>暂无工作流条目</strong>
-                      <span>请检查服务器工作流配置文件。</span>
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="admin-empty compact">
-                <strong>{adminWorkflowBusy ? '正在读取工作流...' : '尚未加载工作流配置'}</strong>
-                <span>点击“刷新工作流”查看当前执行器、主流程、批量和工作流 ID。</span>
-              </div>
-            )}
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'codes'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Activation Codes</span>
-                <h2>充值优惠码</h2>
-              </div>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => void handleAdminLoadActivationCodes()}
-                disabled={adminActivationBusy}
-              >
-                刷新优惠码
-              </button>
-            </div>
-            <div className="admin-activation-editor">
-              <input
-                value={adminActivationDraft.code}
-                onChange={(event) =>
-                  setAdminActivationDraft((current) => ({ ...current, code: event.target.value.toUpperCase() }))
-                }
-                placeholder="激活码，例如 BETA40"
-                disabled={adminActivationBusy}
-              />
-              <input
-                value={adminActivationDraft.label}
-                onChange={(event) => setAdminActivationDraft((current) => ({ ...current, label: event.target.value }))}
-                placeholder="显示名称，例如 内测 40%"
-                disabled={adminActivationBusy}
-              />
-              <select
-                value={adminActivationDraft.packageId}
-                onChange={(event) => setAdminActivationDraft((current) => ({ ...current, packageId: event.target.value }))}
-                disabled={adminActivationBusy}
-              >
-                <option value="">不绑定充值档位（可直接兑换积分）</option>
-                {adminActivationPackages.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={adminActivationDraft.discountPercentOverride}
-                onChange={(event) =>
-                  setAdminActivationDraft((current) => ({ ...current, discountPercentOverride: event.target.value }))
-                }
-                inputMode="numeric"
-                placeholder="覆盖折扣 %"
-                disabled={adminActivationBusy}
-              />
-              <input
-                value={adminActivationDraft.bonusPoints}
-                onChange={(event) => setAdminActivationDraft((current) => ({ ...current, bonusPoints: event.target.value }))}
-                inputMode="numeric"
-                placeholder="直充/额外积分"
-                disabled={adminActivationBusy}
-              />
-              <input
-                value={adminActivationDraft.maxRedemptions}
-                onChange={(event) =>
-                  setAdminActivationDraft((current) => ({ ...current, maxRedemptions: event.target.value }))
-                }
-                inputMode="numeric"
-                placeholder="最多使用次数"
-                disabled={adminActivationBusy}
-              />
-              <input
-                value={adminActivationDraft.expiresAt}
-                onChange={(event) => setAdminActivationDraft((current) => ({ ...current, expiresAt: event.target.value }))}
-                placeholder="过期时间 ISO，可空"
-                disabled={adminActivationBusy}
-              />
-              <label className="admin-toggle-field">
-                <input
-                  type="checkbox"
-                  checked={adminActivationDraft.active}
-                  onChange={(event) => setAdminActivationDraft((current) => ({ ...current, active: event.target.checked }))}
-                  disabled={adminActivationBusy}
-                />
-                启用
-              </label>
-              <div className="admin-activation-actions">
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() =>
-                    setAdminActivationDraft((current) => ({
-                      ...current,
-                      code: generateActivationCode(),
-                      label: current.label || '内测优惠码'
-                    }))
-                  }
-                  disabled={adminActivationBusy}
-                >
-                  随机生成
-                </button>
-                <button
-                  className="solid-button"
-                  type="button"
-                  onClick={() => void handleAdminCreateActivationCode()}
-                  disabled={adminActivationBusy}
-                >
-                  创建激活码
-                </button>
-              </div>
-            </div>
-
-            {adminActivationCodes.length ? (
-              <div className="admin-activation-grid">
-                {adminActivationCodes.slice(0, 12).map((item) => (
-                  <article key={item.id} className={`admin-activation-card${item.available ? '' : ' muted'}`}>
-                    <div>
-                      <strong>{item.code}</strong>
-                      <span>{item.label}</span>
-                    </div>
-                    <small>
-                      {item.packageName ?? '可直接兑换'} · 已用 {item.redemptionCount}
-                      {item.maxRedemptions ? ` / ${item.maxRedemptions}` : ''}
-                    </small>
-                    <small>
-                      {item.discountPercentOverride !== null
-                        ? `折扣 ${item.discountPercentOverride}%`
-                        : item.packageName
-                          ? '使用档位默认折扣'
-                          : '无付款要求'}
-                      {item.bonusPoints ? ` · ${item.packageName ? '额外' : '兑换'} ${item.bonusPoints} pts` : ''}
-                    </small>
-                    <div className="admin-row-actions">
-                      <span className={`admin-status ${item.available ? 'ok' : 'warn'}`}>
-                        {item.available ? '可用' : item.active ? '不可用' : '已停用'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void handleAdminToggleActivationCode(item)}
-                        disabled={adminActivationBusy}
-                      >
-                        {item.active ? '停用' : '启用'}
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="admin-empty compact">
-                <strong>{adminActivationBusy ? '正在读取优惠码...' : '暂无优惠码'}</strong>
-                <span>创建后，用户在充值页输入激活码即可应用优惠。</span>
-              </div>
-            )}
-          </section>
-
-          <section className="admin-panel" hidden={adminConsolePage !== 'users'}>
-            <div className="admin-panel-head">
-              <div>
-                <span className="admin-kicker">Users</span>
-                <h2>用户列表</h2>
-              </div>
-              <button className="ghost-button" type="button" onClick={() => void handleAdminLoadUsers()} disabled={adminBusy}>
-                刷新
-              </button>
-            </div>
-
-            <div className="admin-filter-bar">
-              <input
-                value={adminSearch}
-                onChange={(event) => {
-                  setAdminSearch(event.target.value);
-                  setAdminPage(1);
-                  setAdminLoaded(false);
-                }}
-                placeholder="搜索邮箱、姓名、userKey"
-              />
-              <select
-                value={adminRoleFilter}
-                onChange={(event) => {
-                  setAdminRoleFilter(event.target.value as AdminUserListQuery['role']);
-                  setAdminPage(1);
-                  setAdminLoaded(false);
-                }}
-              >
-                <option value="all">全部角色</option>
-                <option value="admin">管理员</option>
-                <option value="user">用户</option>
-              </select>
-              <select
-                value={adminStatusFilter}
-                onChange={(event) => {
-                  setAdminStatusFilter(event.target.value as AdminUserListQuery['accountStatus']);
-                  setAdminPage(1);
-                  setAdminLoaded(false);
-                }}
-              >
-                <option value="all">全部状态</option>
-                <option value="active">正常</option>
-                <option value="disabled">禁用</option>
-              </select>
-              <select
-                value={adminVerifiedFilter}
-                onChange={(event) => {
-                  setAdminVerifiedFilter(event.target.value as AdminUserListQuery['emailVerified']);
-                  setAdminPage(1);
-                  setAdminLoaded(false);
-                }}
-              >
-                <option value="all">全部邮箱</option>
-                <option value="verified">已验证</option>
-                <option value="unverified">未验证</option>
-              </select>
-              <select
-                value={adminPageSize}
-                onChange={(event) => {
-                  setAdminPageSize(Number(event.target.value));
-                  setAdminPage(1);
-                  setAdminLoaded(false);
-                }}
-              >
-                <option value={10}>10 / 页</option>
-                <option value={25}>25 / 页</option>
-                <option value={50}>50 / 页</option>
-                <option value={100}>100 / 页</option>
-              </select>
-            </div>
-
-            {adminUsers.length ? (
-              <div className="admin-table-wrap">
-                <table className="admin-table">
-                  <thead>
-                    <tr>
-                      <th>用户</th>
-                      <th>权限</th>
-                      <th>邮箱状态</th>
-                      <th>账号状态</th>
-                      <th>登录方式</th>
-                      <th>项目 / 照片</th>
-                      <th>积分</th>
-                      <th>充值</th>
-                      <th>最近登录</th>
-                      <th>创建时间</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {adminUsers.map((user) => (
-                      <tr key={user.id}>
-                        <td>
-                          <strong>{user.displayName}</strong>
-                          <span>{user.email}</span>
-                          <small>{user.userKey}</small>
-                        </td>
-                        <td>
-                          <span className={`admin-status ${user.role === 'admin' ? 'ok' : ''}`}>
-                            {user.role === 'admin' ? '管理员' : '用户'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`admin-status ${user.emailVerifiedAt ? 'ok' : 'warn'}`}>
-                            {user.emailVerifiedAt ? '已验证' : '未验证'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`admin-status ${user.accountStatus === 'active' ? 'ok' : 'danger'}`}>
-                            {user.accountStatus === 'active' ? '正常' : '已禁用'}
-                          </span>
-                        </td>
-                        <td>
-                          <span>{[user.auth.password ? '密码' : '', user.auth.google ? 'Google' : ''].filter(Boolean).join(' + ') || '—'}</span>
-                        </td>
-                        <td>
-                          <strong>{user.projectCount} 项目</strong>
-                          <span>{user.photoCount} 张照片 · {user.resultCount} 张结果</span>
-                        </td>
-                        <td>
-                          <strong>{user.billingSummary.availablePoints}</strong>
-                          <span>已用 {user.billingSummary.totalChargedPoints}</span>
-                          {getBillingOverdrawnPoints(user.billingSummary) > 0 && (
-                            <small className="admin-debt-text">超扣 {getBillingOverdrawnPoints(user.billingSummary)} pts</small>
-                          )}
-                        </td>
-                        <td>
-                          <strong>${user.billingSummary.totalTopUpUsd.toFixed(2)}</strong>
-                          <span>累计获得 {user.billingSummary.totalCreditedPoints} pts</span>
-                        </td>
-                        <td>
-                          <span>{formatAdminDate(user.lastLoginAt)}</span>
-                          <small>{user.activeSessionCount} session</small>
-                        </td>
-                        <td>{formatAdminDate(user.createdAt)}</td>
-                        <td>
-                          <div className="admin-row-actions">
-                            <button type="button" onClick={() => void handleAdminSelectUser(user.id)} disabled={adminDetailBusy || adminActionBusy}>
-                              详情
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void handleAdminUpdateUser(user.id, {
-                                  accountStatus: user.accountStatus === 'active' ? 'disabled' : 'active'
-                                })
-                              }
-                              disabled={adminActionBusy}
-                            >
-                              {user.accountStatus === 'active' ? '禁用' : '启用'}
-                            </button>
-                            <button
-                              className="danger"
-                              type="button"
-                              onClick={() => void handleAdminDeleteUser(user.id)}
-                              disabled={adminActionBusy}
-                            >
-                              删除
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="admin-empty">
-                <strong>{adminBusy ? '正在读取用户...' : '还没有载入用户'}</strong>
-                <span>请先用管理员账号登录，然后点击连接后台。</span>
-              </div>
-            )}
-
-            <div className="admin-pagination">
-              <span>
-                第 {adminPage} / {adminPageCount} 页，共 {adminTotalUsers} 个用户
-              </span>
-              <div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdminPage((current) => Math.max(1, current - 1));
-                    setAdminLoaded(false);
-                  }}
-                  disabled={adminBusy || adminPage <= 1}
-                >
-                  上一页
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdminPage((current) => Math.min(adminPageCount, current + 1));
-                    setAdminLoaded(false);
-                  }}
-                  disabled={adminBusy || adminPage >= adminPageCount}
-                >
-                  下一页
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="admin-detail-grid" hidden={adminConsolePage !== 'users'}>
-            <article className="admin-panel">
-              <div className="admin-panel-head">
-                <div>
-                  <span className="admin-kicker">User Detail</span>
-                  <h2>{adminSelectedUser ? adminSelectedUser.displayName : '选择一个用户'}</h2>
-                </div>
-                {adminSelectedUser && (
-                  <div className="admin-row-actions">
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => void handleAdminLogoutUser(adminSelectedUser.id)}
-                      disabled={adminActionBusy}
-                    >
-                      踢下线
-                    </button>
-                    <button
-                      className="danger"
-                      type="button"
-                      onClick={() => void handleAdminDeleteUser(adminSelectedUser.id)}
-                      disabled={adminActionBusy}
-                    >
-                      删除用户
-                    </button>
-                  </div>
-                )}
-              </div>
-              {adminSelectedUser ? (
-                <div className="admin-detail-body">
-                  <div className="admin-profile-grid">
-                    <div>
-                      <span>邮箱</span>
-                      <strong>{adminSelectedUser.email}</strong>
-                    </div>
-                    <div>
-                      <span>角色</span>
-                      <select
-                        value={adminSelectedUser.role}
-                        onChange={(event) =>
-                          void handleAdminUpdateUser(adminSelectedUser.id, { role: event.target.value as 'user' | 'admin' })
-                        }
-                        disabled={adminActionBusy}
-                      >
-                        <option value="user">用户</option>
-                        <option value="admin">管理员</option>
-                      </select>
-                    </div>
-                    <div>
-                      <span>账号状态</span>
-                      <select
-                        value={adminSelectedUser.accountStatus}
-                        onChange={(event) =>
-                          void handleAdminUpdateUser(adminSelectedUser.id, { accountStatus: event.target.value as 'active' | 'disabled' })
-                        }
-                        disabled={adminActionBusy}
-                      >
-                        <option value="active">正常</option>
-                        <option value="disabled">禁用</option>
-                      </select>
-                    </div>
-                    <div>
-                      <span>积分余额</span>
-                      <strong>{adminSelectedUser.billingSummary.availablePoints} pts</strong>
-                      {getBillingOverdrawnPoints(adminSelectedUser.billingSummary) > 0 && (
-                        <small className="admin-debt-text">超扣 {getBillingOverdrawnPoints(adminSelectedUser.billingSummary)} pts</small>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="admin-adjust-card">
-                    <div>
-                      <span className="admin-kicker">Points</span>
-                      <h3>手动调整积分</h3>
-                    </div>
-                    <select
-                      value={adminAdjustment.type}
-                      onChange={(event) =>
-                        setAdminAdjustment((current) => ({ ...current, type: event.target.value as 'credit' | 'charge' }))
-                      }
-                    >
-                      <option value="credit">补积分</option>
-                      <option value="charge">扣积分</option>
-                    </select>
-                    <input
-                      value={adminAdjustment.points}
-                      onChange={(event) => setAdminAdjustment((current) => ({ ...current, points: event.target.value }))}
-                      inputMode="numeric"
-                      placeholder="积分"
-                    />
-                    <input
-                      value={adminAdjustment.note}
-                      onChange={(event) => setAdminAdjustment((current) => ({ ...current, note: event.target.value }))}
-                      placeholder="原因，例如 Manual credit"
-                    />
-                    <button
-                      className="solid-button"
-                      type="button"
-                      onClick={() => void handleAdminAdjustBilling(adminSelectedUser.id)}
-                      disabled={adminActionBusy}
-                    >
-                      提交
-                    </button>
-                  </div>
-
-                  <div className="admin-mini-table admin-legacy-projects">
-                    <div className="admin-mini-head">
-                      <strong>最近项目</strong>
-                      <span>{adminDetailProjects.length} 个</span>
-                    </div>
-                    {adminDetailBusy ? (
-                      <p>正在读取...</p>
-                    ) : adminDetailProjects.length ? (
-                      adminDetailProjects.slice(0, 6).map((project) => (
-                        <div key={project.id} className="admin-mini-row">
-                          <span>{project.name}</span>
-                          <small>{project.status} · {project.photoCount} photos · {formatAdminDate(project.updatedAt)}</small>
-                        </div>
-                      ))
-                    ) : (
-                      <p>暂无项目。</p>
-                    )}
-                  </div>
-
-                  <div className="admin-project-inspector">
-                    <div className="admin-project-list">
-                      <div className="admin-mini-head">
-                        <strong>用户项目</strong>
-                        <span>{adminDetailProjects.length} 个</span>
-                      </div>
-                      {adminDetailBusy && !adminDetailProjects.length ? (
-                        <p>正在读取项目...</p>
-                      ) : adminDetailProjects.length ? (
-                        adminDetailProjects.map((project) => (
-                          <button
-                            key={project.id}
-                            className={`admin-project-row${adminSelectedProject?.id === project.id ? ' active' : ''}`}
-                            type="button"
-                            onClick={() => void handleAdminSelectProject(project.id)}
-                          >
-                            <span>{project.name}</span>
-                            <small>
-                              {getProjectStatusLabel(project, locale)} · {project.photoCount} 张 · {project.resultAssets.length} 结果 ·{' '}
-                              {formatAdminDate(project.updatedAt)}
-                            </small>
-                          </button>
-                        ))
-                      ) : (
-                        <p>暂无项目。</p>
-                      )}
-                    </div>
-
-                    <div className="admin-project-live">
-                      {adminSelectedProject ? (
-                        <>
-                          <div className="admin-live-summary">
-                            <div>
-                              <span className="admin-kicker">Live Project</span>
-                              <h3>{adminSelectedProject.name}</h3>
-                              <small>
-                                {getProjectStatusLabel(adminSelectedProject, locale)} · {adminSelectedProject.photoCount} 张照片 ·{' '}
-                                {adminSelectedProject.resultAssets.length} 张结果
-                              </small>
-                            </div>
-                            <div className="admin-live-stats">
-                              <span>失败 {adminSelectedProjectFailedItems.length}</span>
-                              <span>处理中 {adminSelectedProjectProcessingItems.length}</span>
-                              <span>结果 {adminSelectedProjectResults.length}</span>
-                            </div>
-                          </div>
-
-                          {adminSelectedProjectResults.length ? (
-                            <div className="admin-live-section">
-                              <strong>处理结果</strong>
-                              <div className="admin-live-grid">
-                                {adminSelectedProjectResults.slice(0, 12).map((asset) => (
-                                  <a
-                                    key={asset.id}
-                                    className="admin-live-tile"
-                                    href={resolveMediaUrl(asset.storageUrl)}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    <img
-                                      src={resolveMediaUrl(asset.previewUrl ?? asset.storageUrl)}
-                                      alt={asset.fileName}
-                                      loading="lazy"
-                                      decoding="async"
-                                    />
-                                    <span>{asset.fileName}</span>
-                                  </a>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          {adminSelectedProjectFailedItems.length ? (
-                            <div className="admin-live-section">
-                              <strong>失败照片</strong>
-                              <div className="admin-live-grid">
-                                {adminSelectedProjectFailedItems.slice(0, 12).map((item) => (
-                                  <article key={item.id} className="admin-live-tile failed">
-                                    {item.previewUrl ? (
-                                      <img src={resolveMediaUrl(item.previewUrl)} alt={item.title} loading="lazy" decoding="async" />
-                                    ) : (
-                                      <div className="admin-live-placeholder">无预览</div>
-                                    )}
-                                    <span>{item.title}</span>
-                                    <small>{item.errorMessage ?? getHdrItemStatusLabel(item, locale)}</small>
-                                  </article>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          {adminSelectedProjectProcessingItems.length ? (
-                            <div className="admin-live-section">
-                              <strong>处理中照片</strong>
-                              <div className="admin-live-grid">
-                                {adminSelectedProjectProcessingItems.slice(0, 12).map((item) => (
-                                  <article key={item.id} className="admin-live-tile processing">
-                                    {item.previewUrl ? (
-                                      <img src={resolveMediaUrl(item.previewUrl)} alt={item.title} loading="lazy" decoding="async" />
-                                    ) : (
-                                      <div className="admin-live-placeholder">等待预览</div>
-                                    )}
-                                    <span>{item.title}</span>
-                                    <small>{getHdrItemStatusLabel(item, locale)}</small>
-                                  </article>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          {!adminSelectedProjectResults.length &&
-                            !adminSelectedProjectFailedItems.length &&
-                            !adminSelectedProjectProcessingItems.length && (
-                              <div className="admin-live-empty">
-                                <strong>暂无实时照片</strong>
-                                <span>项目开始上传或处理后，这里会显示预览、结果和失败项。</span>
-                              </div>
-                            )}
-                        </>
-                      ) : (
-                        <div className="admin-live-empty">
-                          <strong>请选择项目</strong>
-                          <span>点击左侧项目后可查看结果、失败项和处理中照片。</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="admin-empty compact">
-                  <strong>未选择用户</strong>
-                  <span>点击用户列表里的“详情”查看项目、账单和管理操作。</span>
-                </div>
-              )}
-            </article>
-
-            <article className="admin-panel">
-              <div className="admin-panel-head">
-                <div>
-                  <span className="admin-kicker">Billing & Audit</span>
-                  <h2>账单与审计</h2>
-                </div>
-                <button className="ghost-button" type="button" onClick={() => void handleAdminLoadAuditLogs()} disabled={adminActionBusy}>
-                  全部日志
-                </button>
-              </div>
-              <div className="admin-mini-table">
-                <div className="admin-mini-head">
-                  <strong>最近账单</strong>
-                  <span>{adminDetailBillingEntries.length} 条</span>
-                </div>
-                {adminDetailBillingEntries.slice(0, 6).map((entry) => (
-                  <div key={entry.id} className="admin-mini-row">
-                    <span>{entry.type === 'credit' ? '+' : '-'}{entry.points} pts · ${entry.amountUsd.toFixed(2)}</span>
-                    <small>{entry.note} · {formatAdminDate(entry.createdAt)}</small>
-                  </div>
-                ))}
-                {!adminDetailBillingEntries.length && <p>暂无账单记录。</p>}
-              </div>
-              <div className="admin-mini-table">
-                <div className="admin-mini-head">
-                  <strong>审计日志</strong>
-                  <span>{adminAuditLogs.length} 条</span>
-                </div>
-                {adminAuditLogs.slice(0, 8).map((entry) => (
-                  <div key={entry.id} className="admin-mini-row">
-                    <span>{entry.action}</span>
-                    <small>{entry.actorEmail ?? entry.actorType} · {formatAdminDate(entry.createdAt)}</small>
-                  </div>
-                ))}
-                {!adminAuditLogs.length && <p>暂无审计日志。</p>}
-              </div>
-            </article>
-          </section>
-          </section>
-        </main>
-      </>
-    );
   }
 
   if (activeRoute === 'home' || activeRoute === 'plans' || !session) {
@@ -10406,37 +8763,6 @@ function App() {
               </button>
               <button className="solid-button" type="button" onClick={() => void handleCreateProject()} disabled={busy}>
                 {busy ? copy.authWorking : locale === 'en' ? 'Create project and start' : '创建项目并开始'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showLegacyCreateDialog && createDialogOpen && (
-        <div className="modal-backdrop" onClick={() => setCreateDialogOpen(false)}>
-          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <strong>{copy.createProjectTitle}</strong>
-              <button className="close-button" type="button" onClick={() => setCreateDialogOpen(false)}>
-                ×
-              </button>
-            </div>
-            <div className="form-grid">
-              <label>
-                <span>{copy.projectName}</span>
-                <input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="Jin Project" />
-              </label>
-              <label>
-                <span>{copy.projectAddress}</span>
-                <input value={newProjectAddress} onChange={(event) => setNewProjectAddress(event.target.value)} placeholder="Downtown Vancouver" />
-              </label>
-            </div>
-            <div className="modal-actions">
-              <button className="ghost-button" type="button" onClick={() => setCreateDialogOpen(false)}>
-                {copy.cancel}
-              </button>
-              <button className="solid-button" type="button" onClick={() => void handleCreateProject()} disabled={busy}>
-                {copy.createProject}
               </button>
             </div>
           </div>
