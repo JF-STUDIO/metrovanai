@@ -56,7 +56,12 @@ RAW_WB_GAIN_MIN = 0.7
 RAW_WB_GAIN_MAX = 1.5
 RAWPY_BRIGHT_ENV = "METROVAN_RAWPY_BRIGHT"
 RAWPY_HDR_BRIGHT_ENV = "METROVAN_RAWPY_HDR_BRIGHT"
+RAWPY_HDR_BASE_TARGET_MIDTONE_ENV = "METROVAN_RAWPY_HDR_BASE_TARGET_MIDTONE"
+RAWPY_HDR_BASE_MAX_BRIGHT_ENV = "METROVAN_RAWPY_HDR_BASE_MAX_BRIGHT"
 RAWPY_AUTO_WB_BLEND_ENV = "METROVAN_RAWPY_AUTO_WB_BLEND"
+RAWPY_WB_CONFIDENCE_MIN_ENV = "METROVAN_RAWPY_WB_CONFIDENCE_MIN"
+RAWPY_WB_GREEN_SCENE_LIMIT_ENV = "METROVAN_RAWPY_WB_GREEN_SCENE_LIMIT"
+RAWPY_ALLOW_FLAT_CAMERA_WB_OVERRIDE_ENV = "METROVAN_RAWPY_ALLOW_FLAT_CAMERA_WB_OVERRIDE"
 
 
 def env(name: str, default: str = "") -> str:
@@ -651,27 +656,104 @@ def postprocess_raw_to_rgb(
     bright: float | None = None,
 ) -> np.ndarray:
     require_rawpy()
-    with rawpy.imread(str(source)) as raw:
-        options: dict[str, Any] = {
-            "output_color": rawpy.ColorSpace.sRGB,
-            "output_bps": 8,
-            "no_auto_bright": True,
-            "bright": bright if bright is not None else env_float(RAWPY_BRIGHT_ENV, 16.0, 1.0, 32.0),
-            "gamma": (2.222, 4.5),
-            "highlight_mode": rawpy.HighlightMode.Blend,
-            "use_auto_wb": auto_wb,
-            "use_camera_wb": raw_user_wb is None and not auto_wb,
-            "half_size": half_size,
-        }
-        if raw_user_wb is not None:
-            options["user_wb"] = raw_user_wb
-        return raw.postprocess(**options)
+    with source.open("rb") as raw_file:
+        raw = rawpy.imread(raw_file)
+        try:
+            options: dict[str, Any] = {
+                "output_color": rawpy.ColorSpace.sRGB,
+                "output_bps": 8,
+                "no_auto_bright": True,
+                "bright": bright if bright is not None else env_float(RAWPY_BRIGHT_ENV, 16.0, 1.0, 32.0),
+                "gamma": (2.222, 4.5),
+                "highlight_mode": rawpy.HighlightMode.Blend,
+                "use_auto_wb": auto_wb,
+                "use_camera_wb": raw_user_wb is None and not auto_wb,
+                "half_size": half_size,
+            }
+            if raw_user_wb is not None:
+                options["user_wb"] = raw_user_wb
+            return raw.postprocess(**options)
+        finally:
+            raw.close()
 
 
 def get_camera_user_wb(source: Path) -> list[float]:
     require_rawpy()
-    with rawpy.imread(str(source)) as raw:
-        return normalize_raw_user_wb(raw.camera_whitebalance)
+    with source.open("rb") as raw_file:
+        raw = rawpy.imread(raw_file)
+        try:
+            return normalize_raw_user_wb(raw.camera_whitebalance)
+        finally:
+            raw.close()
+
+
+def raw_channel_value(
+    raw_image: np.ndarray,
+    raw_colors: np.ndarray,
+    channel_indices: list[int],
+    black_levels: np.ndarray,
+    white_levels: np.ndarray,
+) -> float | None:
+    values: list[np.ndarray] = []
+    for channel_index in channel_indices:
+        pixels = raw_image[raw_colors == channel_index].astype(np.float32, copy=False)
+        if pixels.size == 0:
+            continue
+        black = float(black_levels[channel_index]) if channel_index < black_levels.size else 0.0
+        white = float(white_levels[channel_index]) if channel_index < white_levels.size else np.nan
+        pixels = np.maximum(pixels - black, 0.0)
+        if np.isfinite(white) and white > black:
+            pixels = pixels[pixels < (white - black) * 0.985]
+        pixels = pixels[pixels > 1.0]
+        if pixels.size:
+            values.append(pixels)
+    if not values:
+        return None
+    merged = np.concatenate(values)
+    if merged.size < 1000:
+        return None
+    return float(np.median(merged))
+
+
+def estimate_raw_sensor_grey_user_wb(source: Path) -> list[float] | None:
+    require_rawpy()
+    with source.open("rb") as raw_file:
+        raw = rawpy.imread(raw_file)
+        try:
+            color_desc = raw.color_desc.decode("ascii", "ignore") if isinstance(raw.color_desc, bytes) else str(raw.color_desc)
+            red_indices = [index for index, value in enumerate(color_desc.upper()) if value == "R"]
+            green_indices = [index for index, value in enumerate(color_desc.upper()) if value == "G"]
+            blue_indices = [index for index, value in enumerate(color_desc.upper()) if value == "B"]
+            if not red_indices or not green_indices or not blue_indices:
+                return None
+
+            raw_image = raw.raw_image_visible.astype(np.float32, copy=False)
+            raw_colors = raw.raw_colors_visible
+            black_levels = np.asarray(raw.black_level_per_channel or [0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+            white_candidates = getattr(raw, "camera_white_level_per_channel", None) or []
+            white_levels = np.asarray(white_candidates, dtype=np.float32)
+            if white_levels.size < len(color_desc) or not np.all(np.isfinite(white_levels[: len(color_desc)])):
+                white_levels = np.asarray([float(raw.white_level or np.nan)] * max(4, len(color_desc)), dtype=np.float32)
+
+            r_value = raw_channel_value(raw_image, raw_colors, red_indices, black_levels, white_levels)
+            g_value = raw_channel_value(raw_image, raw_colors, green_indices, black_levels, white_levels)
+            b_value = raw_channel_value(raw_image, raw_colors, blue_indices, black_levels, white_levels)
+            if not r_value or not g_value or not b_value:
+                return None
+
+            target = float(np.median([r_value, g_value, b_value]))
+            if not np.isfinite(target) or target <= 0:
+                return None
+            user_wb = normalize_raw_user_wb([target / r_value, target / g_value, target / b_value, target / g_value])
+            print(
+                "RAW sensor grey WB selected for "
+                f"{source.name}: raw_median R={r_value:.2f} G={g_value:.2f} B={b_value:.2f} "
+                f"user_wb=[{user_wb[0]:.4f}, {user_wb[1]:.4f}, {user_wb[2]:.4f}, {user_wb[3]:.4f}]",
+                flush=True,
+            )
+            return user_wb
+        finally:
+            raw.close()
 
 
 def rawpy_decode_bright(hdr_input: bool = False) -> float:
@@ -681,6 +763,15 @@ def rawpy_decode_bright(hdr_input: bool = False) -> float:
 
 
 def estimate_raw_rgb_grey_user_wb(source: Path, hdr_input: bool = False) -> list[float] | None:
+    camera_wb = get_camera_user_wb(source)
+    flat_camera_wb = max(camera_wb) - min(camera_wb) < 0.08
+    if flat_camera_wb and not env_enabled(RAWPY_ALLOW_FLAT_CAMERA_WB_OVERRIDE_ENV):
+        raw_sensor_wb = estimate_raw_sensor_grey_user_wb(source)
+        if raw_sensor_wb is not None:
+            return raw_sensor_wb
+        print(f"RAW RGB grey WB kept camera white balance for {source.name}: flat camera WB metadata.", flush=True)
+        return None
+
     bright = rawpy_decode_bright(hdr_input)
     camera_preview = postprocess_raw_to_rgb(source, None, half_size=True, bright=bright)
     preview_image = resize_rgb_array(camera_preview, RAW_WB_SEARCH_LONG_EDGE)
@@ -697,14 +788,42 @@ def estimate_raw_rgb_grey_user_wb(source: Path, hdr_input: bool = False) -> list
     if auto_gains and white_gains:
         auto_blend = env_float(RAWPY_AUTO_WB_BLEND_ENV, 0.65, 0.0, 1.0)
         gains = {
-            "r": max(RAW_WB_GAIN_MIN, min(RAW_WB_GAIN_MAX, white_gains["r"] * (1.0 - auto_blend) + auto_gains["r"] * auto_blend)),
-            "g": 1.0,
-            "b": max(RAW_WB_GAIN_MIN, min(RAW_WB_GAIN_MAX, white_gains["b"] * (1.0 - auto_blend) + auto_gains["b"] * auto_blend)),
+            "r": clamp_wb_gain(white_gains["r"] * (1.0 - auto_blend) + auto_gains["r"] * auto_blend),
+            "g": clamp_wb_gain(white_gains["g"] * (1.0 - auto_blend) + auto_gains["g"] * auto_blend),
+            "b": clamp_wb_gain(white_gains["b"] * (1.0 - auto_blend) + auto_gains["b"] * auto_blend),
+            "confidence": max(white_gains.get("confidence", 0.0), auto_gains.get("confidence", 0.0)),
+            "samples": max(white_gains.get("samples", 0.0), auto_gains.get("samples", 0.0)),
+            "green_pressure": max(white_gains.get("green_pressure", 0.0), auto_gains.get("green_pressure", 0.0)),
         }
     else:
         gains = auto_gains or white_gains
 
-    camera_wb = get_camera_user_wb(source)
+    confidence = float(gains.get("confidence", 0.0))
+    samples = int(gains.get("samples", 0.0))
+    green_pressure = max(green_scene_pressure(preview), float(gains.get("green_pressure", 0.0)))
+    confidence_min = env_float(RAWPY_WB_CONFIDENCE_MIN_ENV, 0.34, 0.0, 1.0)
+    green_scene_limit = env_float(RAWPY_WB_GREEN_SCENE_LIMIT_ENV, 0.24, 0.0, 1.0)
+    relative_r = gains.get("r", 1.0) / max(gains.get("g", 1.0), 1e-6)
+    relative_b = gains.get("b", 1.0) / max(gains.get("g", 1.0), 1e-6)
+    strongest_relative_shift = max(abs(relative_r - 1.0), abs(relative_b - 1.0))
+    if confidence < confidence_min or (green_pressure > green_scene_limit and confidence < 0.72):
+        print(
+            "RAW RGB grey WB kept camera white balance for "
+            f"{source.name}: confidence={confidence:.3f} samples={samples} "
+            f"green_pressure={green_pressure:.3f} relative_shift={strongest_relative_shift:.3f}",
+            flush=True,
+        )
+        return None
+
+    if green_pressure > green_scene_limit:
+        damp = 0.45
+        gains = {
+            **gains,
+            "r": 1.0 + (gains.get("r", 1.0) - 1.0) * damp,
+            "g": 1.0 + (gains.get("g", 1.0) - 1.0) * damp,
+            "b": 1.0 + (gains.get("b", 1.0) - 1.0) * damp,
+        }
+
     user_wb = normalize_raw_user_wb(
         [
             camera_wb[0] * gains.get("r", 1.0),
@@ -715,7 +834,8 @@ def estimate_raw_rgb_grey_user_wb(source: Path, hdr_input: bool = False) -> list
     )
     print(
         "RAW-stage RGB grey WB selected for "
-        f"{source.name}: gains R={gains.get('r', 1.0):.4f} B={gains.get('b', 1.0):.4f} "
+        f"{source.name}: gains R={gains.get('r', 1.0):.4f} G={gains.get('g', 1.0):.4f} B={gains.get('b', 1.0):.4f} "
+        f"confidence={confidence:.3f} samples={samples} green_pressure={green_pressure:.3f} "
         f"user_wb=[{user_wb[0]:.4f}, {user_wb[1]:.4f}, {user_wb[2]:.4f}, {user_wb[3]:.4f}]",
         flush=True,
     )
@@ -796,10 +916,50 @@ def convert_to_jpeg(source: Path, destination: Path, quality: int, long_edge: in
     resize_with_pillow(source, destination, quality, long_edge)
 
 
+def finite_payload_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
+
+
+def exposure_value(item: dict[str, Any]) -> float | None:
+    exposure_seconds = finite_payload_number(item.get("exposureSeconds"))
+    if exposure_seconds is None or exposure_seconds <= 0:
+        return None
+    value = math.log2(exposure_seconds)
+    iso = finite_payload_number(item.get("iso"))
+    if iso is not None and iso > 0:
+        value += math.log2(iso / 100.0)
+    aperture = finite_payload_number(item.get("fNumber"))
+    if aperture is not None and aperture > 0:
+        value -= 2.0 * math.log2(aperture)
+    return value
+
+
 def pick_reference(inputs: list[dict[str, Any]]) -> dict[str, Any]:
-    with_exposure = [item for item in inputs if isinstance(item.get("exposureCompensation"), (int, float))]
+    with_compensation = [
+        (item, compensation)
+        for item in inputs
+        if (compensation := finite_payload_number(item.get("exposureCompensation"))) is not None
+    ]
+    if with_compensation:
+        compensation_values = [value for _, value in with_compensation]
+        if max(compensation_values) - min(compensation_values) > 0.05:
+            return sorted(with_compensation, key=lambda pair: abs(pair[1]))[0][0]
+
+    with_exposure = [
+        (item, value)
+        for item in inputs
+        if (value := exposure_value(item)) is not None
+    ]
     if with_exposure:
-        return sorted(with_exposure, key=lambda item: abs(float(item.get("exposureCompensation") or 0)))[0]
+        sorted_by_exposure = sorted(with_exposure, key=lambda pair: pair[1])
+        return sorted_by_exposure[len(sorted_by_exposure) // 2][0]
+
     return inputs[len(inputs) // 2]
 
 
@@ -816,6 +976,72 @@ def saturation(rgb: np.ndarray) -> np.ndarray:
 
 def luminance(rgb: np.ndarray) -> np.ndarray:
     return 0.2126 * rgb[:, :, 0] + 0.7152 * rgb[:, :, 1] + 0.0722 * rgb[:, :, 2]
+
+
+def clamp_wb_gain(value: float, min_value: float = RAW_WB_GAIN_MIN, max_value: float = RAW_WB_GAIN_MAX) -> float:
+    if not np.isfinite(value):
+        return 1.0
+    return max(min_value, min(max_value, float(value)))
+
+
+def green_scene_pressure(rgb: np.ndarray) -> float:
+    r = rgb[:, :, 0]
+    g = rgb[:, :, 1]
+    b = rgb[:, :, 2]
+    luma = luminance(rgb)
+    sat = saturation(rgb)
+    valid = (luma > 0.08) & (luma < 0.96) & (sat > 0.08)
+    valid_count = np.count_nonzero(valid)
+    if valid_count < 500:
+        return 0.0
+    green_dominant = valid & (g > r + 0.035) & (g > b + 0.03) & (g > r * 1.05) & (g > b * 1.04)
+    return float(np.count_nonzero(green_dominant) / valid_count)
+
+
+def neutral_sample_mask(rgb: np.ndarray, relaxed: bool = False) -> np.ndarray:
+    r = rgb[:, :, 0]
+    g = rgb[:, :, 1]
+    b = rgb[:, :, 2]
+    luma = luminance(rgb)
+    sat = saturation(rgb)
+    channel_max = rgb.max(axis=2)
+    channel_min = rgb.min(axis=2)
+    channel_spread = channel_max - channel_min
+
+    if relaxed:
+        base = (
+            (luma > 0.22)
+            & (luma < 0.96)
+            & (sat < 0.24)
+            & (channel_spread < 0.18)
+            & (channel_max < 0.99)
+            & (channel_min > 0.025)
+        )
+    else:
+        base = (
+            (luma > 0.3)
+            & (luma < 0.93)
+            & (sat < 0.16)
+            & (channel_spread < 0.11)
+            & (channel_max < 0.985)
+            & (channel_min > 0.04)
+        )
+
+    green_dominant = (g > r + 0.045) & (g > b + 0.035) & (sat > 0.1)
+    sky_blue_dominant = (b > r + 0.055) & (b > g + 0.04) & (sat > 0.12)
+    return base & ~green_dominant & ~sky_blue_dominant
+
+
+def gain_confidence(mask: np.ndarray, rgb: np.ndarray) -> float:
+    sample_count = np.count_nonzero(mask)
+    if sample_count < 500:
+        return 0.0
+    channel_spread = rgb.max(axis=2) - rgb.min(axis=2)
+    median_spread = float(np.median(channel_spread[mask]))
+    sample_score = min(1.0, sample_count / 4500.0)
+    spread_score = max(0.0, min(1.0, 1.0 - median_spread / 0.18))
+    green_penalty = min(0.65, green_scene_pressure(rgb) * 0.9)
+    return max(0.0, min(1.0, sample_score * 0.55 + spread_score * 0.45 - green_penalty))
 
 
 def robust_channel_median(rgb: np.ndarray, mask: np.ndarray) -> tuple[float, float, float] | None:
@@ -836,36 +1062,21 @@ def robust_channel_median(rgb: np.ndarray, mask: np.ndarray) -> tuple[float, flo
 
 
 def compute_white_priority_gains(camera: np.ndarray) -> dict[str, float] | None:
-    luma = luminance(camera)
-    sat = saturation(camera)
-    channel_max = camera.max(axis=2)
-    channel_min = camera.min(axis=2)
-    channel_spread = channel_max - channel_min
-    mask = (
-        (luma > 0.32)
-        & (luma < 0.94)
-        & (sat < 0.22)
-        & (channel_spread < 0.16)
-        & (channel_max < 0.985)
-        & (channel_min > 0.04)
-    )
+    mask = neutral_sample_mask(camera)
     if np.count_nonzero(mask) < 1000:
-        mask = (
-            (luma > 0.24)
-            & (luma < 0.96)
-            & (sat < 0.3)
-            & (channel_spread < 0.22)
-            & (channel_max < 0.99)
-            & (channel_min > 0.03)
-        )
+        mask = neutral_sample_mask(camera, relaxed=True)
     medians = robust_channel_median(camera, mask)
     if medians is None:
         return None
     r_median, g_median, b_median = medians
+    target = float(np.median([r_median, g_median, b_median]))
     return {
-        "r": max(0.7, min(1.5, g_median / max(r_median, 1e-6))),
-        "g": 1.0,
-        "b": max(0.7, min(1.5, g_median / max(b_median, 1e-6))),
+        "r": clamp_wb_gain(target / max(r_median, 1e-6)),
+        "g": clamp_wb_gain(target / max(g_median, 1e-6)),
+        "b": clamp_wb_gain(target / max(b_median, 1e-6)),
+        "confidence": gain_confidence(mask, camera),
+        "samples": float(np.count_nonzero(mask)),
+        "green_pressure": green_scene_pressure(camera),
     }
 
 
@@ -881,18 +1092,21 @@ def estimate_rgb_gains_from_arrays(
 
     camera_luma = luminance(camera)
     auto_luma = luminance(auto)
-    sat = np.minimum(saturation(camera), saturation(auto))
     mask = (
-        (camera_luma > 0.08)
-        & (camera_luma < 0.92)
+        neutral_sample_mask(camera)
         & (auto_luma > 0.08)
-        & (auto_luma < 0.92)
-        & (sat < 0.35)
+        & (auto_luma < 0.94)
+        & (saturation(auto) < 0.26)
     )
     if np.count_nonzero(mask) < 500:
-        mask = (camera_luma > 0.05) & (camera_luma < 0.95) & (auto_luma > 0.05) & (auto_luma < 0.95)
-    if np.count_nonzero(mask) == 0:
-        mask = np.ones(camera.shape[:2], dtype=bool)
+        mask = (
+            neutral_sample_mask(camera, relaxed=True)
+            & (auto_luma > 0.05)
+            & (auto_luma < 0.96)
+            & (saturation(auto) < 0.34)
+        )
+    if np.count_nonzero(mask) < 500:
+        return None
 
     ratios = auto / np.maximum(camera, 1e-4)
     channel_ratios: list[float] = []
@@ -902,19 +1116,24 @@ def estimate_rgb_gains_from_arrays(
         channel_ratios.append(float(np.median(values)) if values.size else 1.0)
 
     r_ratio, g_ratio, b_ratio = channel_ratios
-    g_ratio = g_ratio if np.isfinite(g_ratio) and g_ratio > 1e-6 else 1.0
     auto_gains = {
-        "r": max(0.7, min(1.5, r_ratio / g_ratio)),
-        "g": 1.0,
-        "b": max(0.7, min(1.5, b_ratio / g_ratio)),
+        "r": clamp_wb_gain(r_ratio),
+        "g": clamp_wb_gain(g_ratio),
+        "b": clamp_wb_gain(b_ratio),
+        "confidence": gain_confidence(mask, camera),
+        "samples": float(np.count_nonzero(mask)),
+        "green_pressure": green_scene_pressure(camera),
     }
     white_gains = compute_white_priority_gains(camera)
     if not white_gains or not blend_with_white:
         return auto_gains
     return {
-        "r": max(0.7, min(1.5, white_gains["r"] * 0.72 + auto_gains["r"] * 0.28)),
-        "g": 1.0,
-        "b": max(0.7, min(1.5, white_gains["b"] * 0.72 + auto_gains["b"] * 0.28)),
+        "r": clamp_wb_gain(white_gains["r"] * 0.72 + auto_gains["r"] * 0.28),
+        "g": clamp_wb_gain(white_gains["g"] * 0.72 + auto_gains["g"] * 0.28),
+        "b": clamp_wb_gain(white_gains["b"] * 0.72 + auto_gains["b"] * 0.28),
+        "confidence": max(white_gains.get("confidence", 0.0), auto_gains.get("confidence", 0.0)),
+        "samples": max(white_gains.get("samples", 0.0), auto_gains.get("samples", 0.0)),
+        "green_pressure": max(white_gains.get("green_pressure", 0.0), auto_gains.get("green_pressure", 0.0)),
     }
 
 
@@ -1005,12 +1224,23 @@ def single_display_settings() -> tuple[float, float, float, float]:
     return 0.32, 6.0, 0.82, 0.97
 
 
+def hdr_base_display_settings() -> tuple[float, float]:
+    target_midtone = env_float(RAWPY_HDR_BASE_TARGET_MIDTONE_ENV, 0.26, 0.12, 0.40)
+    max_exposure = env_float(RAWPY_HDR_BASE_MAX_BRIGHT_ENV, 10.0, 1.0, 24.0)
+    return target_midtone, max_exposure
+
+
+def display_exposure_from_luma(luma: np.ndarray, target_midtone: float, max_exposure: float) -> tuple[float, float]:
+    midtone = max(float(np.percentile(luma, 50)), 1e-4)
+    exposure = max(0.55, min(max_exposure, target_midtone / midtone))
+    return exposure, midtone
+
+
 def apply_single_display_mapping_to_image(image: Image.Image, label: str = "") -> Image.Image:
     target_midtone, max_exposure, knee, ceiling = single_display_settings()
     array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
     luma = luminance(array)
-    midtone = max(float(np.percentile(luma, 50)), 1e-4)
-    exposure = max(0.55, min(max_exposure, target_midtone / midtone))
+    exposure, midtone = display_exposure_from_luma(luma, target_midtone, max_exposure)
 
     scaled_luma = luma * exposure
     mapped_luma = scaled_luma.copy()
@@ -1031,6 +1261,24 @@ def apply_single_display_mapping_to_image(image: Image.Image, label: str = "") -
         flush=True,
     )
     return Image.fromarray(np.clip(mapped * 255.0, 0, 255).astype(np.uint8), mode="RGB")
+
+
+def estimate_hdr_input_render_bright(reference_source: Path, raw_user_wb: list[float] | None) -> float:
+    configured_bright = os.environ.get(RAWPY_HDR_BRIGHT_ENV)
+    if configured_bright and configured_bright.strip():
+        return rawpy_decode_bright(hdr_input=True)
+
+    target_midtone, max_exposure = hdr_base_display_settings()
+    preview = postprocess_raw_to_rgb(reference_source, raw_user_wb, half_size=True, bright=1.0)
+    preview_image = resize_rgb_array(preview, RAW_WB_SEARCH_LONG_EDGE)
+    preview_array = np.asarray(preview_image, dtype=np.float32) / 255.0
+    exposure, midtone = display_exposure_from_luma(luminance(preview_array), target_midtone, max_exposure)
+    print(
+        "HDR RAW base render brightness selected from "
+        f"{reference_source.name}: midtone={midtone:.4f} bright={exposure:.3f}",
+        flush=True,
+    )
+    return exposure
 
 
 def apply_hdr_tone_adjustments(source_path: Path, destination_path: Path, quality: int) -> None:
@@ -1058,6 +1306,8 @@ def prepare_inputs(
     inputs_dir = work_dir / "prepared"
     inputs_dir.mkdir(parents=True, exist_ok=True)
     reference = pick_reference(exposures)
+    reference_source = source_paths[str(reference.get("id"))]
+    hdr_render_bright = estimate_hdr_input_render_bright(reference_source, raw_user_wb) if is_raw(reference_source) else None
     prepared: list[Path] = []
     reference_prepared: Path | None = None
 
@@ -1065,7 +1315,15 @@ def prepare_inputs(
         source = source_paths[str(exposure.get("id"))]
         prepared_path = inputs_dir / f"{index:04d}_{source.stem}.jpg"
         if is_raw(source):
-            render_raw_to_jpeg(source, prepared_path, 95, raw_user_wb, HDR_LONG_EDGE, hdr_input=True)
+            render_raw_to_jpeg(
+                source,
+                prepared_path,
+                95,
+                raw_user_wb,
+                HDR_LONG_EDGE,
+                hdr_input=True,
+                render_bright=hdr_render_bright,
+            )
         else:
             convert_to_jpeg(source, prepared_path, 95, HDR_LONG_EDGE)
         if exposure is reference:
