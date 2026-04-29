@@ -80,7 +80,9 @@ import type {
   AdminUserListQuery,
   AdminUserSummary,
   AdminWorkflowSummary,
+  FailedUploadFile,
   StudioFeatureConfig,
+  UploadPauseController,
   UploadedObjectReference,
   UploadProgressSnapshot
 } from './api';
@@ -2251,7 +2253,14 @@ function formatUploadProgressLabel(
   }
 
   if (snapshot.stage === 'paused') {
-    return `${copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles)} · waiting for network`;
+    const pausedLabel = snapshot.offline
+      ? copy === UI_TEXT.en
+        ? 'waiting for network'
+        : '等待网络恢复'
+      : copy === UI_TEXT.en
+        ? 'paused'
+        : '已暂停';
+    return `${copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles)} · ${pausedLabel}`;
   }
 
   return copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles);
@@ -2601,6 +2610,8 @@ function App() {
   const [uploadMode, setUploadMode] = useState<'local' | 'originals' | null>(null);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [uploadSnapshot, setUploadSnapshot] = useState<UploadProgressSnapshot | null>(null);
+  const [uploadPaused, setUploadPaused] = useState(false);
+  const [failedUploadFiles, setFailedUploadFiles] = useState<FailedUploadFile[]>([]);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(() => (isDemoMode ? DEMO_BILLING_SUMMARY : null));
   const [billingEntries, setBillingEntries] = useState<BillingEntry[]>(() => (isDemoMode ? DEMO_BILLING_ENTRIES : []));
@@ -2713,6 +2724,34 @@ function App() {
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const uploadAbortControllerRef = useRef<AbortController | null>(null);
+  const uploadPausedRef = useRef(false);
+  const uploadPauseResolversRef = useRef<Array<() => void>>([]);
+  const uploadPauseControllerRef = useRef<UploadPauseController>({
+    isPaused: () => uploadPausedRef.current,
+    waitUntilResumed: (signal?: AbortSignal) =>
+      new Promise<void>((resolve, reject) => {
+        if (!uploadPausedRef.current) {
+          resolve();
+          return;
+        }
+
+        function cleanup() {
+          uploadPauseResolversRef.current = uploadPauseResolversRef.current.filter((resolver) => resolver !== resume);
+          signal?.removeEventListener('abort', abort);
+        }
+        const resume = () => {
+          cleanup();
+          resolve();
+        };
+        const abort = () => {
+          cleanup();
+          reject(new DOMException('Upload cancelled.', 'AbortError'));
+        };
+
+        uploadPauseResolversRef.current.push(resume);
+        signal?.addEventListener('abort', abort, { once: true });
+      })
+  });
   const emailVerificationHandledRef = useRef(false);
   const checkoutHandledRef = useRef(false);
 
@@ -5084,6 +5123,45 @@ function App() {
     await handleUploadForProject(currentProject, files);
   }
 
+  function resolveUploadPauseWaiters() {
+    const resolvers = uploadPauseResolversRef.current.splice(0);
+    resolvers.forEach((resolve) => resolve());
+  }
+
+  function resetUploadPause() {
+    uploadPausedRef.current = false;
+    setUploadPaused(false);
+    resolveUploadPauseWaiters();
+  }
+
+  function handlePauseUpload() {
+    if (!uploadActive) return;
+    uploadPausedRef.current = true;
+    setUploadPaused(true);
+    setUploadSnapshot((snapshot) => (snapshot ? { ...snapshot, stage: 'paused', offline: false } : snapshot));
+    if (currentProject) {
+      updateLocalImportDraft(currentProject.id, (draft) => ({ ...draft, uploadStatus: 'paused' }));
+    }
+  }
+
+  function handleResumeUpload() {
+    if (!uploadPausedRef.current) return;
+    uploadPausedRef.current = false;
+    setUploadPaused(false);
+    resolveUploadPauseWaiters();
+    setUploadSnapshot((snapshot) => (snapshot?.stage === 'paused' ? { ...snapshot, stage: 'uploading', offline: false } : snapshot));
+    if (currentProject) {
+      updateLocalImportDraft(currentProject.id, (draft) => ({ ...draft, uploadStatus: 'uploading' }));
+    }
+  }
+
+  function rememberFailedUploadFile(failed: FailedUploadFile) {
+    setFailedUploadFiles((current) => {
+      const next = current.filter((item) => item.fileIdentity !== failed.fileIdentity);
+      return [...next, failed].slice(-8);
+    });
+  }
+
   function handleCancelUpload() {
     uploadAbortControllerRef.current?.abort();
   }
@@ -5417,6 +5495,8 @@ function App() {
     try {
       if (activeLocalDraft) {
         const projectId = currentProject.id;
+        resetUploadPause();
+        setFailedUploadFiles([]);
         const draftFiles = collectLocalDraftFiles(activeLocalDraft);
         const uploadTotalFiles = Math.max(1, draftFiles.length);
         let uploadedObjects = [...(activeLocalDraft.uploadedObjects ?? [])];
@@ -5516,7 +5596,9 @@ function App() {
             }, {
               signal: uploadAbortController.signal,
               completedObjects: existingGroupUploads,
-              onFileUploaded: rememberUploadedObject
+              onFileUploaded: rememberUploadedObject,
+              onFileFailed: rememberFailedUploadFile,
+              pauseController: uploadPauseControllerRef.current
             });
             inFlightGroupProgress.delete(hdrItem.id);
             groupUploads = 'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : getUploadedObjectsForFiles(uploadedObjects, groupFiles);
@@ -5604,6 +5686,7 @@ function App() {
       setMessage(getUserFacingErrorMessage(error, copy.startProcessingFailed, locale));
     } finally {
       uploadAbortControllerRef.current = null;
+      resetUploadPause();
       setBusy(false);
     }
   }
@@ -8955,9 +9038,14 @@ function App() {
                         </button>
                       )}
                       {showProcessingUploadProgress && (
-                        <button className="ghost-button compact" type="button" onClick={handleCancelUpload}>
-                          {locale === 'en' ? 'Cancel upload' : '取消上传'}
-                        </button>
+                        <>
+                          <button className="ghost-button compact" type="button" onClick={uploadPaused ? handleResumeUpload : handlePauseUpload}>
+                            {uploadPaused ? (locale === 'en' ? 'Resume upload' : '继续上传') : (locale === 'en' ? 'Pause upload' : '暂停上传')}
+                          </button>
+                          <button className="ghost-button compact" type="button" onClick={handleCancelUpload}>
+                            {locale === 'en' ? 'Cancel upload' : '取消上传'}
+                          </button>
+                        </>
                       )}
                       {showResumeUploadAction && (
                         <button className="solid-button small" type="button" onClick={() => void handleStartProcessing()} disabled={busy}>
@@ -9070,10 +9158,29 @@ function App() {
                             <span style={{ width: `${Math.max(6, uploadProgressWidth)}%` }} />
                           </div>
                           {showReviewUploadProgress && (
-                            <button className="ghost-button compact" type="button" onClick={handleCancelUpload}>
-                              {locale === 'en' ? 'Cancel upload' : '取消上传'}
-                            </button>
+                            <>
+                              <button className="ghost-button compact" type="button" onClick={uploadPaused ? handleResumeUpload : handlePauseUpload}>
+                                {uploadPaused ? (locale === 'en' ? 'Resume upload' : '继续上传') : (locale === 'en' ? 'Pause upload' : '暂停上传')}
+                              </button>
+                              <button className="ghost-button compact" type="button" onClick={handleCancelUpload}>
+                                {locale === 'en' ? 'Cancel upload' : '取消上传'}
+                              </button>
+                            </>
                           )}
+                        </div>
+                      )}
+
+                      {!isDemoMode && failedUploadFiles.length > 0 && (
+                        <div className="review-upload-status" aria-live="polite">
+                          <div>
+                            <strong>{locale === 'en' ? 'Files waiting for retry' : '等待重试的文件'}</strong>
+                            <span>
+                              {failedUploadFiles.map((file) => file.fileName).join(', ')}
+                            </span>
+                          </div>
+                          <button className="ghost-button compact" type="button" onClick={() => void handleStartProcessing()} disabled={busy}>
+                            {locale === 'en' ? 'Retry upload' : '重试上传'}
+                          </button>
                         </div>
                       )}
 

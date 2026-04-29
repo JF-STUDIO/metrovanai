@@ -157,10 +157,26 @@ export interface UploadProgressSnapshot {
 
 export type UploadProgressHandler = (percent: number, snapshot?: UploadProgressSnapshot) => void;
 
+export type UploadFailureReason = 'network' | 'cors' | 'r2-5xx' | 'too-large' | 'cancelled' | 'unknown';
+
+export interface FailedUploadFile {
+  fileIdentity: string;
+  fileName: string;
+  reason: UploadFailureReason;
+  lastError: string;
+}
+
+export interface UploadPauseController {
+  isPaused: () => boolean;
+  waitUntilResumed: (signal?: AbortSignal) => Promise<void>;
+}
+
 export interface UploadFilesOptions {
   signal?: AbortSignal;
   completedObjects?: UploadedObjectReference[];
   onFileUploaded?: (uploaded: UploadedObjectReference) => void;
+  onFileFailed?: (failed: FailedUploadFile) => void;
+  pauseController?: UploadPauseController;
 }
 
 interface DirectUploadTarget {
@@ -1044,6 +1060,29 @@ class DirectUploadError extends Error {
   }
 }
 
+function getUploadFailureReason(error: unknown): UploadFailureReason {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return 'cancelled';
+  }
+  if (error instanceof ApiRequestError && error.status === 413) {
+    return 'too-large';
+  }
+  if (error instanceof DirectUploadError) {
+    if (error.status === 413) {
+      return 'too-large';
+    }
+    if (error.status >= 500) {
+      return 'r2-5xx';
+    }
+    return error.status === 0 ? 'network' : 'unknown';
+  }
+  return isBrowserOffline() ? 'network' : 'unknown';
+}
+
+function getUploadFailureMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function shouldRefreshDirectUploadTarget(error: unknown) {
   if (!(error instanceof DirectUploadError)) {
     return true;
@@ -1167,6 +1206,15 @@ function throwIfUploadAborted(signal?: AbortSignal) {
   if (signal?.aborted) {
     throw new DOMException('Upload cancelled.', 'AbortError');
   }
+}
+
+async function waitIfUploadPaused(options: Pick<UploadFilesOptions, 'pauseController' | 'signal'>, onPause?: () => void) {
+  if (!options.pauseController?.isPaused()) {
+    return false;
+  }
+  onPause?.();
+  await options.pauseController.waitUntilResumed(options.signal);
+  return true;
 }
 
 function uploadDirectObjectFile(target: DirectUploadTarget, file: File, onProgress: (loadedBytes: number) => void, signal?: AbortSignal) {
@@ -1335,7 +1383,7 @@ async function uploadDirectObjectFileMultipart(
   projectId: string,
   file: File,
   onProgress: (loadedBytes: number) => void,
-  options: { fileIdentity: string; onOfflinePause?: () => void; signal?: AbortSignal }
+  options: { fileIdentity: string; onOfflinePause?: () => void; onUserPause?: () => void; pauseController?: UploadPauseController; signal?: AbortSignal }
 ): Promise<UploadedObjectReference> {
   throwIfUploadAborted(options.signal);
   await waitIfOffline(options.signal, options.onOfflinePause);
@@ -1390,6 +1438,10 @@ async function uploadDirectObjectFileMultipart(
   const worker = async () => {
     while (nextPartIndex < pendingPartNumbers.length) {
       throwIfUploadAborted(options.signal);
+      const wasUserPaused = await waitIfUploadPaused(options, options.onUserPause);
+      if (wasUserPaused) {
+        reportProgress();
+      }
       await waitIfOffline(options.signal, options.onOfflinePause);
       const partNumber = pendingPartNumbers[nextPartIndex];
       nextPartIndex += 1;
@@ -1791,6 +1843,10 @@ async function uploadFilesViaDirectObject(
           await delay(250);
           continue;
         }
+        const wasUserPaused = await waitIfUploadPaused(options, () => reportProgress({ stage: 'paused', offline: false }));
+        if (wasUserPaused) {
+          reportProgress({ stage: 'uploading', offline: false });
+        }
         const wasOffline = await waitIfOffline(options.signal, () => reportProgress({ stage: 'paused', offline: true }));
         if (wasOffline) {
           reportProgress({ stage: 'uploading' });
@@ -1807,58 +1863,72 @@ async function uploadFilesViaDirectObject(
         const fileIndex = entry.index;
         const fileIdentity = getFileUploadIdentity(file);
         let uploadedObject: UploadedObjectReference;
-        if (file.size >= MULTIPART_UPLOAD_THRESHOLD_BYTES) {
-          uploadedObject = await uploadDirectObjectFileMultipart(
-            projectId,
-            file,
-            (loadedBytes) => {
+        try {
+          if (file.size >= MULTIPART_UPLOAD_THRESHOLD_BYTES) {
+            uploadedObject = await uploadDirectObjectFileMultipart(
+              projectId,
+              file,
+              (loadedBytes) => {
+                loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
+                maybeAdjustConcurrency();
+                reportProgress();
+              },
+              {
+                fileIdentity,
+                onOfflinePause: () => reportProgress({ stage: 'paused', offline: true }),
+                onUserPause: () => reportProgress({ stage: 'paused', offline: false }),
+                pauseController: options.pauseController,
+                signal: options.signal
+              }
+            );
+          } else {
+            const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
               loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
               maybeAdjustConcurrency();
               reportProgress();
-            },
-            {
-              fileIdentity,
+            }, {
+              onRetry: ({ attempt, maxAttempts }) => {
+                loadedByFile[fileIndex] = 0;
+                reportProgress({
+                  stage: 'retrying',
+                  currentFileName: file.name,
+                  attempt,
+                  maxAttempts
+                });
+              },
+              refreshTarget: async () => {
+                const refreshed = await runWithOfflineRetry(() => createDirectUploadTargets(projectId, [file]), {
+                  signal: options.signal,
+                  onPause: () => reportProgress({ stage: 'paused', offline: true })
+                });
+                const nextTarget = refreshed.targets[0];
+                if (!nextTarget) {
+                  throw new Error('Direct upload target refresh failed.');
+                }
+                targets[batchFileIndex] = nextTarget;
+                return nextTarget;
+              },
               onOfflinePause: () => reportProgress({ stage: 'paused', offline: true }),
               signal: options.signal
-            }
-          );
-        } else {
-          const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
-            loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
-            maybeAdjustConcurrency();
-            reportProgress();
-          }, {
-            onRetry: ({ attempt, maxAttempts }) => {
-              loadedByFile[fileIndex] = 0;
-              reportProgress({
-                stage: 'retrying',
-                currentFileName: file.name,
-                attempt,
-                maxAttempts
-              });
-            },
-            refreshTarget: async () => {
-              const refreshed = await runWithOfflineRetry(() => createDirectUploadTargets(projectId, [file]), {
-                signal: options.signal,
-                onPause: () => reportProgress({ stage: 'paused', offline: true })
-              });
-              const nextTarget = refreshed.targets[0];
-              if (!nextTarget) {
-                throw new Error('Direct upload target refresh failed.');
-              }
-              targets[batchFileIndex] = nextTarget;
-              return nextTarget;
-            },
-            onOfflinePause: () => reportProgress({ stage: 'paused', offline: true }),
-            signal: options.signal
-          });
-          targets[batchFileIndex] = latestTarget;
-          uploadedObject = {
-            originalName: latestTarget.originalName || file.name,
-            mimeType: file.type || latestTarget.mimeType || 'application/octet-stream',
-            size: file.size || latestTarget.size,
-            storageKey: latestTarget.storageKey
-          };
+            });
+            targets[batchFileIndex] = latestTarget;
+            uploadedObject = {
+              originalName: latestTarget.originalName || file.name,
+              mimeType: file.type || latestTarget.mimeType || 'application/octet-stream',
+              size: file.size || latestTarget.size,
+              storageKey: latestTarget.storageKey
+            };
+          }
+        } catch (error) {
+          if (!(error instanceof DOMException && error.name === 'AbortError')) {
+            options.onFileFailed?.({
+              fileIdentity,
+              fileName: file.name,
+              reason: getUploadFailureReason(error),
+              lastError: getUploadFailureMessage(error)
+            });
+          }
+          throw error;
         }
         completedByIdentity.set(fileIdentity, uploadedObject);
         completedByIdentity.set(getUploadedObjectIdentity(uploadedObject), uploadedObject);
