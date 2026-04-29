@@ -1096,6 +1096,7 @@ async function startDownloadJob(projectId: string, input: DownloadRequestPayload
     method: 'POST',
     credentials: 'include',
     headers: buildRequestHeaders({
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     }),
     body: JSON.stringify(input)
