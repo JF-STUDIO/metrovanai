@@ -37,9 +37,13 @@ import { extractPreviewOrConvertToJpeg } from './images.js';
 import { sendEmailVerificationEmail, sendPasswordResetEmail } from './mailer.js';
 import { MAX_RUNPOD_HDR_BATCH_SIZE, MIN_RUNPOD_HDR_BATCH_SIZE } from './metadata.js';
 import {
+  abortMultipartObjectUpload,
   assertDirectObjectUploadConfigured,
+  completeMultipartObjectUpload,
+  createDirectObjectMultipartUpload,
   createObjectDownloadUrl,
   createDirectObjectUploadTarget,
+  createMultipartUploadPartUrl,
   createPersistentObjectKey,
   deleteObjectsFromStorage,
   deleteProjectIncomingObjects,
@@ -162,6 +166,7 @@ const TRASH_CLEANUP_INTERVAL_MS = 1000 * 60 * 60 * 6;
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 1000 * 60 * 10;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
+const DIRECT_UPLOAD_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 
 const trashCleanupTimer = setInterval(() => {
   try {
@@ -2034,6 +2039,41 @@ const directUploadFileSchema = z.object({
 
 const directUploadTargetSchema = z.object({
   files: z.array(directUploadFileSchema).min(1).max(1000)
+});
+
+const multipartUploadInitSchema = z.object({
+  fileName: z.string().trim().min(1).max(260),
+  fileSize: z.number().int().min(1),
+  contentType: z.string().trim().max(120).optional().default('application/octet-stream'),
+  fileIdentity: z.string().trim().max(512).optional()
+});
+
+const multipartPartNumbersSchema = z.object({
+  storageKey: z.string().trim().min(1).max(1024),
+  uploadId: z.string().trim().min(1).max(2048),
+  partNumbers: z.array(z.number().int().min(1).max(10000)).min(1).max(1000)
+});
+
+const multipartUploadCompleteSchema = z.object({
+  storageKey: z.string().trim().min(1).max(1024),
+  uploadId: z.string().trim().min(1).max(2048),
+  originalName: z.string().trim().min(1).max(260),
+  mimeType: z.string().trim().max(120).optional().default('application/octet-stream'),
+  fileSize: z.number().int().min(1),
+  parts: z
+    .array(
+      z.object({
+        partNumber: z.number().int().min(1).max(10000),
+        etag: z.string().trim().min(1).max(512)
+      })
+    )
+    .min(1)
+    .max(10000)
+});
+
+const multipartUploadAbortSchema = z.object({
+  storageKey: z.string().trim().min(1).max(1024),
+  uploadId: z.string().trim().min(1).max(2048)
 });
 
 const directUploadCompleteSchema = z.object({
@@ -4176,6 +4216,274 @@ app.post('/api/projects/:id/download', async (req, res) => {
     } else {
       res.destroy(error instanceof Error ? error : new Error(String(error)));
     }
+  }
+});
+
+app.post('/api/projects/:id/uploads/multipart/init', async (req, res) => {
+  const user = requireAuthenticatedUser(req, res);
+  if (!user) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, user, {
+      scope: 'multipart-upload',
+      limit: 120,
+      windowMs: 1000 * 60 * 15
+    }))
+  ) {
+    return;
+  }
+
+  const projectId = String(req.params.id ?? '');
+  const project = store.getProjectForUser(projectId, user.userKey);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found.' });
+    return;
+  }
+
+  let directUploadConfig: ReturnType<typeof assertDirectObjectUploadConfigured>;
+  try {
+    directUploadConfig = assertDirectObjectUploadConfigured();
+  } catch {
+    res.status(501).json({ error: 'Direct upload is not configured.' });
+    return;
+  }
+
+  const parsed = multipartUploadInitSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    checkDirectUploadTargetLimits([{ size: parsed.data.fileSize }]);
+    if (!isSupportedUploadFileName(parsed.data.fileName)) {
+      throw new Error('Only RAW and JPG files are supported.');
+    }
+    if (parsed.data.fileSize > directUploadConfig.maxFileBytes) {
+      throw new Error('File is too large for direct upload.');
+    }
+
+    const upload = await createDirectObjectMultipartUpload({
+      userKey: user.userKey,
+      projectId,
+      userDisplayName: project.userDisplayName,
+      projectName: project.name,
+      originalName: normalizeUploadedFileName(parsed.data.fileName),
+      mimeType: parsed.data.contentType,
+      size: parsed.data.fileSize
+    });
+    const totalParts = Math.ceil(parsed.data.fileSize / DIRECT_UPLOAD_MULTIPART_PART_SIZE);
+    const partUrls = Array.from({ length: totalParts }, (_unused, index) =>
+      createMultipartUploadPartUrl({
+        storageKey: upload.storageKey,
+        uploadId: upload.uploadId,
+        partNumber: index + 1
+      })
+    );
+
+    res.json({
+      storageKey: upload.storageKey,
+      uploadId: upload.uploadId,
+      partSize: DIRECT_UPLOAD_MULTIPART_PART_SIZE,
+      partUrls
+    });
+  } catch (error) {
+    res.status(400).json({ error: getPublicErrorMessage(error, 'Could not prepare multipart upload.') });
+  }
+});
+
+app.post('/api/projects/:id/uploads/multipart/parts/refresh', async (req, res) => {
+  const user = requireAuthenticatedUser(req, res);
+  if (!user) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, user, {
+      scope: 'multipart-upload',
+      limit: 240,
+      windowMs: 1000 * 60 * 15
+    }))
+  ) {
+    return;
+  }
+
+  const projectId = String(req.params.id ?? '');
+  const project = store.getProjectForUser(projectId, user.userKey);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found.' });
+    return;
+  }
+
+  try {
+    assertDirectObjectUploadConfigured();
+  } catch {
+    res.status(501).json({ error: 'Direct upload is not configured.' });
+    return;
+  }
+
+  const parsed = multipartPartNumbersSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  if (
+    !isDirectUploadKeyForProject({
+      userKey: user.userKey,
+      projectId,
+      userDisplayName: project.userDisplayName,
+      projectName: project.name,
+      storageKey: parsed.data.storageKey
+    })
+  ) {
+    res.status(400).json({ error: 'Direct upload key does not belong to this project.' });
+    return;
+  }
+
+  const partNumbers = Array.from(new Set(parsed.data.partNumbers)).sort((left, right) => left - right);
+  res.json({
+    partUrls: partNumbers.map((partNumber) =>
+      createMultipartUploadPartUrl({
+        storageKey: parsed.data.storageKey,
+        uploadId: parsed.data.uploadId,
+        partNumber
+      })
+    )
+  });
+});
+
+app.post('/api/projects/:id/uploads/multipart/complete', async (req, res) => {
+  const user = requireAuthenticatedUser(req, res);
+  if (!user) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, user, {
+      scope: 'multipart-upload',
+      limit: 120,
+      windowMs: 1000 * 60 * 15
+    }))
+  ) {
+    return;
+  }
+
+  const projectId = String(req.params.id ?? '');
+  const project = store.getProjectForUser(projectId, user.userKey);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found.' });
+    return;
+  }
+
+  let directUploadConfig: ReturnType<typeof assertDirectObjectUploadConfigured>;
+  try {
+    directUploadConfig = assertDirectObjectUploadConfigured();
+  } catch {
+    res.status(501).json({ error: 'Direct upload is not configured.' });
+    return;
+  }
+
+  const parsed = multipartUploadCompleteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    if (!isSupportedUploadFileName(parsed.data.originalName)) {
+      throw new Error('Only RAW and JPG files are supported.');
+    }
+    if (parsed.data.fileSize > directUploadConfig.maxFileBytes) {
+      throw new Error('File is too large for direct upload.');
+    }
+    if (
+      !isDirectUploadKeyForProject({
+        userKey: user.userKey,
+        projectId,
+        userDisplayName: project.userDisplayName,
+        projectName: project.name,
+        storageKey: parsed.data.storageKey
+      })
+    ) {
+      throw new Error('Direct upload key does not belong to this project.');
+    }
+
+    const parts = [...parsed.data.parts].sort((left, right) => left.partNumber - right.partNumber);
+    await completeMultipartObjectUpload({
+      storageKey: parsed.data.storageKey,
+      uploadId: parsed.data.uploadId,
+      parts
+    });
+    await assertDirectUploadObjectReady({ storageKey: parsed.data.storageKey, expectedSize: parsed.data.fileSize });
+
+    res.json({
+      storageKey: parsed.data.storageKey,
+      etag: null,
+      originalName: normalizeUploadedFileName(parsed.data.originalName),
+      size: parsed.data.fileSize,
+      mimeType: parsed.data.mimeType
+    });
+  } catch (error) {
+    res.status(400).json({ error: getPublicErrorMessage(error, 'Could not complete multipart upload.') });
+  }
+});
+
+app.post('/api/projects/:id/uploads/multipart/abort', async (req, res) => {
+  const user = requireAuthenticatedUser(req, res);
+  if (!user) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, user, {
+      scope: 'multipart-upload',
+      limit: 120,
+      windowMs: 1000 * 60 * 15
+    }))
+  ) {
+    return;
+  }
+
+  const projectId = String(req.params.id ?? '');
+  const project = store.getProjectForUser(projectId, user.userKey);
+  if (!project) {
+    res.status(404).json({ error: 'Project not found.' });
+    return;
+  }
+
+  try {
+    assertDirectObjectUploadConfigured();
+  } catch {
+    res.status(501).json({ error: 'Direct upload is not configured.' });
+    return;
+  }
+
+  const parsed = multipartUploadAbortSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  if (
+    !isDirectUploadKeyForProject({
+      userKey: user.userKey,
+      projectId,
+      userDisplayName: project.userDisplayName,
+      projectName: project.name,
+      storageKey: parsed.data.storageKey
+    })
+  ) {
+    res.status(400).json({ error: 'Direct upload key does not belong to this project.' });
+    return;
+  }
+
+  try {
+    await abortMultipartObjectUpload({
+      storageKey: parsed.data.storageKey,
+      uploadId: parsed.data.uploadId
+    });
+    res.json({ aborted: true });
+  } catch (error) {
+    res.status(400).json({ error: getPublicErrorMessage(error, 'Could not abort multipart upload.') });
   }
 });
 

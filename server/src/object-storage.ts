@@ -46,6 +46,20 @@ export interface DirectObjectUploadTarget {
   expiresAt: string;
 }
 
+export interface MultipartUploadPartUrl {
+  partNumber: number;
+  url: string;
+  expiresAt: string;
+}
+
+export interface DirectObjectMultipartUpload {
+  originalName: string;
+  size: number;
+  mimeType: string;
+  storageKey: string;
+  uploadId: string;
+}
+
 function env(name: string) {
   return process.env[name]?.trim() ?? '';
 }
@@ -198,11 +212,14 @@ function getSigningKey(config: ObjectStorageConfig, dateStamp: string) {
   return hmac(serviceKey, 'aws4_request');
 }
 
+type PresignedMethod = 'GET' | 'PUT' | 'POST' | 'DELETE' | 'HEAD';
+
 function createPresignedUrl(
   config: ObjectStorageConfig,
-  method: 'GET' | 'PUT' | 'DELETE' | 'HEAD',
+  method: PresignedMethod,
   key: string,
-  expiresSeconds: number
+  expiresSeconds: number,
+  queryPairs: Array<[string, string]> = []
 ) {
   const now = new Date();
   const amzDate = toAmzDate(now);
@@ -210,6 +227,9 @@ function createPresignedUrl(
   const scope = `${dateStamp}/${config.region}/s3/aws4_request`;
   const url = getObjectUrl(config, key);
 
+  for (const [keyName, value] of queryPairs) {
+    url.searchParams.set(keyName, value);
+  }
   url.searchParams.set('X-Amz-Algorithm', 'AWS4-HMAC-SHA256');
   url.searchParams.set('X-Amz-Credential', `${config.accessKeyId}/${scope}`);
   url.searchParams.set('X-Amz-Date', amzDate);
@@ -227,6 +247,23 @@ function createPresignedUrl(
   url.searchParams.set('X-Amz-Signature', signature);
 
   return url.toString();
+}
+
+function escapeXmlValue(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function normalizeMultipartEtag(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  return trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed : `"${trimmed.replace(/^"+|"+$/g, '')}"`;
 }
 
 function createSignedHeaderRequest(
@@ -473,6 +510,105 @@ export function createDirectObjectUploadTarget(input: {
     },
     expiresAt: new Date(Date.now() + config.uploadExpiresSeconds * 1000).toISOString()
   } satisfies DirectObjectUploadTarget;
+}
+
+export async function createDirectObjectMultipartUpload(input: {
+  userKey: string;
+  projectId: string;
+  userDisplayName?: string | null;
+  projectName?: string | null;
+  originalName: string;
+  mimeType: string;
+  size: number;
+}): Promise<DirectObjectMultipartUpload> {
+  const config = assertDirectObjectUploadConfigured();
+  if (input.size <= 0 || input.size > config.maxFileBytes) {
+    throw new Error('File is too large for direct upload.');
+  }
+
+  const storageKey = buildIncomingStorageKey(input);
+  const url = createPresignedUrl(config, 'POST', storageKey, config.uploadExpiresSeconds, [['uploads', '']]);
+  const response = await fetch(url, { method: 'POST' });
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`Multipart upload initiation failed: ${response.status} ${body}`.trim());
+  }
+
+  const uploadId = readXmlTagValues(body, 'UploadId')[0];
+  if (!uploadId) {
+    throw new Error('Multipart upload initiation did not return an upload id.');
+  }
+
+  return {
+    originalName: input.originalName,
+    size: input.size,
+    mimeType: input.mimeType || 'application/octet-stream',
+    storageKey,
+    uploadId
+  };
+}
+
+export function createMultipartUploadPartUrl(input: {
+  storageKey: string;
+  uploadId: string;
+  partNumber: number;
+  expiresSeconds?: number;
+}): MultipartUploadPartUrl {
+  const config = assertDirectObjectUploadConfigured();
+  const expiresSeconds = input.expiresSeconds ?? Math.min(config.uploadExpiresSeconds, 15 * 60);
+  return {
+    partNumber: input.partNumber,
+    url: createPresignedUrl(config, 'PUT', normalizeStorageKey(input.storageKey), expiresSeconds, [
+      ['partNumber', String(input.partNumber)],
+      ['uploadId', input.uploadId]
+    ]),
+    expiresAt: new Date(Date.now() + expiresSeconds * 1000).toISOString()
+  };
+}
+
+export async function completeMultipartObjectUpload(input: {
+  storageKey: string;
+  uploadId: string;
+  parts: Array<{ partNumber: number; etag: string }>;
+}) {
+  const config = assertDirectObjectUploadConfigured();
+  const partsXml = [...input.parts]
+    .sort((left, right) => left.partNumber - right.partNumber)
+    .map(
+      (part) =>
+        `<Part><PartNumber>${part.partNumber}</PartNumber><ETag>${escapeXmlValue(normalizeMultipartEtag(part.etag))}</ETag></Part>`
+    )
+    .join('');
+  const body = `<CompleteMultipartUpload>${partsXml}</CompleteMultipartUpload>`;
+  const url = createPresignedUrl(config, 'POST', normalizeStorageKey(input.storageKey), config.uploadExpiresSeconds, [
+    ['uploadId', input.uploadId]
+  ]);
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/xml'
+    },
+    body
+  });
+  const responseBody = await response.text();
+  if (!response.ok) {
+    throw new Error(`Multipart upload completion failed: ${response.status} ${responseBody}`.trim());
+  }
+
+  return {
+    etag: readXmlTagValues(responseBody, 'ETag')[0] ?? null
+  };
+}
+
+export async function abortMultipartObjectUpload(input: { storageKey: string; uploadId: string }) {
+  const config = assertDirectObjectUploadConfigured();
+  const url = createPresignedUrl(config, 'DELETE', normalizeStorageKey(input.storageKey), config.uploadExpiresSeconds, [
+    ['uploadId', input.uploadId]
+  ]);
+  const response = await fetch(url, { method: 'DELETE' });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Multipart upload abort failed: ${response.status} ${await response.text().catch(() => '')}`.trim());
+  }
 }
 
 export function createObjectDownloadUrl(storageKey: string, expiresSeconds?: number) {
