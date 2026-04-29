@@ -39,11 +39,15 @@ interface DownloadJob {
 
 const JOB_RETENTION_MS = 5 * 60 * 1000;
 const DOWNLOAD_URL_TTL_SECONDS = 6 * 60 * 60;
+const MAX_DOWNLOAD_JOB_WORKERS = Math.max(
+  1,
+  Math.round(Number(process.env.METROVAN_DOWNLOAD_JOB_WORKERS ?? 3) || 3)
+);
 const jobs = new Map<string, DownloadJob>();
 const activeByRequest = new Map<string, string>();
 const queue: DownloadJob[] = [];
 let jobStore: DownloadJobStore | null = null;
-let workerRunning = false;
+let activeWorkers = 0;
 
 export function configureDownloadJobs(store: DownloadJobStore) {
   jobStore = store;
@@ -111,16 +115,17 @@ function persistRecord(job: ProjectDownloadJobRecord) {
 }
 
 function startWorker() {
-  if (workerRunning) {
-    return;
+  const availableWorkers = Math.max(0, MAX_DOWNLOAD_JOB_WORKERS - activeWorkers);
+  const workersToStart = Math.min(availableWorkers, queue.length);
+  for (let index = 0; index < workersToStart; index += 1) {
+    activeWorkers += 1;
+    void runWorker().finally(() => {
+      activeWorkers -= 1;
+      if (queue.length) {
+        startWorker();
+      }
+    });
   }
-  workerRunning = true;
-  void runWorker().finally(() => {
-    workerRunning = false;
-    if (queue.length) {
-      startWorker();
-    }
-  });
 }
 
 function isJobCancelled(job: DownloadJob) {
