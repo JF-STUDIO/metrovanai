@@ -730,7 +730,7 @@ function getAuthenticatedContext(req: express.Request, touchSession = true) {
 function requireAuthenticatedUser(req: express.Request, res: express.Response) {
   const auth = getAuthenticatedContext(req);
   if (!auth) {
-    res.status(401).json({ error: 'Authentication required.' });
+    res.status(401).json({ error: '请先登录后再操作。' });
     return null;
   }
   return auth.user;
@@ -783,7 +783,7 @@ function requireValidCsrf(req: express.Request, res: express.Response, auth: Aut
   }
 
   if (!safeHashEqual(hashSessionToken(submittedToken), auth.session.csrfTokenHash)) {
-    res.status(403).json({ error: 'Invalid CSRF token. Refresh and try again.' });
+    res.status(403).json({ error: '请求验证失败，请刷新页面后重试。' });
     return false;
   }
 
@@ -897,11 +897,11 @@ function requireAdminApiAccess(req: express.Request, res: express.Response) {
   }
 
   if (auth?.user && !isAdminUser(auth.user)) {
-    res.status(403).json({ error: 'Admin role is required.' });
+    res.status(403).json({ error: '需要管理员权限。' });
     return null;
   }
 
-  res.status(401).json({ error: 'Admin authentication required.' });
+  res.status(401).json({ error: '需要管理员身份验证。' });
   return null;
 }
 
@@ -1479,13 +1479,13 @@ async function deleteProjectObjectStorage(project: ProjectRecord) {
 
 function sendProtectedStorageFile(res: express.Response, filePath: string | null, storageKey?: string | null) {
   if (!filePath) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
   const resolvedPath = path.resolve(filePath);
   if (!isPathInsideDirectory(resolvedPath, store.getStorageRoot())) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
@@ -1493,20 +1493,20 @@ function sendProtectedStorageFile(res: express.Response, filePath: string | null
     void restoreObjectToFileIfAvailable(storageKey, resolvedPath)
       .then((restored) => {
         if (!restored) {
-          res.status(404).json({ error: 'File not found.' });
+          res.status(404).json({ error: '找不到该文件。' });
           return;
         }
         sendProtectedStorageFile(res, filePath);
       })
       .catch(() => {
-        res.status(404).json({ error: 'File not found.' });
+        res.status(404).json({ error: '找不到该文件。' });
       });
     return;
   }
 
   const stat = fs.statSync(resolvedPath);
   if (!stat.isFile()) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
@@ -1670,13 +1670,13 @@ async function ensureResultThumbnailManifestItem(project: ProjectRecord, asset: 
 
 function sendCachedPreviewFile(res: express.Response, filePath: string | null) {
   if (!filePath) {
-    res.status(404).json({ error: 'Preview not found.' });
+    res.status(404).json({ error: '找不到该预览图。' });
     return;
   }
 
   const resolvedPath = path.resolve(filePath);
   if (!isPathInsideDirectory(resolvedPath, store.getStorageRoot()) || !fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
-    res.status(404).json({ error: 'Preview not found.' });
+    res.status(404).json({ error: '找不到该预览图。' });
     return;
   }
 
@@ -1693,7 +1693,7 @@ function getOwnedProjectFromRequest(req: express.Request, res: express.Response)
 
   const project = getProjectForAuthenticatedRead(user, String(req.params.id ?? ''));
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return null;
   }
 
@@ -2303,7 +2303,7 @@ const adminConfirmSchema = z.object({
 });
 
 function isSupportedUploadFileName(fileName: string) {
-  const extension = path.extname(fileName);
+  const extension = path.extname(fileName).toLowerCase();
   return isRawExtension(extension) || isImageExtension(extension);
 }
 
@@ -2324,7 +2324,7 @@ const upload = multer({
     destination(req, _file, callback) {
       const auth = getAuthenticatedContext(req, false);
       if (!auth) {
-        callback(new Error('Authentication required.'), '');
+        callback(new Error('请先登录后再操作。'), '');
         return;
       }
 
@@ -2400,13 +2400,13 @@ function isStudioFeatureImageStorageKey(storageKey: string) {
 
 function sendPublicFeatureImageFile(res: express.Response, filePath: string | null) {
   if (!filePath) {
-    res.status(404).json({ error: 'Feature image not found.' });
+    res.status(404).json({ error: '找不到该展示图片。' });
     return;
   }
 
   const resolvedPath = path.resolve(filePath);
   if (!isPathInsideDirectory(resolvedPath, store.getStorageRoot()) || !fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
-    res.status(404).json({ error: 'Feature image not found.' });
+    res.status(404).json({ error: '找不到该展示图片。' });
     return;
   }
 
@@ -2540,7 +2540,7 @@ app.use((req, res, next) => {
 
   const auth = getAuthenticatedContext(req, false);
   if (!auth) {
-    res.status(401).json({ error: 'Authentication required.' });
+    res.status(401).json({ error: '请先登录后再操作。' });
     return;
   }
 
@@ -2564,12 +2564,12 @@ app.get(/^\/storage\/(.+)$/, (req, res) => {
     .join('/');
   const [ownerKey, projectId] = storageKey.split('/');
   if (!storageKey || storageKey.includes('..') || ownerKey !== user.userKey || !projectId) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
   if (!store.getProjectForUser(projectId, user.userKey)) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
@@ -2634,7 +2634,7 @@ app.patch('/api/account/settings', (req, res) => {
   }));
 
   if (!updatedUser) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
 
@@ -2776,7 +2776,7 @@ app.post('/api/billing/checkout/confirm', async (req, res) => {
     const checkoutSession = await getStripeClient().checkout.sessions.retrieve(parsed.data.sessionId);
     const order = getOrderFromStripeSession(checkoutSession);
     if (!order || order.userKey !== user.userKey) {
-      res.status(404).json({ error: 'Payment order not found.' });
+      res.status(404).json({ error: '找不到该订单。' });
       return;
     }
 
@@ -2889,7 +2889,7 @@ app.post('/api/billing/top-up', async (req, res) => {
   }
 
   if (!isInternalTopUpAllowed()) {
-    res.status(410).json({ error: 'Direct top-up is disabled. Use secure Stripe checkout.' });
+    res.status(410).json({ error: '直接充值已停用，请通过安全支付渠道完成充值。' });
     return;
   }
 
@@ -2901,7 +2901,7 @@ app.post('/api/billing/top-up', async (req, res) => {
 
   const selectedPackage = getTopUpPackages().find((item) => item.id === parsed.data.packageId);
   if (!selectedPackage) {
-    res.status(404).json({ error: 'Top-up package not found.' });
+    res.status(404).json({ error: '找不到该充值套餐。' });
     return;
   }
 
@@ -2925,8 +2925,8 @@ app.post('/api/billing/top-up', async (req, res) => {
   }
 
   const billingNote = activationCode
-    ? `Top-up: ${selectedPackage.name} with ${activationCode.code} (${activationCode.label})`
-    : `Top-up: ${selectedPackage.name} (+${selectedPackage.discountPercent}% credits)`;
+    ? `积分充值：${selectedPackage.name}（兑换码 ${activationCode.code}${activationCode.label ? ' ' + activationCode.label : ''}）`
+    : `积分充值：${selectedPackage.name}`;
 
   store.createBillingEntry(Object.assign({
     userKey: user.userKey,
@@ -3075,14 +3075,14 @@ app.get('/api/studio/feature-images/local/:fileName', (req, res) => {
 app.get('/api/studio/feature-images/object/:encodedKey', async (req, res) => {
   const storageKey = decodeStorageKeyFromRoute(String(req.params.encodedKey ?? ''));
   if (!storageKey || !isStudioFeatureImageStorageKey(storageKey) || !isObjectStorageConfigured()) {
-    res.status(404).json({ error: 'Feature image not found.' });
+    res.status(404).json({ error: '找不到该展示图片。' });
     return;
   }
 
   try {
     const objectResponse = await fetch(createObjectDownloadUrl(storageKey, 3600));
     if (!objectResponse.ok) {
-      res.status(404).json({ error: 'Feature image not found.' });
+      res.status(404).json({ error: '找不到该展示图片。' });
       return;
     }
 
@@ -3095,7 +3095,7 @@ app.get('/api/studio/feature-images/object/:encodedKey', async (req, res) => {
       event: 'studio.feature_image.object.load_failed',
       details: { storageKey }
     });
-    res.status(500).json({ error: 'Feature image could not be loaded.' });
+    res.status(500).json({ error: '展示图片加载失败，请重试。' });
   }
 });
 
@@ -3124,7 +3124,7 @@ app.post('/api/admin/studio-feature-image', (req, res) => {
 
     const file = req.file;
     if (!file) {
-      res.status(400).json({ error: 'Image file is required.' });
+      res.status(400).json({ error: '请上传图片文件。' });
       return;
     }
 
@@ -3223,7 +3223,7 @@ app.get('/api/admin/users/:id', (req, res) => {
 
   const user = store.getUserById(String(req.params.id ?? ''));
   if (!user) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
 
@@ -3247,7 +3247,7 @@ app.get('/api/admin/users/:id/projects', (req, res) => {
 
   const user = store.getUserById(String(req.params.id ?? ''));
   if (!user) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
 
@@ -3265,7 +3265,7 @@ app.patch('/api/admin/users/:id', (req, res) => {
 
   const user = store.getUserById(String(req.params.id ?? ''));
   if (!user) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
 
@@ -3276,12 +3276,12 @@ app.patch('/api/admin/users/:id', (req, res) => {
   }
 
   if (actor.actorUser?.id === user.id && parsed.data.accountStatus === 'disabled') {
-    res.status(400).json({ error: 'You cannot disable your own admin account.' });
+    res.status(400).json({ error: '不能停用自己的管理员账号。' });
     return;
   }
 
   if (actor.actorUser?.id === user.id && parsed.data.role === 'user' && !isConfiguredAdminEmail(user.email)) {
-    res.status(400).json({ error: 'You cannot remove your own admin role.' });
+    res.status(400).json({ error: '不能撤销自己的管理员权限。' });
     return;
   }
 
@@ -3292,7 +3292,7 @@ app.patch('/api/admin/users/:id', (req, res) => {
     accountStatus: parsed.data.accountStatus ?? current.accountStatus
   }));
   if (!updated) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
 
@@ -3332,12 +3332,12 @@ app.delete('/api/admin/users/:id', async (req, res) => {
 
   const user = store.getUserById(String(req.params.id ?? ''));
   if (!user) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
 
   if (actor.actorUser?.id === user.id) {
-    res.status(400).json({ error: 'You cannot delete your own admin account.' });
+    res.status(400).json({ error: '不能删除自己的管理员账号。' });
     return;
   }
 
@@ -3345,7 +3345,7 @@ app.delete('/api/admin/users/:id', async (req, res) => {
   const cloudCleanups = await Promise.all(userProjects.map((project) => deleteProjectObjectStorage(project)));
   const deletion = store.deleteUser(user.id);
   if (!deletion) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
   const cloudCleanup = {
@@ -3384,7 +3384,7 @@ app.post('/api/admin/users/:id/billing-adjustments', (req, res) => {
 
   const user = store.getUserById(String(req.params.id ?? ''));
   if (!user) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
 
@@ -3438,7 +3438,7 @@ app.post('/api/admin/users/:id/logout', (req, res) => {
 
   const user = store.getUserById(String(req.params.id ?? ''));
   if (!user) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(404).json({ error: '找不到该用户。' });
     return;
   }
 
@@ -3480,7 +3480,7 @@ app.post('/api/admin/activation-codes', (req, res) => {
   const nextPackageId = parsed.data.packageId ?? null;
   const packages = getTopUpPackages();
   if (nextPackageId && !packages.some((item) => item.id === nextPackageId)) {
-    res.status(404).json({ error: 'Recharge tier not found for this activation code.' });
+    res.status(404).json({ error: '该兑换码对应的充值档位不存在。' });
     return;
   }
 
@@ -3518,7 +3518,7 @@ app.patch('/api/admin/activation-codes/:id', (req, res) => {
   const activationCodeId = String(req.params.id ?? '');
   const existing = store.getActivationCodeById(activationCodeId);
   if (!existing) {
-    res.status(404).json({ error: 'Activation code not found.' });
+    res.status(404).json({ error: '找不到该兑换码。' });
     return;
   }
 
@@ -3531,7 +3531,7 @@ app.patch('/api/admin/activation-codes/:id', (req, res) => {
   const nextPackageId = parsed.data.packageId === undefined ? existing.packageId : parsed.data.packageId;
   const packages = getTopUpPackages();
   if (nextPackageId && !packages.some((item) => item.id === nextPackageId)) {
-    res.status(404).json({ error: 'Recharge tier not found for this activation code.' });
+    res.status(404).json({ error: '该兑换码对应的充值档位不存在。' });
     return;
   }
 
@@ -3580,12 +3580,12 @@ app.delete('/api/admin/activation-codes/:id', (req, res) => {
   const activationCodeId = String(req.params.id ?? '');
   const existing = store.getActivationCodeById(activationCodeId);
   if (!existing) {
-    res.status(404).json({ error: 'Activation code not found.' });
+    res.status(404).json({ error: '找不到该兑换码。' });
     return;
   }
 
   if (existing.redemptionCount > 0) {
-    res.status(409).json({ error: 'Cannot delete an activation code that has been redeemed. Disable it instead.' });
+    res.status(409).json({ error: '该兑换码已被使用，无法删除，请改为停用。' });
     return;
   }
 
@@ -3622,7 +3622,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   if (store.getUserByEmail(email)) {
-    res.status(409).json({ error: 'This email is already registered.' });
+    res.status(409).json({ error: '该邮箱已注册，请直接登录或使用其他邮箱。' });
     return;
   }
 
@@ -3639,12 +3639,12 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const verification = await sendVerificationForUser(req, user);
     if (verification && !verification.delivery.sent) {
-      res.status(503).json({ error: 'Verification email could not be sent. Please try again later.' });
+      res.status(503).json({ error: '验证邮件发送失败，请稍后重试。' });
       return;
     }
   } catch (error) {
     console.error('Email verification send failed:', error);
-    res.status(503).json({ error: 'Verification email could not be sent. Please try again later.' });
+    res.status(503).json({ error: '验证邮件发送失败，请稍后重试。' });
     return;
   }
   res.status(201).json({ verificationRequired: true, email: user.email });
@@ -3675,7 +3675,7 @@ app.post('/api/auth/login', async (req, res) => {
 
   const user = store.getUserByEmail(email);
   if (!user || !user.passwordHash) {
-    res.status(401).json({ error: 'Invalid email or password.' });
+    res.status(401).json({ error: '邮箱或密码错误。' });
     return;
   }
 
@@ -3685,7 +3685,7 @@ app.post('/api/auth/login', async (req, res) => {
       targetUserId: user.id,
       details: { reason: 'invalid_password', email: user.email }
     });
-    res.status(401).json({ error: 'Invalid email or password.' });
+    res.status(401).json({ error: '邮箱或密码错误。' });
     return;
   }
 
@@ -3695,7 +3695,7 @@ app.post('/api/auth/login', async (req, res) => {
       targetUserId: user.id,
       details: { email: user.email }
     });
-    res.status(403).json({ error: 'This account has been disabled. Please contact support.' });
+    res.status(403).json({ error: '该账号已被停用，请联系客服。' });
     return;
   }
 
@@ -3708,15 +3708,15 @@ app.post('/api/auth/login', async (req, res) => {
     try {
       const verification = await sendVerificationForUser(req, user);
       if (verification && !verification.delivery.sent) {
-        res.status(503).json({ error: 'Verification email could not be sent. Please try again later.' });
+        res.status(503).json({ error: '验证邮件发送失败，请稍后重试。' });
         return;
       }
     } catch (error) {
       console.error('Email verification resend failed:', error);
-      res.status(503).json({ error: 'Verification email could not be sent. Please try again later.' });
+      res.status(503).json({ error: '验证邮件发送失败，请稍后重试。' });
       return;
     }
-    res.status(403).json({ error: 'Email verification required.' });
+    res.status(403).json({ error: '请先完成邮箱验证。' });
     return;
   }
 
@@ -3753,18 +3753,18 @@ app.post('/api/auth/email-verification/confirm', async (req, res) => {
 
   const verificationToken = store.getEmailVerificationTokenByHash(hashSessionToken(parsed.data.token));
   if (!verificationToken) {
-    res.status(400).json({ error: 'This verification link is invalid or expired.' });
+    res.status(400).json({ error: '该验证链接无效或已过期，请重新发送验证邮件。' });
     return;
   }
 
   const user = store.getUserById(verificationToken.userId);
   if (!user) {
-    res.status(400).json({ error: 'This verification link is invalid or expired.' });
+    res.status(400).json({ error: '该验证链接无效或已过期，请重新发送验证邮件。' });
     return;
   }
 
   if (isUserDisabled(user)) {
-    res.status(403).json({ error: 'This account has been disabled. Please contact support.' });
+    res.status(403).json({ error: '该账号已被停用，请联系客服。' });
     return;
   }
 
@@ -3773,7 +3773,7 @@ app.post('/api/auth/email-verification/confirm', async (req, res) => {
     emailVerifiedAt: current.emailVerifiedAt ?? new Date().toISOString()
   }));
   if (!verifiedUser) {
-    res.status(400).json({ error: 'This verification link is invalid or expired.' });
+    res.status(400).json({ error: '该验证链接无效或已过期，请重新发送验证邮件。' });
     return;
   }
 
@@ -3883,18 +3883,18 @@ app.post('/api/auth/password-reset/confirm', async (req, res) => {
 
   const resetToken = store.getPasswordResetTokenByHash(hashSessionToken(parsed.data.token));
   if (!resetToken) {
-    res.status(400).json({ error: 'This reset link is invalid or expired.' });
+    res.status(400).json({ error: '该重置链接无效或已过期，请重新申请密码重置。' });
     return;
   }
 
   const user = store.getUserById(resetToken.userId);
   if (!user) {
-    res.status(400).json({ error: 'This reset link is invalid or expired.' });
+    res.status(400).json({ error: '该重置链接无效或已过期，请重新申请密码重置。' });
     return;
   }
 
   if (isUserDisabled(user)) {
-    res.status(403).json({ error: 'This account has been disabled. Please contact support.' });
+    res.status(403).json({ error: '该账号已被停用，请联系客服。' });
     return;
   }
 
@@ -3905,7 +3905,7 @@ app.post('/api/auth/password-reset/confirm', async (req, res) => {
     passwordHash: newPasswordHash
   }));
   if (!updatedUser) {
-    res.status(400).json({ error: 'This reset link is invalid or expired.' });
+    res.status(400).json({ error: '该重置链接无效或已过期，请重新申请密码重置。' });
     return;
   }
 
@@ -4039,7 +4039,7 @@ app.get('/api/projects/:id', (req, res) => {
 
   const project = getProjectForAuthenticatedRead(user, String(req.params.id ?? ''));
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4075,7 +4075,7 @@ app.patch('/api/projects/:id', (req, res) => {
   }
 
   if (!store.getProjectForUser(String(req.params.id ?? ''), user.userKey)) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4090,7 +4090,7 @@ app.patch('/api/projects/:id', (req, res) => {
     ...parsed.data
   }));
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4105,7 +4105,7 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', async (req, res) => {
 
   const hdrItem = owned.project.hdrItems.find((item) => item.id === String(req.params.hdrItemId ?? ''));
   if (!hdrItem) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
@@ -4117,7 +4117,7 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', async (req, res) => {
       sendCachedPreviewFile(res, previewPath);
       return;
     }
-    res.status(404).json({ error: 'Preview not found.' });
+    res.status(404).json({ error: '找不到该预览图。' });
     return;
   }
 
@@ -4127,7 +4127,7 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/preview', async (req, res) => {
   }
 
   if (!previewPath) {
-    res.status(404).json({ error: 'Preview not found.' });
+    res.status(404).json({ error: '找不到该预览图。' });
     return;
   }
   sendProtectedStorageFile(res, previewPath, selectedExposure?.previewKey);
@@ -4141,7 +4141,7 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/result', (req, res) => {
 
   const hdrItem = owned.project.hdrItems.find((item) => item.id === String(req.params.hdrItemId ?? ''));
   if (!hdrItem) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
@@ -4156,19 +4156,19 @@ app.get('/api/projects/:id/hdr-items/:hdrItemId/exposures/:exposureId/preview', 
 
   const hdrItem = owned.project.hdrItems.find((item) => item.id === String(req.params.hdrItemId ?? ''));
   if (!hdrItem) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
   const exposure = hdrItem.exposures.find((item) => item.id === String(req.params.exposureId ?? ''));
   if (!exposure) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
   const previewPath = await ensureExposurePreviewFile(exposure);
   if (!previewPath) {
-    res.status(404).json({ error: 'Preview not found.' });
+    res.status(404).json({ error: '找不到该预览图。' });
     return;
   }
   sendProtectedStorageFile(res, previewPath, exposure.previewKey);
@@ -4255,7 +4255,7 @@ app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
 
   const asset = owned.project.resultAssets.find((item) => item.id === String(req.params.resultAssetId ?? ''));
   if (!asset) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
@@ -4270,7 +4270,7 @@ app.get('/api/projects/:id/results/:resultAssetId/preview', async (req, res) => 
 
   const asset = owned.project.resultAssets.find((item) => item.id === String(req.params.resultAssetId ?? ''));
   if (!asset) {
-    res.status(404).json({ error: 'File not found.' });
+    res.status(404).json({ error: '找不到该文件。' });
     return;
   }
 
@@ -4294,7 +4294,7 @@ app.delete('/api/projects/:id', async (req, res) => {
     const cloudCleanup = project ? await deleteProjectObjectStorage(project) : null;
     const deletion = project ? store.deleteProject(project.id) : null;
     if (!deletion) {
-      res.status(404).json({ error: 'Project not found.' });
+      res.status(404).json({ error: '找不到该项目。' });
       return;
     }
 
@@ -4400,7 +4400,7 @@ app.get('/api/projects/:id/download', async (req, res) => {
 
   const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4428,7 +4428,7 @@ app.post('/api/projects/:id/download', async (req, res) => {
 
   const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4465,7 +4465,7 @@ app.post('/api/projects/:id/download/jobs', async (req, res) => {
 
   const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4508,13 +4508,13 @@ app.get('/api/projects/:id/download/jobs/:jobId', async (req, res) => {
 
   const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
   const job = getDownloadJob(project.id, String(req.params.jobId ?? ''), user.userKey);
   if (!job) {
-    res.status(404).json({ error: 'Download job not found.' });
+    res.status(404).json({ error: '找不到该下载任务。' });
     return;
   }
 
@@ -4538,13 +4538,13 @@ app.delete('/api/projects/:id/download/jobs/:jobId', async (req, res) => {
 
   const project = store.getProjectForUser(String(req.params.id ?? ''), user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
   const cancelled = cancelDownloadJob(project.id, String(req.params.jobId ?? ''), user.userKey);
   if (!cancelled) {
-    res.status(404).json({ error: 'Download job not found.' });
+    res.status(404).json({ error: '找不到该下载任务。' });
     return;
   }
 
@@ -4569,7 +4569,7 @@ app.post('/api/projects/:id/uploads/multipart/init', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4577,7 +4577,7 @@ app.post('/api/projects/:id/uploads/multipart/init', async (req, res) => {
   try {
     directUploadConfig = assertDirectObjectUploadConfigured();
   } catch {
-    res.status(501).json({ error: 'Direct upload is not configured.' });
+    res.status(501).json({ error: '上传服务暂未配置，请联系客服。' });
     return;
   }
 
@@ -4643,14 +4643,14 @@ app.post('/api/projects/:id/uploads/multipart/parts/refresh', async (req, res) =
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
   try {
     assertDirectObjectUploadConfigured();
   } catch {
-    res.status(501).json({ error: 'Direct upload is not configured.' });
+    res.status(501).json({ error: '上传服务暂未配置，请联系客服。' });
     return;
   }
 
@@ -4669,7 +4669,7 @@ app.post('/api/projects/:id/uploads/multipart/parts/refresh', async (req, res) =
       storageKey: parsed.data.storageKey
     })
   ) {
-    res.status(400).json({ error: 'Direct upload key does not belong to this project.' });
+    res.status(400).json({ error: '上传密钥与当前项目不匹配。' });
     return;
   }
 
@@ -4703,7 +4703,7 @@ app.post('/api/projects/:id/uploads/multipart/complete', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4711,7 +4711,7 @@ app.post('/api/projects/:id/uploads/multipart/complete', async (req, res) => {
   try {
     directUploadConfig = assertDirectObjectUploadConfigured();
   } catch {
-    res.status(501).json({ error: 'Direct upload is not configured.' });
+    res.status(501).json({ error: '上传服务暂未配置，请联系客服。' });
     return;
   }
 
@@ -4737,7 +4737,7 @@ app.post('/api/projects/:id/uploads/multipart/complete', async (req, res) => {
         storageKey: parsed.data.storageKey
       })
     ) {
-      throw new Error('Direct upload key does not belong to this project.');
+      throw new Error('上传密钥与当前项目不匹配。');
     }
 
     const parts = [...parsed.data.parts].sort((left, right) => left.partNumber - right.partNumber);
@@ -4778,14 +4778,14 @@ app.post('/api/projects/:id/uploads/multipart/abort', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
   try {
     assertDirectObjectUploadConfigured();
   } catch {
-    res.status(501).json({ error: 'Direct upload is not configured.' });
+    res.status(501).json({ error: '上传服务暂未配置，请联系客服。' });
     return;
   }
 
@@ -4804,7 +4804,7 @@ app.post('/api/projects/:id/uploads/multipart/abort', async (req, res) => {
       storageKey: parsed.data.storageKey
     })
   ) {
-    res.status(400).json({ error: 'Direct upload key does not belong to this project.' });
+    res.status(400).json({ error: '上传密钥与当前项目不匹配。' });
     return;
   }
 
@@ -4837,14 +4837,14 @@ app.post('/api/projects/:id/direct-upload/targets', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
   try {
     assertDirectObjectUploadConfigured();
   } catch {
-    res.status(501).json({ error: 'Direct upload is not configured.' });
+    res.status(501).json({ error: '上传服务暂未配置，请联系客服。' });
     return;
   }
 
@@ -4896,7 +4896,7 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -4904,7 +4904,7 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
   try {
     directUploadConfig = assertDirectObjectUploadConfigured();
   } catch {
-    res.status(501).json({ error: 'Direct upload is not configured.' });
+    res.status(501).json({ error: '上传服务暂未配置，请联系客服。' });
     return;
   }
 
@@ -4947,7 +4947,7 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
           storageKey: file.storageKey
         })
       ) {
-        throw new Error('Direct upload key does not belong to this project.');
+        throw new Error('上传密钥与当前项目不匹配。');
       }
 
       const destination = path.join(dirs.staging, batchId, String(index).padStart(4, '0'));
@@ -5013,7 +5013,7 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
     }));
 
     if (!updated) {
-      res.status(404).json({ error: 'Project not found.' });
+      res.status(404).json({ error: '找不到该项目。' });
       return;
     }
 
@@ -5025,7 +5025,7 @@ app.post('/api/projects/:id/direct-upload/complete', async (req, res) => {
 
 app.post('/api/projects/:id/files', (req, res, next) => {
   if (!isLocalProxyUploadEnabled()) {
-    res.status(409).json({ error: 'Cloud direct upload is required.' });
+    res.status(409).json({ error: '该操作需要使用云端直传模式。' });
     return;
   }
 
@@ -5045,13 +5045,13 @@ app.post('/api/projects/:id/files', (req, res, next) => {
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
   const uploadedFiles = (req.files ?? []) as Express.Multer.File[];
   if (!uploadedFiles.length) {
-    res.status(400).json({ error: 'No files uploaded.' });
+    res.status(400).json({ error: '未检测到上传的文件。' });
     return;
   }
 
@@ -5063,7 +5063,7 @@ app.post('/api/projects/:id/files', (req, res, next) => {
 
   const updated = store.getProjectForUser(projectId, user.userKey);
   if (!updated) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
   respondWithProject(res, updated);
@@ -5078,7 +5078,7 @@ app.post('/api/projects/:id/hdr-layout', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const project = store.getProjectForUser(projectId, user.userKey);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5094,11 +5094,11 @@ app.post('/api/projects/:id/hdr-layout', async (req, res) => {
       .filter((filePath) => path.basename(filePath) !== DIRECT_UPLOAD_MANIFEST_FILE);
     const hasFrontendExposureMetadata = parsed.data.hdrItems.some((item) => item.exposures?.length);
     if (!parsed.data.hdrItems.length && !(parsed.data.mode === 'merge' && parsed.data.inputComplete)) {
-      res.status(400).json({ error: 'No HDR groups were provided.' });
+      res.status(400).json({ error: '未提供 HDR 分组信息。' });
       return;
     }
     if (parsed.data.hdrItems.length > 0 && !stagedFiles.length && !hasFrontendExposureMetadata) {
-      res.status(400).json({ error: 'No uploaded photos are available to group.' });
+      res.status(400).json({ error: '暂无可分组的上传照片。' });
       return;
     }
 
@@ -5123,7 +5123,7 @@ app.post('/api/projects/:id/hdr-layout', async (req, res) => {
         ? store.mergeHdrItems(projectId, hdrItems, { inputComplete: parsed.data.inputComplete })
         : store.replaceHdrItems(projectId, hdrItems, { inputComplete: parsed.data.inputComplete });
     if (!updated) {
-      res.status(404).json({ error: 'Project not found.' });
+      res.status(404).json({ error: '找不到该项目。' });
       return;
     }
     respondWithProject(res, updated);
@@ -5144,13 +5144,13 @@ app.post('/api/projects/:id/groups', (req, res) => {
 
   const projectId = String(req.params.id ?? '');
   if (!store.getProjectForUser(projectId, user.userKey)) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
   const project = store.createGroup(projectId);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
   respondWithProject(res, project, 201);
@@ -5164,7 +5164,7 @@ app.patch('/api/projects/:id/groups/:groupId', (req, res) => {
 
   const projectId = String(req.params.id ?? '');
   if (!store.getProjectForUser(projectId, user.userKey)) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5176,7 +5176,7 @@ app.patch('/api/projects/:id/groups/:groupId', (req, res) => {
 
   const project = store.updateGroup(projectId, String(req.params.groupId ?? ''), parsed.data);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
   respondWithProject(res, project);
@@ -5190,7 +5190,7 @@ app.patch('/api/projects/:id/hdr-items/:hdrItemId/select', (req, res) => {
 
   const projectId = String(req.params.id ?? '');
   if (!store.getProjectForUser(projectId, user.userKey)) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5206,7 +5206,7 @@ app.patch('/api/projects/:id/hdr-items/:hdrItemId/select', (req, res) => {
     parsed.data.exposureId
   );
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
   respondWithProject(res, project);
@@ -5220,7 +5220,7 @@ app.post('/api/projects/:id/hdr-items/:hdrItemId/move', (req, res) => {
 
   const projectId = String(req.params.id ?? '');
   if (!store.getProjectForUser(projectId, user.userKey)) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5236,7 +5236,7 @@ app.post('/api/projects/:id/hdr-items/:hdrItemId/move', (req, res) => {
     parsed.data.targetGroupId
   );
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
   respondWithProject(res, project);
@@ -5251,7 +5251,7 @@ app.delete('/api/projects/:id/hdr-items/:hdrItemId', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const currentProject = store.getProjectForUser(projectId, user.userKey);
   if (!currentProject) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5269,7 +5269,7 @@ app.delete('/api/projects/:id/hdr-items/:hdrItemId', async (req, res) => {
 
   const project = store.deleteHdrItem(projectId, String(req.params.hdrItemId ?? ''));
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
   respondWithProject(res, project);
@@ -5283,7 +5283,7 @@ app.post('/api/projects/:id/results/reorder', (req, res) => {
 
   const projectId = String(req.params.id ?? '');
   if (!store.getProjectForUser(projectId, user.userKey)) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5295,7 +5295,7 @@ app.post('/api/projects/:id/results/reorder', (req, res) => {
 
   const project = store.reorderResultAssets(projectId, parsed.data.orderedHdrItemIds);
   if (!project) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5319,7 +5319,7 @@ app.post('/api/projects/:id/hdr-items/:hdrItemId/regenerate', async (req, res) =
 
   const projectId = String(req.params.id ?? '');
   if (!store.getProjectForUser(projectId, user.userKey)) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5334,7 +5334,7 @@ app.post('/api/projects/:id/hdr-items/:hdrItemId/regenerate', async (req, res) =
       colorCardNo: parsed.data.colorCardNo
     });
     if (!project) {
-      res.status(404).json({ error: 'Project not found.' });
+      res.status(404).json({ error: '找不到该项目。' });
       return;
     }
 
@@ -5372,13 +5372,18 @@ app.post('/api/projects/:id/start', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const ownedProject = store.getProjectForUser(projectId, user.userKey);
   if (!ownedProject) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
   try {
     if (!ownedProject.hdrItems.length) {
-      res.status(400).json({ error: 'No uploaded photos are available to process yet.' });
+      res.status(400).json({ error: '暂无可处理的照片，请先上传图片。' });
+      return;
+    }
+
+    if (ownedProject.status === 'processing') {
+      respondWithProject(res, ownedProject);
       return;
     }
 
@@ -5395,7 +5400,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
       res.status(402).json({
         error:
           reservation.error ||
-          `Insufficient credits. Current balance ${reservation.availablePoints}, required ${reservation.requiredPoints}.`
+          `积分不足，当前余额 ${reservation.availablePoints}，至少需要 ${reservation.requiredPoints}。请先充值。`
       });
       return;
     }
@@ -5419,7 +5424,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
       retryFailed: ownedProject.status === 'failed' || hasRetriableFailedItems
     });
     if (!project) {
-      res.status(404).json({ error: 'Project not found.' });
+      res.status(404).json({ error: '找不到该项目。' });
       return;
     }
     respondWithProject(res, project);
@@ -5453,7 +5458,7 @@ app.post('/api/projects/:id/retry-failed', async (req, res) => {
   const projectId = String(req.params.id ?? '');
   const ownedProject = store.getProjectForUser(projectId, user.userKey);
   if (!ownedProject) {
-    res.status(404).json({ error: 'Project not found.' });
+    res.status(404).json({ error: '找不到该项目。' });
     return;
   }
 
@@ -5471,7 +5476,7 @@ app.post('/api/projects/:id/retry-failed', async (req, res) => {
       res.status(402).json({
         error:
           reservation.error ||
-          `Insufficient credits. Current balance ${reservation.availablePoints}, required ${reservation.requiredPoints}.`
+          `积分不足，当前余额 ${reservation.availablePoints}，至少需要 ${reservation.requiredPoints}。请先充值。`
       });
       return;
     }
@@ -5488,7 +5493,7 @@ app.post('/api/projects/:id/retry-failed', async (req, res) => {
 
     const project = await processor.start(projectId, { retryFailed: true });
     if (!project) {
-      res.status(404).json({ error: 'Project not found.' });
+      res.status(404).json({ error: '找不到该项目。' });
       return;
     }
     respondWithProject(res, project);
