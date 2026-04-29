@@ -439,11 +439,30 @@ const MULTIPART_PART_CONCURRENCY = 4;
 const MULTIPART_PART_RETRIES = 5;
 const ADAPTIVE_UPLOAD_MIN_CONCURRENCY = 2;
 const ADAPTIVE_UPLOAD_MAX_CONCURRENCY = 12;
-const ADAPTIVE_UPLOAD_LOW_BPS = 2 * 1024 * 1024;
+const ADAPTIVE_UPLOAD_LOW_BPS = 1 * 1024 * 1024;
 const ADAPTIVE_UPLOAD_HIGH_BPS = 8 * 1024 * 1024;
-const ADAPTIVE_UPLOAD_SAMPLE_MS = 4000;
+const ADAPTIVE_UPLOAD_SAMPLE_MS = 5000;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
+
+class ThroughputSampler {
+  private samples: Array<{ ts: number; bytes: number }> = [];
+
+  recordBytes(bytes: number) {
+    const now = Date.now();
+    this.samples.push({ ts: now, bytes });
+    this.samples = this.samples.filter((sample) => now - sample.ts < ADAPTIVE_UPLOAD_SAMPLE_MS);
+  }
+
+  bytesPerSecond() {
+    if (this.samples.length < 2) {
+      return 0;
+    }
+    const total = this.samples.reduce((sum, sample) => sum + sample.bytes, 0);
+    const spanSeconds = (this.samples[this.samples.length - 1]!.ts - this.samples[0]!.ts) / 1000;
+    return spanSeconds > 0 ? total / spanSeconds : 0;
+  }
+}
 
 function extractErrorMessage(input: unknown): string | null {
   if (typeof input === 'string') {
@@ -1978,35 +1997,39 @@ async function uploadFilesViaDirectObject(
     }
 
     let nextBatchFileIndex = 0;
-    let batchCompletedBytes = 0;
     const maxWorkerCount = Math.min(ADAPTIVE_UPLOAD_MAX_CONCURRENCY, batch.length);
     let targetWorkerCount = clampUploadConcurrency(getDirectObjectUploadConcurrency(batchFiles), maxWorkerCount);
-    let lastSampleAt = performance.now();
-    let lastSampleBytes = 0;
-    const getBatchTransferredBytes = () =>
-      batchCompletedBytes + batch.reduce((sum, item) => sum + Math.max(0, loadedByFile[item.index] ?? 0), 0);
+    let lastSampleAt = Date.now();
+    const sampler = new ThroughputSampler();
+    const recordFileProgress = (fileIndex: number, fileSize: number, loadedBytes: number) => {
+      const previousLoaded = Math.max(0, loadedByFile[fileIndex] ?? 0);
+      const nextLoaded = Math.min(fileSize, Math.max(0, loadedBytes));
+      const deltaBytes = nextLoaded - previousLoaded;
+      loadedByFile[fileIndex] = nextLoaded;
+      if (deltaBytes > 0) {
+        sampler.recordBytes(deltaBytes);
+      }
+    };
     const maybeAdjustConcurrency = () => {
-      const now = performance.now();
+      const now = Date.now();
       const elapsedMs = now - lastSampleAt;
       if (elapsedMs < ADAPTIVE_UPLOAD_SAMPLE_MS) {
         return;
       }
 
-      const bytes = getBatchTransferredBytes();
-      const bps = ((bytes - lastSampleBytes) * 1000) / elapsedMs;
       lastSampleAt = now;
-      lastSampleBytes = bytes;
+      const bps = sampler.bytesPerSecond();
       if (!Number.isFinite(bps) || bps <= 0) {
         return;
       }
 
       if (bps < ADAPTIVE_UPLOAD_LOW_BPS) {
         targetWorkerCount = clampUploadConcurrency(
-          Math.max(ADAPTIVE_UPLOAD_MIN_CONCURRENCY, Math.floor(targetWorkerCount * 0.7)),
+          Math.max(ADAPTIVE_UPLOAD_MIN_CONCURRENCY, targetWorkerCount - 2),
           maxWorkerCount
         );
       } else if (bps > ADAPTIVE_UPLOAD_HIGH_BPS) {
-        targetWorkerCount = clampUploadConcurrency(Math.min(targetWorkerCount + 1, ADAPTIVE_UPLOAD_MAX_CONCURRENCY), maxWorkerCount);
+        targetWorkerCount = clampUploadConcurrency(Math.min(targetWorkerCount + 2, ADAPTIVE_UPLOAD_MAX_CONCURRENCY), maxWorkerCount);
       }
     };
 
@@ -2043,7 +2066,7 @@ async function uploadFilesViaDirectObject(
               projectId,
               file,
               (loadedBytes) => {
-                loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
+                recordFileProgress(fileIndex, file.size, loadedBytes);
                 maybeAdjustConcurrency();
                 reportProgress();
               },
@@ -2057,7 +2080,7 @@ async function uploadFilesViaDirectObject(
             );
           } else {
             const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
-              loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
+              recordFileProgress(fileIndex, file.size, loadedBytes);
               maybeAdjustConcurrency();
               reportProgress();
             }, {
@@ -2117,7 +2140,6 @@ async function uploadFilesViaDirectObject(
         await appendPersistedCompleted(projectId, fileIdentity, uploadedObject);
         options.onFileUploaded?.(uploadedObject);
         completedBytes += Math.max(1, file.size);
-        batchCompletedBytes += Math.max(1, file.size);
         uploadedFiles += 1;
         loadedByFile[fileIndex] = 0;
         maybeAdjustConcurrency();
