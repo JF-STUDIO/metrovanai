@@ -9,9 +9,19 @@ export interface PersistedUploadedObject {
   object: UploadedObjectReference;
 }
 
+export interface PersistedMultipartUpload {
+  fileIdentity: string;
+  storageKey: string;
+  uploadId: string;
+  partSize: number;
+  partETags: Array<{ partNumber: number; etag: string; size: number }>;
+  totalParts: number;
+}
+
 interface PersistedRecord {
   id: string;
   objects: PersistedUploadedObject[];
+  multipart?: PersistedMultipartUpload[];
   updatedAt: number;
 }
 
@@ -108,6 +118,35 @@ export async function appendPersistedCompleted(projectId: string, fileIdentity: 
   );
   nextObjects.push({ fileIdentity, object });
   await writeRecord({ ...existing, objects: nextObjects });
+}
+
+export async function readPersistedMultipart(projectId: string, fileIdentity: string): Promise<PersistedMultipartUpload | null> {
+  const record = await readRecord(projectId);
+  return record?.multipart?.find((item) => item.fileIdentity === fileIdentity) ?? null;
+}
+
+export async function upsertPersistedMultipart(projectId: string, multipart: PersistedMultipartUpload) {
+  const existing = (await readRecord(projectId)) ?? { id: projectId, objects: [], updatedAt: 0 };
+  const multipartUploads = [...(existing.multipart ?? [])];
+  const existingIndex = multipartUploads.findIndex((item) => item.fileIdentity === multipart.fileIdentity);
+  if (existingIndex >= 0) {
+    multipartUploads[existingIndex] = multipart;
+  } else {
+    multipartUploads.push(multipart);
+  }
+  await writeRecord({ ...existing, multipart: multipartUploads });
+}
+
+export async function dropPersistedMultipart(projectId: string, fileIdentity: string) {
+  const existing = await readRecord(projectId);
+  if (!existing?.multipart) {
+    return;
+  }
+
+  await writeRecord({
+    ...existing,
+    multipart: existing.multipart.filter((item) => item.fileIdentity !== fileIdentity)
+  });
 }
 
 export async function clearPersistedProject(projectId: string) {

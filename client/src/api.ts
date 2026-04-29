@@ -1,5 +1,12 @@
 import type { BillingEntry, BillingPackage, BillingSummary, PaymentOrderRecord, ProjectRecord } from './types';
-import { appendPersistedCompleted, clearPersistedProject, readPersistedCompleted } from './upload-resume';
+import {
+  appendPersistedCompleted,
+  clearPersistedProject,
+  dropPersistedMultipart,
+  readPersistedCompleted,
+  readPersistedMultipart,
+  upsertPersistedMultipart
+} from './upload-resume';
 
 const LOCAL_API_ROOT = 'http://127.0.0.1:8787';
 const PRODUCTION_API_ROOT = 'https://api.metrovanai.com';
@@ -175,6 +182,19 @@ interface DirectUploadTargetLimits {
 interface PendingDirectUploadFile {
   file: File;
   index: number;
+}
+
+interface MultipartUploadPartUrl {
+  partNumber: number;
+  url: string;
+  expiresAt: string;
+}
+
+interface MultipartUploadInitPayload {
+  storageKey: string;
+  uploadId: string;
+  partSize: number;
+  partUrls: MultipartUploadPartUrl[];
 }
 
 export interface UploadedObjectReference {
@@ -379,6 +399,9 @@ const UPLOAD_RETRY_JITTER_MS = 650;
 const DIRECT_OBJECT_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 const LARGE_DIRECT_OBJECT_FILE_BYTES = 80 * 1024 * 1024;
 const HUGE_DIRECT_OBJECT_FILE_BYTES = 200 * 1024 * 1024;
+const MULTIPART_UPLOAD_THRESHOLD_BYTES = 100 * 1024 * 1024;
+const MULTIPART_PART_CONCURRENCY = 4;
+const MULTIPART_PART_RETRIES = 5;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
 
@@ -986,6 +1009,64 @@ async function completeDirectObjectUploadReferences(projectId: string, files: Up
   });
 }
 
+async function initMultipartUpload(projectId: string, file: File, fileIdentity: string) {
+  return await jsonRequest<MultipartUploadInitPayload>(`/api/projects/${projectId}/uploads/multipart/init`, {
+    method: 'POST',
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      contentType: file.type || 'application/octet-stream',
+      fileIdentity
+    })
+  });
+}
+
+async function refreshMultipartPartUrls(
+  projectId: string,
+  storageKey: string,
+  uploadId: string,
+  partNumbers: number[]
+) {
+  return await jsonRequest<{ partUrls: MultipartUploadPartUrl[] }>(`/api/projects/${projectId}/uploads/multipart/parts/refresh`, {
+    method: 'POST',
+    body: JSON.stringify({
+      storageKey,
+      uploadId,
+      partNumbers
+    })
+  });
+}
+
+async function completeMultipartUpload(
+  projectId: string,
+  input: {
+    storageKey: string;
+    uploadId: string;
+    originalName: string;
+    mimeType: string;
+    fileSize: number;
+    parts: Array<{ partNumber: number; etag: string }>;
+  }
+) {
+  return await jsonRequest<UploadedObjectReference & { etag?: string | null }>(
+    `/api/projects/${projectId}/uploads/multipart/complete`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }
+  );
+}
+
+async function abortMultipartUpload(projectId: string, storageKey: string, uploadId: string) {
+  return await jsonRequest<{ aborted: boolean }>(`/api/projects/${projectId}/uploads/multipart/abort`, {
+    method: 'POST',
+    body: JSON.stringify({
+      storageKey,
+      uploadId
+    })
+  });
+}
+
 function throwIfUploadAborted(signal?: AbortSignal) {
   if (signal?.aborted) {
     throw new DOMException('Upload cancelled.', 'AbortError');
@@ -1082,6 +1163,201 @@ async function uploadDirectObjectFileWithRetry(
   }
 
   throw lastError instanceof Error ? lastError : new Error('Direct upload failed.');
+}
+
+function uploadMultipartPart(
+  url: string,
+  blob: Blob,
+  onProgress: (loadedBytes: number) => void,
+  signal?: AbortSignal
+) {
+  return new Promise<string>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Upload cancelled.', 'AbortError'));
+      return;
+    }
+
+    const xhr = new XMLHttpRequest();
+    const abortUpload = () => {
+      xhr.abort();
+      reject(new DOMException('Upload cancelled.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abortUpload, { once: true });
+    xhr.open('PUT', url);
+    xhr.timeout = DIRECT_OBJECT_UPLOAD_TIMEOUT_MS;
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) {
+        onProgress(event.loaded);
+      }
+    });
+    xhr.addEventListener('load', () => {
+      signal?.removeEventListener('abort', abortUpload);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const etag = (xhr.getResponseHeader('etag') ?? '').replace(/"/g, '');
+        if (!etag) {
+          reject(new DirectUploadError('Multipart part upload did not return an ETag.', xhr.status));
+          return;
+        }
+        resolve(etag);
+      } else {
+        reject(new DirectUploadError(`Multipart part upload failed: ${xhr.status}`, xhr.status));
+      }
+    });
+    xhr.addEventListener('error', () => {
+      signal?.removeEventListener('abort', abortUpload);
+      reject(new DirectUploadError('Multipart part upload failed.'));
+    });
+    xhr.addEventListener('timeout', () => {
+      signal?.removeEventListener('abort', abortUpload);
+      reject(new DirectUploadError('Multipart part upload timed out.'));
+    });
+    xhr.addEventListener('abort', () => {
+      signal?.removeEventListener('abort', abortUpload);
+      reject(signal?.aborted ? new DOMException('Upload cancelled.', 'AbortError') : new DirectUploadError('Multipart part upload was interrupted.'));
+    });
+    xhr.send(blob);
+  });
+}
+
+function mergeMultipartPartUrls(current: MultipartUploadPartUrl[], additions: MultipartUploadPartUrl[]) {
+  const byPart = new Map(current.map((part) => [part.partNumber, part]));
+  for (const part of additions) {
+    byPart.set(part.partNumber, part);
+  }
+  return Array.from(byPart.values());
+}
+
+async function uploadDirectObjectFileMultipart(
+  projectId: string,
+  file: File,
+  onProgress: (loadedBytes: number) => void,
+  options: { fileIdentity: string; signal?: AbortSignal }
+): Promise<UploadedObjectReference> {
+  throwIfUploadAborted(options.signal);
+  const persisted = await readPersistedMultipart(projectId, options.fileIdentity);
+  let storageKey = persisted?.storageKey ?? '';
+  let uploadId = persisted?.uploadId ?? '';
+  let partSize = persisted?.partSize ?? 0;
+  let partUrls: MultipartUploadPartUrl[] = [];
+  let completedParts = persisted?.partETags ? [...persisted.partETags] : [];
+  let totalParts = persisted?.totalParts ?? 0;
+
+  if (!storageKey || !uploadId || !partSize || !totalParts) {
+    const init = await initMultipartUpload(projectId, file, options.fileIdentity);
+    storageKey = init.storageKey;
+    uploadId = init.uploadId;
+    partSize = init.partSize;
+    partUrls = init.partUrls;
+    totalParts = Math.ceil(file.size / partSize);
+    completedParts = [];
+  } else {
+    totalParts = Math.ceil(file.size / partSize);
+  }
+
+  const completedByPart = new Map(completedParts.map((part) => [part.partNumber, part]));
+  const pendingPartNumbers: number[] = [];
+  for (let partNumber = 1; partNumber <= totalParts; partNumber += 1) {
+    if (!completedByPart.has(partNumber)) {
+      pendingPartNumbers.push(partNumber);
+    }
+  }
+
+  if (pendingPartNumbers.length) {
+    const refreshed = await refreshMultipartPartUrls(projectId, storageKey, uploadId, pendingPartNumbers);
+    partUrls = mergeMultipartPartUrls(partUrls, refreshed.partUrls);
+  }
+
+  let loadedTotal = completedParts.reduce((sum, part) => sum + part.size, 0);
+  const partProgress = new Map<number, number>();
+  const reportProgress = () => {
+    const inFlightBytes = Array.from(partProgress.values()).reduce((sum, value) => sum + value, 0);
+    onProgress(Math.min(file.size, loadedTotal + inFlightBytes));
+  };
+  reportProgress();
+
+  let nextPartIndex = 0;
+  const worker = async () => {
+    while (nextPartIndex < pendingPartNumbers.length) {
+      throwIfUploadAborted(options.signal);
+      const partNumber = pendingPartNumbers[nextPartIndex];
+      nextPartIndex += 1;
+      if (!partNumber) {
+        continue;
+      }
+
+      const offset = (partNumber - 1) * partSize;
+      const end = partNumber === totalParts ? file.size : Math.min(file.size, offset + partSize);
+      const blob = file.slice(offset, end);
+      let lastError: unknown = null;
+
+      for (let attempt = 1; attempt <= MULTIPART_PART_RETRIES; attempt += 1) {
+        try {
+          const partUrl = partUrls.find((part) => part.partNumber === partNumber)?.url;
+          if (!partUrl) {
+            throw new Error(`Missing multipart URL for part ${partNumber}.`);
+          }
+          const etag = await uploadMultipartPart(
+            partUrl,
+            blob,
+            (loadedBytes) => {
+              partProgress.set(partNumber, Math.min(blob.size, Math.max(0, loadedBytes)));
+              reportProgress();
+            },
+            options.signal
+          );
+          completedByPart.set(partNumber, { partNumber, etag, size: blob.size });
+          completedParts = Array.from(completedByPart.values()).sort((left, right) => left.partNumber - right.partNumber);
+          loadedTotal += blob.size;
+          partProgress.delete(partNumber);
+          reportProgress();
+          await upsertPersistedMultipart(projectId, {
+            fileIdentity: options.fileIdentity,
+            storageKey,
+            uploadId,
+            partSize,
+            partETags: completedParts,
+            totalParts
+          });
+          break;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            await abortMultipartUpload(projectId, storageKey, uploadId).catch(() => null);
+            await dropPersistedMultipart(projectId, options.fileIdentity);
+            throw error;
+          }
+          lastError = error;
+          partProgress.delete(partNumber);
+          reportProgress();
+          if (attempt >= MULTIPART_PART_RETRIES) {
+            throw lastError instanceof Error ? lastError : new Error('Multipart part upload failed.');
+          }
+          if (shouldRefreshDirectUploadTarget(error)) {
+            const refreshed = await refreshMultipartPartUrls(projectId, storageKey, uploadId, [partNumber]);
+            partUrls = mergeMultipartPartUrls(partUrls, refreshed.partUrls);
+          }
+          await delay(uploadRetryDelay(attempt));
+        }
+      }
+    }
+  };
+
+  const workerCount = Math.min(MULTIPART_PART_CONCURRENCY, pendingPartNumbers.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  const final = await completeMultipartUpload(projectId, {
+    storageKey,
+    uploadId,
+    originalName: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    fileSize: file.size,
+    parts: completedParts.map((part) => ({ partNumber: part.partNumber, etag: part.etag }))
+  });
+  await dropPersistedMultipart(projectId, options.fileIdentity);
+  return {
+    originalName: final.originalName || file.name,
+    mimeType: final.mimeType || file.type || 'application/octet-stream',
+    size: final.size || file.size,
+    storageKey: final.storageKey
+  };
 }
 
 function splitUploadBatches(files: File[]) {
@@ -1345,39 +1621,54 @@ async function uploadFilesViaDirectObject(
 
         const file = entry.file;
         const fileIndex = entry.index;
-        const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
-          loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
-          reportProgress();
-        }, {
-          onRetry: ({ attempt, maxAttempts }) => {
-            loadedByFile[fileIndex] = 0;
-            reportProgress({
-              stage: 'retrying',
-              currentFileName: file.name,
-              attempt,
-              maxAttempts
-            });
-          },
-          refreshTarget: async () => {
-            const refreshed = await createDirectUploadTargets(projectId, [file]);
-            const nextTarget = refreshed.targets[0];
-            if (!nextTarget) {
-              throw new Error('Direct upload target refresh failed.');
-            }
-            targets[batchFileIndex] = nextTarget;
-            return nextTarget;
-          },
-          signal: options.signal
-        });
-        targets[batchFileIndex] = latestTarget;
-
-        const uploadedObject = {
-          originalName: latestTarget.originalName || file.name,
-          mimeType: file.type || latestTarget.mimeType || 'application/octet-stream',
-          size: file.size || latestTarget.size,
-          storageKey: latestTarget.storageKey
-        };
         const fileIdentity = getFileUploadIdentity(file);
+        let uploadedObject: UploadedObjectReference;
+        if (file.size >= MULTIPART_UPLOAD_THRESHOLD_BYTES) {
+          uploadedObject = await uploadDirectObjectFileMultipart(
+            projectId,
+            file,
+            (loadedBytes) => {
+              loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
+              reportProgress();
+            },
+            {
+              fileIdentity,
+              signal: options.signal
+            }
+          );
+        } else {
+          const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
+            loadedByFile[fileIndex] = Math.min(file.size, Math.max(0, loadedBytes));
+            reportProgress();
+          }, {
+            onRetry: ({ attempt, maxAttempts }) => {
+              loadedByFile[fileIndex] = 0;
+              reportProgress({
+                stage: 'retrying',
+                currentFileName: file.name,
+                attempt,
+                maxAttempts
+              });
+            },
+            refreshTarget: async () => {
+              const refreshed = await createDirectUploadTargets(projectId, [file]);
+              const nextTarget = refreshed.targets[0];
+              if (!nextTarget) {
+                throw new Error('Direct upload target refresh failed.');
+              }
+              targets[batchFileIndex] = nextTarget;
+              return nextTarget;
+            },
+            signal: options.signal
+          });
+          targets[batchFileIndex] = latestTarget;
+          uploadedObject = {
+            originalName: latestTarget.originalName || file.name,
+            mimeType: file.type || latestTarget.mimeType || 'application/octet-stream',
+            size: file.size || latestTarget.size,
+            storageKey: latestTarget.storageKey
+          };
+        }
         completedByIdentity.set(fileIdentity, uploadedObject);
         completedByIdentity.set(getUploadedObjectIdentity(uploadedObject), uploadedObject);
         await appendPersistedCompleted(projectId, fileIdentity, uploadedObject);
