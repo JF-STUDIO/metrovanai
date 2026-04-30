@@ -9,7 +9,10 @@ import { AdminRefundDialog } from './components/AdminRefundDialog';
 import { BillingPanel } from './components/BillingPanel';
 import { DeleteProjectConfirmDialog } from './components/DeleteProjectConfirmDialog';
 import { FeatureCreateDialog } from './components/FeatureCreateDialog';
+import { ProcessingStatusPanel } from './components/ProcessingStatusPanel';
+import { ProjectStepStrip } from './components/ProjectStepStrip';
 import { ProjectDownloadDialog } from './components/ProjectDownloadDialog';
+import { ProjectWorkspaceHeader } from './components/ProjectWorkspaceHeader';
 import { ResultEditorDialog } from './components/ResultEditorDialog';
 import { StudioFeatureLaunchPanel } from './components/StudioFeatureLaunchPanel';
 import { StudioHeader } from './components/StudioHeader';
@@ -142,7 +145,6 @@ import {
   createDemoProjects,
   createHdrItemFromExposure,
   filterSupportedImportFiles,
-  formatGroupCount,
   formatGroupSummary,
   formatPhotoCount,
   formatUploadProgressLabel,
@@ -166,7 +168,6 @@ import {
   getMaxNavigableStep,
   getPasswordResetTokenFromQuery,
   getPathForRoute,
-  getProjectProgress,
   getProjectStatusLabel,
   getRouteFromPath,
   getResultCropFrame,
@@ -5493,95 +5494,43 @@ function App() {
               />
             ) : (
               <>
-                <section className="panel project-head-card">
-                  <div className="project-head-copy">
-                    <span className="muted">{copy.currentProject}</span>
-                    <div className="project-head-title-row">
-                      <h2>{currentProject.name}</h2>
-                      {!isDemoMode && (
-                        <button
-                          className="ghost-button compact project-head-back"
-                          type="button"
-                          onClick={returnToStudioFeatureCards}
-                        >
-                          {locale === 'en' ? 'Back to tools' : '返回功能卡片'}
-                        </button>
-                      )}
-                      {!isDemoMode && (
-                        <button className="ghost-button compact project-head-rename" type="button" onClick={() => void handleRenameProject(currentProject)}>
-                          {copy.rename}
-                        </button>
-                      )}
-                    </div>
-                    <p>{currentProject.address || copy.addressFallback}</p>
-                  </div>
-                  <div className="project-meta">
-                    <span className="meta-pill">{formatPhotoCount(currentProject.photoCount, locale)}</span>
-                    <span className="meta-pill">{formatGroupCount(currentProject.groupCount, locale)}</span>
-                    {!isDemoMode && <span className="meta-pill">{getProjectStatusLabel(currentProject, locale)}</span>}
-                  </div>
-                </section>
+                <ProjectWorkspaceHeader
+                  copy={copy}
+                  isDemoMode={isDemoMode}
+                  locale={locale}
+                  project={currentProject}
+                  onRenameProject={(project) => void handleRenameProject(project)}
+                  onReturnToStudioFeatureCards={returnToStudioFeatureCards}
+                />
 
-                <section className="panel steps-panel">
-                  <div className="panel-head stacked">
-                     <strong>{copy.processFlow}</strong>
-                  </div>
-                  <div className="step-strip">
-                    {activeStepLabels.map((label, index) => {
-                      const step = (index + 1) as 1 | 2 | 3 | 4;
-                      const clickable = currentProject.status !== 'completed' && step <= getMaxNavigableStep(currentProject);
-                      return (
-                        <button
-                          key={label}
-                          type="button"
-                          className={`step-card${currentProject.currentStep === step ? ' active' : ''}${currentProject.currentStep > step ? ' done' : ''}${clickable ? ' enabled' : ''}`}
-                          onClick={() => void handleStepClick(step)}
-                          disabled={!clickable}
-                        >
-                          <span>{index + 1}</span>
-                          <strong>{label}</strong>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
+                <ProjectStepStrip
+                  activeStepLabels={activeStepLabels}
+                  copy={copy}
+                  project={currentProject}
+                  getMaxNavigableStep={getMaxNavigableStep}
+                  onStepClick={(step) => void handleStepClick(step)}
+                />
 
                 {showProcessingStepContent && !isDemoMode && (
-                  <section className="panel processing-panel">
-                    <div className="processing-copy">
-                       <strong>{processingPanelTitle}</strong>
-                       <span>{processingPanelDetail}</span>
-                    </div>
-                    <div className="processing-stats">
-                      <div className="metric-box">
-                         <span>{copy.estimatedPoints}</span>
-                        <strong>{workspacePointsEstimate}</strong>
-                      </div>
-                      {showRetryProcessingAction && (
-                        <button className="ghost-button compact" type="button" onClick={() => void handleStartProcessing({ retryFailed: true })} disabled={busy}>
-                          {copy.retryProcessing}
-                        </button>
-                      )}
-                      {showProcessingUploadProgress && (
-                        <>
-                          <button className="ghost-button compact" type="button" onClick={uploadPaused ? handleResumeUpload : handlePauseUpload}>
-                            {uploadPaused ? (locale === 'en' ? 'Resume upload' : '继续上传') : (locale === 'en' ? 'Pause upload' : '暂停上传')}
-                          </button>
-                          <button className="ghost-button compact" type="button" onClick={handleCancelUpload}>
-                            {locale === 'en' ? 'Cancel upload' : '取消上传'}
-                          </button>
-                        </>
-                      )}
-                      {showResumeUploadAction && (
-                        <button className="solid-button small" type="button" onClick={() => void handleStartProcessing()} disabled={busy}>
-                          {locale === 'en' ? 'Resume upload' : '继续上传'}
-                        </button>
-                      )}
-                    </div>
-                    <div className="progress-bar">
-                      <span style={{ width: `${getProjectProgress(currentProject, uploadPercent)}%` }} />
-                    </div>
-                  </section>
+                  <ProcessingStatusPanel
+                    busy={busy}
+                    copy={copy}
+                    locale={locale}
+                    processingPanelDetail={processingPanelDetail}
+                    processingPanelTitle={processingPanelTitle}
+                    project={currentProject}
+                    showProcessingUploadProgress={showProcessingUploadProgress}
+                    showResumeUploadAction={showResumeUploadAction}
+                    showRetryProcessingAction={showRetryProcessingAction}
+                    uploadPaused={uploadPaused}
+                    uploadPercent={uploadPercent}
+                    workspacePointsEstimate={workspacePointsEstimate}
+                    onCancelUpload={handleCancelUpload}
+                    onPauseUpload={handlePauseUpload}
+                    onResumeProcessingUpload={() => void handleStartProcessing()}
+                    onResumeUpload={handleResumeUpload}
+                    onRetryProcessing={() => void handleStartProcessing({ retryFailed: true })}
+                  />
                 )}
 
                 {showUploadStepContent && !isDemoMode && (
