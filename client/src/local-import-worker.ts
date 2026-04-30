@@ -501,7 +501,7 @@ self.addEventListener('message', (event: MessageEvent<ParseRequest>) => {
 
   void (async () => {
     try {
-      const PARSE_CONCURRENCY = 4;
+      const PARSE_CONCURRENCY = 1;
       const frames: ParsedFramePayload[] = [];
       let completed = 0;
       for (let start = 0; start < request.files.length; start += PARSE_CONCURRENCY) {
@@ -517,6 +517,7 @@ self.addEventListener('message', (event: MessageEvent<ParseRequest>) => {
           })
         );
         frames.push(...chunkFrames);
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
       self.postMessage({ type: 'result', id: request.id, frames });
     } catch (error) {
