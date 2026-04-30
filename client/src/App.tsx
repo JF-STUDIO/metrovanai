@@ -2,10 +2,14 @@
 import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
+import { AccountSettingsDialog } from './components/AccountSettingsDialog';
 import { AuthModal } from './components/AuthModal';
 import { AdminConsole } from './components/AdminConsole';
 import { AdminRefundDialog } from './components/AdminRefundDialog';
 import { BillingPanel } from './components/BillingPanel';
+import { FeatureCreateDialog } from './components/FeatureCreateDialog';
+import { ProjectDownloadDialog } from './components/ProjectDownloadDialog';
+import { ResultEditorDialog } from './components/ResultEditorDialog';
 import { StudioGuideDialog } from './components/StudioGuideDialog';
 import { LandingPage } from './pages/LandingPage';
 import logoMark from './assets/metrovan-logo-mark.webp';
@@ -123,12 +127,8 @@ import {
   MIN_RUNNINGHUB_MAX_IN_FLIGHT,
   MIN_RUNPOD_HDR_BATCH_SIZE,
   RESULT_COLOR_CARD_STORAGE_KEY,
-  RESULT_EDITOR_ASPECT_RATIOS,
-  RESULT_EDITOR_CONTROL_GROUPS,
   buildResultCropFramePatch,
   buildAdminPlanPackageFromDraft,
-  buildResultCropFrameStyle,
-  buildResultEditorImageStyle,
   buildUniqueAdminActivationCode,
   clampEditorValue,
   clampIndex,
@@ -6360,609 +6360,96 @@ function App() {
       />
 
       {settingsOpen && session && (
-        <div className="modal-backdrop" onClick={() => !settingsBusy && setSettingsOpen(false)}>
-          <div className="modal-card settings-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <strong>{copy.settingsTitle}</strong>
-                <span className="muted">{copy.settingsHint}</span>
-              </div>
-              <button className="close-button" type="button" onClick={() => setSettingsOpen(false)} disabled={settingsBusy}>
-                ×
-              </button>
-            </div>
-
-            {settingsMessage && <div className="auth-feedback settings-feedback">{settingsMessage}</div>}
-
-            <div className="form-grid">
-              <label>
-                <span>{copy.settingsDisplayName}</span>
-                <input
-                  value={settingsDraft.displayName}
-                  onChange={(event) => setSettingsDraft((current) => ({ ...current, displayName: event.target.value }))}
-                  disabled={settingsBusy}
-                />
-              </label>
-
-              <label>
-                <span>{copy.settingsEmail}</span>
-                <input value={session.email} disabled readOnly className="settings-readonly" />
-                <small className="settings-field-note">{copy.settingsEmailHint}</small>
-              </label>
-
-              <div className="settings-language-field">
-                <span>{copy.settingsLanguage}</span>
-                <div className="language-toggle">
-                  <button
-                    className={`language-option${settingsDraft.locale === 'zh' ? ' active' : ''}`}
-                    type="button"
-                    onClick={() => setSettingsDraft((current) => ({ ...current, locale: 'zh' }))}
-                    disabled={settingsBusy}
-                  >
-                    {copy.chinese}
-                  </button>
-                  <button
-                    className={`language-option${settingsDraft.locale === 'en' ? ' active' : ''}`}
-                    type="button"
-                    onClick={() => setSettingsDraft((current) => ({ ...current, locale: 'en' }))}
-                    disabled={settingsBusy}
-                  >
-                    {copy.english}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="modal-actions">
-              <button className="ghost-button" type="button" onClick={() => setSettingsOpen(false)} disabled={settingsBusy}>
-                {copy.cancel}
-              </button>
-              <button className="solid-button" type="button" onClick={() => void handleSaveSettings()} disabled={settingsBusy}>
-                {settingsBusy ? copy.authWorking : copy.save}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AccountSettingsDialog
+          busy={settingsBusy}
+          copy={copy}
+          draft={settingsDraft}
+          message={settingsMessage}
+          session={session}
+          setDraft={setSettingsDraft}
+          onClose={() => setSettingsOpen(false)}
+          onSave={() => void handleSaveSettings()}
+        />
       )}
 
       {createDialogOpen && (
-        <div className="modal-backdrop" onClick={closeCreateProjectDialog}>
-          <div className="modal-card feature-create-modal" onClick={(event) => event.stopPropagation()}>
-            <button className="feature-create-close" type="button" onClick={closeCreateProjectDialog} aria-label={copy.close}>
-              ×
-            </button>
-
-            <section className={`feature-create-summary tone-${selectedFeature.tone}`}>
-              <div className="feature-create-icon" aria-hidden="true">
-                {selectedFeature.beforeImage && selectedFeature.afterImage ? (
-                  <>
-                    <img src={selectedFeature.beforeImage} alt="" decoding="async" />
-                    <img src={selectedFeature.afterImage} alt="" decoding="async" />
-                  </>
-                ) : (
-                  <span />
-                )}
-              </div>
-              <div>
-                <strong>{selectedFeature.title[locale]}</strong>
-                <span>{selectedFeature.detail[locale]}</span>
-              </div>
-            </section>
-
-            <div className="feature-create-body">
-              <div className="feature-create-title">
-                <h2>{locale === 'en' ? 'Project name' : '设置项目名称'}</h2>
-                <p>{locale === 'en' ? 'Name this project and upload the photos that need processing.' : '为这个项目命名，并上传需要处理的照片。'}</p>
-              </div>
-
-              <label className="feature-create-field">
-                <span>{copy.projectName}</span>
-                <input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder={selectedFeature.defaultName[locale]} />
-              </label>
-
-              <label className="feature-create-field feature-create-priority">
-                <span>{locale === 'en' ? 'Processing priority' : '处理优先级'}</span>
-                <select defaultValue="standard" aria-label={locale === 'en' ? 'Processing priority' : '处理优先级'}>
-                  <option value="standard">{locale === 'en' ? 'Standard (starts within 10 minutes)' : '标准（10 分钟内开始）'}</option>
-                  <option value="normal">{locale === 'en' ? 'Normal queue' : '普通队列'}</option>
-                </select>
-              </label>
-
-              <div
-                className={`feature-create-dropzone${createDialogDragActive ? ' drag-active' : ''}`}
-                role="button"
-                tabIndex={0}
-                onClick={() => createFileInputRef.current?.click()}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    createFileInputRef.current?.click();
-                  }
-                }}
-                onDragEnter={(event) => {
-                  event.preventDefault();
-                  setCreateDialogDragActive(true);
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setCreateDialogDragActive(true);
-                }}
-                onDragLeave={(event) => {
-                  event.preventDefault();
-                  setCreateDialogDragActive(false);
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setCreateDialogDragActive(false);
-                  handleCreateDialogFiles(event.dataTransfer.files);
-                }}
-              >
-                <input
-                  ref={createFileInputRef}
-                  type="file"
-                  multiple
-                  accept={IMPORT_FILE_ACCEPT}
-                  onChange={(event) => {
-                    handleCreateDialogFiles(event.target.files);
-                    event.target.value = '';
-                  }}
-                />
-                <span className="feature-create-upload-arrow" aria-hidden="true">↑</span>
-                <strong>{locale === 'en' ? 'Drag RAW / JPG here, or click to choose files' : '拖拽 RAW / JPG 到这里，或点击选择文件'}</strong>
-                <em>{locale === 'en' ? 'Supports ARW, CR2, CR3, NEF, RAF, DNG, JPG · up to 2 GB per file' : '支持 ARW、CR2、CR3、NEF、RAF、DNG、JPG · 单张最大 2 GB'}</em>
-              </div>
-
-              {createDialogFiles.length > 0 && (
-                <div className="feature-create-selected-files" aria-live="polite">
-                  <strong>{locale === 'en' ? `${createDialogFiles.length} files selected` : `已选择 ${createDialogFiles.length} 张照片`}</strong>
-                  <span>
-                    {createDialogFiles.slice(0, 3).map((file) => file.name).join(' · ')}
-                    {createDialogFiles.length > 3 ? ' · ...' : ''}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <div className="modal-actions feature-create-actions">
-              <button className="ghost-button" type="button" onClick={closeCreateProjectDialog} disabled={busy}>
-                {copy.cancel}
-              </button>
-              <button className="solid-button" type="button" onClick={() => void handleCreateProject()} disabled={busy}>
-                {busy ? copy.authWorking : locale === 'en' ? 'Create project and start' : '创建项目并开始'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <FeatureCreateDialog
+          busy={busy}
+          copy={copy}
+          dragActive={createDialogDragActive}
+          fileInputRef={createFileInputRef}
+          files={createDialogFiles}
+          locale={locale}
+          newProjectName={newProjectName}
+          selectedFeature={selectedFeature}
+          setDragActive={setCreateDialogDragActive}
+          setNewProjectName={setNewProjectName}
+          onClose={closeCreateProjectDialog}
+          onCreate={() => void handleCreateProject()}
+          onFiles={handleCreateDialogFiles}
+        />
       )}
 
       {downloadDialogProjectId && downloadProject && (
-        <div className="modal-backdrop" onClick={() => closeDownloadDialog()}>
-          <div className="modal-card download-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <strong>{copy.downloadSettings}</strong>
-                <span className="muted">{downloadProject.name}</span>
-              </div>
-              <button className="close-button" type="button" onClick={() => closeDownloadDialog()} disabled={downloadBusy}>
-                ×
-              </button>
-            </div>
-
-            <div className="download-section">
-              <p className="download-section-label">{copy.downloadSectionOrganize}</p>
-              <div className="form-grid download-grid">
-                <label>
-                  <span>{copy.downloadFolderMode}</span>
-                  <select
-                    value={downloadDraft.folderMode}
-                    onChange={(event) =>
-                      setDownloadDraft((current) => ({
-                        ...current,
-                        folderMode: event.target.value as DownloadDraft['folderMode']
-                      }))
-                    }
-                    disabled={downloadBusy}
-                  >
-                    <option value="grouped">{copy.downloadFolderGrouped}</option>
-                    <option value="flat">{copy.downloadFolderFlat}</option>
-                  </select>
-                </label>
-
-                <label>
-                  <span>{copy.downloadNamingMode}</span>
-                  <select
-                    value={downloadDraft.namingMode}
-                    onChange={(event) =>
-                      setDownloadDraft((current) => ({
-                        ...current,
-                        namingMode: event.target.value as DownloadDraft['namingMode']
-                      }))
-                    }
-                    disabled={downloadBusy}
-                  >
-                    <option value="sequence">{copy.downloadNamingSequence}</option>
-                    <option value="original">{copy.downloadNamingOriginal}</option>
-                    <option value="custom-prefix">{copy.downloadNamingCustomPrefix}</option>
-                  </select>
-                </label>
-
-                {downloadDraft.namingMode === 'custom-prefix' && (
-                  <label>
-                    <span>{copy.downloadCustomPrefix}</span>
-                    <input
-                      value={downloadDraft.customPrefix}
-                      onChange={(event) =>
-                        setDownloadDraft((current) => ({
-                          ...current,
-                          customPrefix: event.target.value
-                        }))
-                      }
-                      placeholder="metrovan"
-                      disabled={downloadBusy}
-                    />
-                  </label>
-                )}
-              </div>
-            </div>
-
-            <div className="download-section">
-              <p className="download-section-label">{copy.downloadSectionSizes}</p>
-              <div className="download-variants">
-                <label className="download-variant-row">
-                  <input
-                    type="checkbox"
-                    checked={downloadDraft.includeHd}
-                    onChange={(event) =>
-                      setDownloadDraft((current) => ({
-                        ...current,
-                        includeHd: event.target.checked
-                      }))
-                    }
-                    disabled={downloadBusy}
-                  />
-                  <div>
-                    <strong>{copy.downloadHdTitle}</strong>
-                    <span>{copy.downloadHdHint}</span>
-                  </div>
-                </label>
-
-                <label className="download-variant-row">
-                  <input
-                    type="checkbox"
-                    checked={downloadDraft.includeCustom}
-                    onChange={(event) =>
-                      setDownloadDraft((current) => ({
-                        ...current,
-                        includeCustom: event.target.checked
-                      }))
-                    }
-                    disabled={downloadBusy}
-                  />
-                  <div>
-                    <strong>{copy.downloadCustomTitle}</strong>
-                    <span>{copy.downloadCustomHint}</span>
-                  </div>
-                </label>
-
-                {downloadDraft.includeCustom && (
-                  <div className="form-grid download-custom-grid">
-                    <label>
-                      <span>{copy.downloadFolderLabel}</span>
-                      <input
-                        value={downloadDraft.customLabel}
-                        onChange={(event) =>
-                          setDownloadDraft((current) => ({
-                            ...current,
-                            customLabel: event.target.value
-                          }))
-                        }
-                        placeholder="Custom"
-                        disabled={downloadBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>{copy.downloadLongEdge}</span>
-                      <input
-                        value={downloadDraft.customLongEdge}
-                        onChange={(event) =>
-                          setDownloadDraft((current) => ({
-                            ...current,
-                            customLongEdge: event.target.value
-                          }))
-                        }
-                        placeholder="3000"
-                        disabled={downloadBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>{copy.downloadWidth}</span>
-                      <input
-                        value={downloadDraft.customWidth}
-                        onChange={(event) =>
-                          setDownloadDraft((current) => ({
-                            ...current,
-                            customWidth: event.target.value
-                          }))
-                        }
-                        placeholder="2048"
-                        disabled={downloadBusy}
-                      />
-                    </label>
-                    <label>
-                      <span>{copy.downloadHeight}</span>
-                      <input
-                        value={downloadDraft.customHeight}
-                        onChange={(event) =>
-                          setDownloadDraft((current) => ({
-                            ...current,
-                            customHeight: event.target.value
-                          }))
-                        }
-                        placeholder="1365"
-                        disabled={downloadBusy}
-                      />
-                    </label>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <p className="download-note">{copy.downloadNote}</p>
-
-            {downloadBusy && (
-              <div className="download-progress">
-                <span className="download-progress-spinner" />
-                <span>{downloadStageText || copy.downloadGenerating}</span>
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button className="ghost-button" type="button" onClick={() => closeDownloadDialog()} disabled={downloadBusy}>
-                {copy.cancel}
-              </button>
-              <button className="solid-button" type="button" onClick={() => void handleConfirmDownload()} disabled={downloadBusy}>
-                {copy.downloadGenerate}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ProjectDownloadDialog
+          busy={downloadBusy}
+          copy={copy}
+          draft={downloadDraft}
+          project={downloadProject}
+          stageText={downloadStageText}
+          setDraft={setDownloadDraft}
+          onClose={closeDownloadDialog}
+          onConfirm={() => void handleConfirmDownload()}
+        />
       )}
 
       {currentViewerAsset && (
-        <div className="viewer-backdrop result-editor-backdrop" onClick={() => setResultViewerIndex(null)}>
-          <div className="result-editor-shell" onClick={(event) => event.stopPropagation()}>
-            <header className="result-editor-topbar">
-              <div className="result-editor-title">
-                <strong>{currentViewerAsset.fileName}</strong>
-                <span>
-                  {currentProject?.name ?? 'Metrovan AI'} · {(safeViewerIndex ?? 0) + 1}/{viewerAssets.length}
-                </span>
-              </div>
-              <div className="result-editor-actions">
-                <button className="result-editor-deliver" type="button" onClick={() => setResultViewerIndex(null)}>
-                  Deliver
-                </button>
-                <button className="result-editor-icon-button" type="button" onClick={() => void downloadViewerAsset(currentViewerAsset)}>
-                  ↓
-                </button>
-                <button
-                  className="result-editor-icon-button"
-                  type="button"
-                  onClick={() => resetResultEditorSettings(currentViewerAsset.id)}
-                >
-                  ↺
-                </button>
-                <button className="result-editor-icon-button" type="button" onClick={() => setResultViewerIndex(null)}>
-                  ×
-                </button>
-              </div>
-            </header>
-
-            <div className="result-editor-main">
-              <section className="result-editor-stage">
-                {viewerAssets.length > 1 && (
-                  <button className="viewer-arrow large left result-editor-nav" type="button" onClick={() => shiftViewer(-1)}>
-                    {'<'}
-                  </button>
-                )}
-                <div
-                  className={`result-editor-canvas crop-adjustable${currentViewerAspectRatio ? ' cropped' : ''}`}
-                  ref={resultCanvasRef}
-                  style={currentViewerAspectRatio ? { aspectRatio: currentViewerAspectRatio } : undefined}
-                  onPointerDown={startResultCropDrag}
-                  onPointerMove={moveResultCropDrag}
-                  onPointerUp={endResultCropDrag}
-                  onPointerCancel={endResultCropDrag}
-                  onWheel={zoomResultCrop}
-                >
-                  <img
-                    src={resolveMediaUrl(currentViewerAsset.storageUrl)}
-                    alt={currentViewerAsset.fileName}
-                    style={buildResultEditorImageStyle(currentViewerSettings)}
-                    decoding="async"
-                    draggable={false}
-                  />
-                  <div
-                    className="result-editor-crop-frame"
-                    style={buildResultCropFrameStyle(currentViewerSettings)}
-                    onPointerDown={(event) => startResultCropFrameDrag(event, 'move')}
-                  >
-                    <span className="result-editor-crop-grid" aria-hidden="true" />
-                    {(['nw', 'ne', 'sw', 'se'] as const).map((handle) => (
-                      <span
-                        key={handle}
-                        className={`result-editor-crop-handle ${handle}`}
-                        onPointerDown={(event) => startResultCropFrameDrag(event, handle)}
-                        aria-hidden="true"
-                      />
-                    ))}
-                  </div>
-                </div>
-                {viewerAssets.length > 1 && (
-                  <button className="viewer-arrow large right result-editor-nav" type="button" onClick={() => shiftViewer(1)}>
-                    {'>'}
-                  </button>
-                )}
-              </section>
-
-              <aside className="result-editor-panel">
-                <div className="result-editor-panel-head">
-                  <strong>Edit</strong>
-                  <span>›</span>
-                </div>
-
-                <div className="result-editor-section result-editor-regenerate-section">
-                  <div className="result-editor-regenerate-head">
-                    <div>
-                      <h3>{copy.regeneratePanelTitle}</h3>
-                      <p>{copy.regeneratePanelHint}</p>
-                    </div>
-                    <button
-                      className="result-editor-regenerate-button"
-                      type="button"
-                      onClick={() => void handleRegenerateResult(currentViewerAsset)}
-                      disabled={currentViewerIsRegenerating}
-                      title={`${copy.regenerateResultHint} ${projectFreeRegenerationsRemaining}/${currentProjectRegenerationUsage.freeLimit}`}
-                    >
-                      {currentViewerIsRegenerating ? copy.regeneratingResult : copy.regenerateResult}
-                    </button>
-                  </div>
-
-                  <div className="result-editor-color-input-row">
-                    <button
-                      className="result-editor-eyedropper"
-                      type="button"
-                      onClick={() => void handlePickResultColor(currentViewerAsset)}
-                      disabled={currentViewerIsRegenerating}
-                      title={copy.colorDropper}
-                    >
-                      <span style={{ background: currentViewerNormalizedColor }} />
-                      <b>⌖</b>
-                    </button>
-                    <label>
-                      <span>{copy.colorCardNo}</span>
-                      <input
-                        type="text"
-                        inputMode="text"
-                        value={currentViewerSelectedColor}
-                        onChange={(event) =>
-                          setResultColorCards((current) => ({
-                            ...current,
-                            [currentViewerAsset.hdrItemId]: normalizeHexDraft(event.target.value)
-                          }))
-                        }
-                        onBlur={(event) => {
-                          const normalized = normalizeHex(event.target.value);
-                          if (normalized) {
-                            applyResultColorCard(currentViewerAsset, normalized);
-                          }
-                        }}
-                        placeholder="#F2E8D8"
-                        maxLength={7}
-                      />
-                    </label>
-                    <button
-                      className="result-editor-save-card"
-                      type="button"
-                      onClick={() => saveResultColorCard(currentViewerAsset)}
-                    >
-                      {copy.saveColorCard}
-                    </button>
-                  </div>
-
-                  <div className="result-editor-color-cards">
-                    {availableResultColorCards.map((card) => {
-                      const isActive = card.color.toUpperCase() === currentViewerNormalizedColor;
-                      return (
-                        <div
-                          className={`result-editor-color-card${isActive ? ' active' : ''}${
-                            card.source === 'saved' ? ' saved' : ''
-                          }`}
-                          key={card.id}
-                        >
-                          <button type="button" onClick={() => applyResultColorCard(currentViewerAsset, card.color)}>
-                            <span style={{ background: card.color }} />
-                            <strong>{card.label}</strong>
-                            <em>{card.color}</em>
-                          </button>
-                          {card.source === 'saved' && (
-                            <button
-                              className="result-editor-color-card-delete"
-                              type="button"
-                              onClick={() => deleteResultColorCard(card)}
-                              aria-label={`${copy.deleteColorCard} ${card.color}`}
-                              title={copy.deleteColorCard}
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {RESULT_EDITOR_CONTROL_GROUPS.map((group) => (
-                  <div className="result-editor-section" key={group.title}>
-                    <h3>{group.title}</h3>
-                    <div className="result-slider-stack">
-                      {group.controls.map((control) => (
-                        <label className="result-slider-row" key={control.key}>
-                          <span>{control.label}</span>
-                          <input
-                            type="range"
-                            min={control.min}
-                            max={control.max}
-                            step={control.step ?? 1}
-                            value={currentViewerSettings[control.key]}
-                            onChange={(event) =>
-                              updateResultEditorSettings(currentViewerAsset.id, {
-                                [control.key]: clampEditorValue(Number(event.target.value), control.min, control.max)
-                              })
-                            }
-                          />
-                          <output>{currentViewerSettings[control.key]}</output>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-
-                <div className="result-editor-section">
-                  <h3>ASPECT RATIO</h3>
-                  <div className="result-aspect-grid">
-                    {RESULT_EDITOR_ASPECT_RATIOS.map((aspectRatio) => (
-                      <button
-                        key={aspectRatio.value}
-                        type="button"
-                        className={currentViewerSettings.aspectRatio === aspectRatio.value ? 'active' : ''}
-                        onClick={() => updateResultAspectRatio(currentViewerAsset.id, aspectRatio.value)}
-                      >
-                        {aspectRatio.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </aside>
-
-            </div>
-
-            {viewerAssets.length > 1 && (
-              <div className="result-editor-filmstrip">
-                {viewerAssets.map((asset: ResultAsset, index) => (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    className={`viewer-thumb${index === safeViewerIndex ? ' active' : ''}`}
-                    onClick={() => setResultViewerIndex(index)}
-                  >
-                    <img src={resolveMediaUrl(asset.previewUrl ?? asset.storageUrl)} alt={asset.fileName} loading="lazy" decoding="async" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <ResultEditorDialog
+          asset={currentViewerAsset}
+          aspectRatio={currentViewerAspectRatio}
+          availableColorCards={availableResultColorCards}
+          canvasRef={resultCanvasRef}
+          copy={copy}
+          currentColor={currentViewerSelectedColor}
+          currentProjectName={currentProject?.name ?? 'Metrovan AI'}
+          freeRegenerationsRemaining={projectFreeRegenerationsRemaining}
+          isRegenerating={currentViewerIsRegenerating}
+          normalizedColor={currentViewerNormalizedColor}
+          regenerationFreeLimit={currentProjectRegenerationUsage.freeLimit}
+          safeViewerIndex={safeViewerIndex ?? 0}
+          settings={currentViewerSettings}
+          viewerAssets={viewerAssets}
+          onApplyColorCard={applyResultColorCard}
+          onClose={() => setResultViewerIndex(null)}
+          onColorBlur={(asset, value) => {
+            const normalized = normalizeHex(value);
+            if (normalized) {
+              applyResultColorCard(asset, normalized);
+            }
+          }}
+          onColorDraftChange={(asset, value) =>
+            setResultColorCards((current) => ({
+              ...current,
+              [asset.hdrItemId]: normalizeHexDraft(value)
+            }))
+          }
+          onCropFrameDragStart={startResultCropFrameDrag}
+          onDeleteColorCard={deleteResultColorCard}
+          onDownload={(asset) => void downloadViewerAsset(asset)}
+          onPickColor={(asset) => void handlePickResultColor(asset)}
+          onRegenerate={(asset) => void handleRegenerateResult(asset)}
+          onReset={resetResultEditorSettings}
+          onSaveColorCard={saveResultColorCard}
+          onSelectViewerIndex={setResultViewerIndex}
+          onShiftViewer={shiftViewer}
+          onStagePointerDown={startResultCropDrag}
+          onStagePointerMove={moveResultCropDrag}
+          onStagePointerUp={endResultCropDrag}
+          onStageWheel={zoomResultCrop}
+          onUpdateAspectRatio={updateResultAspectRatio}
+          onUpdateSettings={updateResultEditorSettings}
+          resolveMediaUrl={resolveMediaUrl}
+        />
       )}
       {projectToDelete && (
         <div className="modal-backdrop delete-confirm-backdrop" onClick={() => setProjectToDelete(null)}>
