@@ -499,6 +499,8 @@ const DIRECT_OBJECT_UPLOAD_HUGE_FILE_CONCURRENCY = 2;
 const MAX_UPLOAD_BATCH_RETRIES = 3;
 const UPLOAD_RETRY_BASE_DELAY_MS = 850;
 const UPLOAD_RETRY_JITTER_MS = 650;
+const UPLOAD_API_RETRY_MAX_ATTEMPTS = 6;
+const UPLOAD_API_RETRY_MAX_DELAY_MS = 60_000;
 const DIRECT_OBJECT_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 const LARGE_DIRECT_OBJECT_FILE_BYTES = 80 * 1024 * 1024;
 const HUGE_DIRECT_OBJECT_FILE_BYTES = 200 * 1024 * 1024;
@@ -698,12 +700,29 @@ async function readErrorMessage(response: Response) {
 
 export class ApiRequestError extends Error {
   status: number;
+  retryAfterMs: number | null;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, retryAfterMs: number | null = null) {
     super(message);
     this.name = 'ApiRequestError';
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+function parseRetryAfterMs(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(UPLOAD_API_RETRY_MAX_DELAY_MS, Math.round(seconds * 1000));
+  }
+  const retryAt = Date.parse(value);
+  if (Number.isFinite(retryAt)) {
+    return Math.min(UPLOAD_API_RETRY_MAX_DELAY_MS, Math.max(0, retryAt - Date.now()));
+  }
+  return null;
 }
 
 async function jsonRequest<T>(requestPath: string, init?: RequestInit): Promise<T> {
@@ -714,7 +733,7 @@ async function jsonRequest<T>(requestPath: string, init?: RequestInit): Promise<
   });
 
   if (!response.ok) {
-    throw new ApiRequestError(await readErrorMessage(response), response.status);
+    throw new ApiRequestError(await readErrorMessage(response), response.status, parseRetryAfterMs(response.headers.get('Retry-After')));
   }
 
   const payload = (await response.json()) as T;
@@ -1292,6 +1311,26 @@ function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function getUploadApiRetryDelay(error: unknown, attempt: number) {
+  if (attempt >= UPLOAD_API_RETRY_MAX_ATTEMPTS) {
+    return null;
+  }
+
+  if (error instanceof ApiRequestError) {
+    const isRetryableStatus = error.status === 408 || error.status === 429 || error.status >= 500;
+    if (!isRetryableStatus) {
+      return null;
+    }
+    return error.retryAfterMs ?? Math.min(UPLOAD_API_RETRY_MAX_DELAY_MS, uploadRetryDelay(attempt) * 2);
+  }
+
+  if (error instanceof TypeError) {
+    return Math.min(UPLOAD_API_RETRY_MAX_DELAY_MS, uploadRetryDelay(attempt) * 2);
+  }
+
+  return null;
+}
+
 function isBrowserOffline() {
   return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
@@ -1333,6 +1372,7 @@ async function runWithOfflineRetry<T>(
   operation: () => Promise<T>,
   options: { signal?: AbortSignal; onPause?: () => void } = {}
 ) {
+  let apiAttempt = 1;
   while (true) {
     throwIfUploadAborted(options.signal);
     await waitIfOffline(options.signal, options.onPause);
@@ -1343,7 +1383,13 @@ async function runWithOfflineRetry<T>(
         throw error;
       }
       if (!isBrowserOffline()) {
-        throw error;
+        const retryDelayMs = getUploadApiRetryDelay(error, apiAttempt);
+        if (retryDelayMs == null) {
+          throw error;
+        }
+        apiAttempt += 1;
+        await delay(retryDelayMs);
+        continue;
       }
       await waitIfOffline(options.signal, options.onPause);
     }
