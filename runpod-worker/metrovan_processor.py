@@ -1095,7 +1095,7 @@ def build_rawtherapee_profile(mode: str, resize_long_edge: int) -> str:
         [
             "[Exposure]",
             "Auto=false",
-            "HistogramMatching=true",
+            "HistogramMatching=false",
             "",
             "[HLRecovery]",
             "Enabled=true",
@@ -1176,7 +1176,6 @@ def render_single_raw_to_jpeg(
             [
                 "-q",
                 "-Y",
-                "-d",
                 "-p",
                 str(profile_path),
                 "-o",
