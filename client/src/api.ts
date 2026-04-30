@@ -1824,8 +1824,10 @@ async function uploadDirectObjectFileMultipart(
     }
   }
 
-  if (pendingPartNumbers.length) {
-    const refreshed = await runWithOfflineRetry(() => refreshMultipartPartUrls(projectId, storageKey, uploadId, pendingPartNumbers), {
+  const partUrlsByNumber = new Set(partUrls.map((part) => part.partNumber));
+  const missingPartUrlNumbers = pendingPartNumbers.filter((partNumber) => !partUrlsByNumber.has(partNumber));
+  if (missingPartUrlNumbers.length) {
+    const refreshed = await runWithOfflineRetry(() => refreshMultipartPartUrls(projectId, storageKey, uploadId, missingPartUrlNumbers), {
       signal: options.signal,
       onPause: options.onOfflinePause
     });

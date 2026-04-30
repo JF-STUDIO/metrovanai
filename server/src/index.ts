@@ -5117,8 +5117,8 @@ app.post('/api/projects/:id/uploads/multipart/init', async (req, res) => {
   }
   if (
     !(await checkUserRateLimit(req, res, user, {
-      scope: 'multipart-upload',
-      limit: 120,
+      scope: 'multipart-upload-init',
+      limit: 400,
       windowMs: 1000 * 60 * 15
     }))
   ) {
@@ -5191,8 +5191,8 @@ app.post('/api/projects/:id/uploads/multipart/parts/refresh', async (req, res) =
   }
   if (
     !(await checkUserRateLimit(req, res, user, {
-      scope: 'multipart-upload',
-      limit: 240,
+      scope: 'multipart-upload-refresh',
+      limit: 800,
       windowMs: 1000 * 60 * 15
     }))
   ) {
@@ -5251,8 +5251,8 @@ app.post('/api/projects/:id/uploads/multipart/complete', async (req, res) => {
   }
   if (
     !(await checkUserRateLimit(req, res, user, {
-      scope: 'multipart-upload',
-      limit: 120,
+      scope: 'multipart-upload-complete',
+      limit: 400,
       windowMs: 1000 * 60 * 15
     }))
   ) {
@@ -5326,8 +5326,8 @@ app.post('/api/projects/:id/uploads/multipart/abort', async (req, res) => {
   }
   if (
     !(await checkUserRateLimit(req, res, user, {
-      scope: 'multipart-upload',
-      limit: 120,
+      scope: 'multipart-upload-abort',
+      limit: 400,
       windowMs: 1000 * 60 * 15
     }))
   ) {
