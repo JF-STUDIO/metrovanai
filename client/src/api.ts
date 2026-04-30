@@ -216,7 +216,6 @@ export interface UploadFilesOptions {
   onFileFailed?: (failed: FailedUploadFile) => void;
   pauseController?: UploadPauseController;
   continueOnFileError?: boolean;
-  deferDirectUploadComplete?: boolean;
 }
 
 interface DirectUploadTarget {
@@ -2214,16 +2213,6 @@ async function uploadFilesViaDirectObject(
   });
   if (!pendingFiles.length) {
     const completedObjects = collectCompletedObjects(files, completedByIdentity);
-    if (options.deferDirectUploadComplete) {
-      emitUploadBatchEvent('upload.batch-completed', { projectId, files, uploadedFiles: files.length, failedFiles: [] });
-      onProgress(100, {
-        stage: 'completed',
-        percent: 100,
-        uploadedFiles: files.length,
-        totalFiles: files.length
-      });
-      return { directUploadFiles: completedObjects };
-    }
     onProgress(96, {
       stage: 'finalizing',
       percent: 96,
@@ -2499,21 +2488,6 @@ async function uploadFilesViaDirectObject(
     emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
     throw new Error('No files uploaded.');
   }
-  if (options.deferDirectUploadComplete) {
-    if (failedFiles.length) {
-      emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
-    }
-    emitUploadBatchEvent('upload.batch-completed', { projectId, files, uploadedFiles, failedFiles });
-    onProgress(100, {
-      stage: 'completed',
-      percent: 100,
-      uploadedFiles,
-      totalFiles: files.length
-    });
-    return {
-      directUploadFiles: completedObjects
-    };
-  }
   const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
     signal: options.signal,
     onOfflinePause: () =>
@@ -2553,22 +2527,4 @@ export async function uploadFiles(projectId: string, files: File[], onProgress: 
   }
 
   throw new Error('Cloud upload is not available right now. Please try again later.');
-}
-
-export async function preuploadFiles(projectId: string, files: File[], onProgress: UploadProgressHandler, options: UploadFilesOptions = {}) {
-  const capabilities = await fetchUploadCapabilities().catch(() => null);
-  if (!capabilities?.directObject.enabled) {
-    return { directUploadFiles: options.completedObjects ?? [] };
-  }
-
-  return await uploadFilesViaDirectObject(
-    projectId,
-    files,
-    onProgress,
-    {
-      ...options,
-      deferDirectUploadComplete: true
-    },
-    capabilities.directUploadTargets
-  );
 }
