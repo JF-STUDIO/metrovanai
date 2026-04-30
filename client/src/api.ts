@@ -493,7 +493,7 @@ export interface AuthProvidersPayload {
 const MAX_UPLOAD_BATCH_BYTES = 40 * 1024 * 1024;
 const MAX_UPLOAD_BATCH_FILES = 16;
 const MAX_UPLOAD_CONCURRENT_BATCHES = 4;
-const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 4;
+const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 6;
 const DIRECT_OBJECT_UPLOAD_LARGE_FILE_CONCURRENCY = 3;
 const DIRECT_OBJECT_UPLOAD_HUGE_FILE_CONCURRENCY = 2;
 const MAX_UPLOAD_BATCH_RETRIES = 3;
@@ -502,12 +502,12 @@ const UPLOAD_RETRY_JITTER_MS = 650;
 const DIRECT_OBJECT_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 const LARGE_DIRECT_OBJECT_FILE_BYTES = 80 * 1024 * 1024;
 const HUGE_DIRECT_OBJECT_FILE_BYTES = 200 * 1024 * 1024;
-const MULTIPART_UPLOAD_THRESHOLD_BYTES = 100 * 1024 * 1024;
-const MULTIPART_PART_CONCURRENCY = 3;
+const MULTIPART_UPLOAD_THRESHOLD_BYTES = 24 * 1024 * 1024;
+const MULTIPART_PART_CONCURRENCY = 4;
 const MULTIPART_PART_RETRIES = 5;
-const DIRECT_OBJECT_GLOBAL_CONNECTION_LIMIT = 10;
+const DIRECT_OBJECT_GLOBAL_CONNECTION_LIMIT = 12;
 const ADAPTIVE_UPLOAD_MIN_CONCURRENCY = 2;
-const ADAPTIVE_UPLOAD_MAX_CONCURRENCY = 10;
+const ADAPTIVE_UPLOAD_MAX_CONCURRENCY = 12;
 const ADAPTIVE_UPLOAD_LOW_BPS = 768 * 1024;
 const ADAPTIVE_UPLOAD_HIGH_BPS = 3 * 1024 * 1024;
 const ADAPTIVE_UPLOAD_SAMPLE_MS = 2000;
@@ -2053,6 +2053,10 @@ function getDirectObjectUploadConcurrency(files: File[]) {
   return DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY;
 }
 
+function shouldUseMultipartUpload(file: File) {
+  return file.size >= MULTIPART_UPLOAD_THRESHOLD_BYTES;
+}
+
 function clampUploadConcurrency(value: number, maxWorkers: number) {
   return Math.max(1, Math.min(maxWorkers, Math.round(value)));
 }
@@ -2230,12 +2234,27 @@ async function uploadFilesViaDirectObject(
     const batchFiles = batch.map((item) => item.file);
     const adaptiveSampler = new ThroughputSampler(ADAPTIVE_UPLOAD_SAMPLE_MS, 1000);
     const telemetrySampler = new ThroughputSampler(UPLOAD_TELEMETRY_SAMPLE_MS, UPLOAD_TELEMETRY_MIN_SPAN_MS);
-    const { targets } = await runWithOfflineRetry(() => createDirectUploadTargets(projectId, batchFiles), {
-      signal: options.signal,
-      onPause: () => reportProgress({ stage: 'paused', offline: true })
-    });
-    if (targets.length !== batch.length) {
-      throw new Error('Direct upload target count mismatch.');
+    const directTargetEntries = batch
+      .map((entry, batchIndex) => ({ entry, batchIndex }))
+      .filter(({ entry }) => !shouldUseMultipartUpload(entry.file));
+    const directTargetsByBatchIndex = new Map<number, DirectUploadTarget>();
+    if (directTargetEntries.length) {
+      const { targets } = await runWithOfflineRetry(
+        () => createDirectUploadTargets(projectId, directTargetEntries.map(({ entry }) => entry.file)),
+        {
+          signal: options.signal,
+          onPause: () => reportProgress({ stage: 'paused', offline: true })
+        }
+      );
+      if (targets.length !== directTargetEntries.length) {
+        throw new Error('Direct upload target count mismatch.');
+      }
+      directTargetEntries.forEach(({ batchIndex }, targetIndex) => {
+        const target = targets[targetIndex];
+        if (target) {
+          directTargetsByBatchIndex.set(batchIndex, target);
+        }
+      });
     }
 
     let nextBatchFileIndex = 0;
@@ -2302,8 +2321,7 @@ async function uploadFilesViaDirectObject(
         const batchFileIndex = nextBatchFileIndex;
         nextBatchFileIndex += 1;
         const entry = batch[batchFileIndex];
-        const target = targets[batchFileIndex];
-        if (!entry || !target) {
+        if (!entry) {
           continue;
         }
 
@@ -2312,7 +2330,7 @@ async function uploadFilesViaDirectObject(
         const fileIdentity = getFileUploadIdentity(file);
         let uploadedObject: UploadedObjectReference;
         try {
-          if (file.size >= MULTIPART_UPLOAD_THRESHOLD_BYTES) {
+          if (shouldUseMultipartUpload(file)) {
             uploadedObject = await uploadDirectObjectFileMultipart(
               projectId,
               file,
@@ -2330,6 +2348,10 @@ async function uploadFilesViaDirectObject(
               }
             );
           } else {
+            const target = directTargetsByBatchIndex.get(batchFileIndex);
+            if (!target) {
+              throw new Error('Direct upload target is missing.');
+            }
             const latestTarget = await uploadDirectObjectFileWithRetry(target, file, (loadedBytes) => {
               recordFileProgress(fileIndex, file.size, loadedBytes);
               maybeAdjustConcurrency();
@@ -2353,14 +2375,14 @@ async function uploadFilesViaDirectObject(
                 if (!nextTarget) {
                   throw new Error('Direct upload target refresh failed.');
                 }
-                targets[batchFileIndex] = nextTarget;
+                directTargetsByBatchIndex.set(batchFileIndex, nextTarget);
                 return nextTarget;
               },
               onOfflinePause: () => reportProgress({ stage: 'paused', offline: true }),
               projectId,
               signal: options.signal
             });
-            targets[batchFileIndex] = latestTarget;
+            directTargetsByBatchIndex.set(batchFileIndex, latestTarget);
             uploadedObject = {
               originalName: latestTarget.originalName || file.name,
               mimeType: file.type || latestTarget.mimeType || 'application/octet-stream',
