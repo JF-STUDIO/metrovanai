@@ -3104,9 +3104,9 @@ function App() {
     preuploadTasksRef.current[targetProject.id] = preuploadTask;
     try {
       const importPromise = (async () => {
-        await new Promise((resolve) => window.setTimeout(resolve, 650));
+        await new Promise((resolve) => window.setTimeout(resolve, 150));
         const { buildLocalImportDraft } = await loadLocalImportModule();
-        return buildLocalImportDraft(targetProject.id, supported);
+        return buildLocalImportDraft(targetProject.id, supported, undefined, { previewMode: 'embedded' });
       })();
       const nextDraft = await importPromise;
       const nextDraftWithUploads: LocalImportDraft = {

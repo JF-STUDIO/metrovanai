@@ -113,6 +113,7 @@ type LocalImportWorkerResponse =
   | { type: 'progress'; id: string; completed: number; total: number }
   | { type: 'result'; id: string; frames: LocalImportWorkerFramePayload[] }
   | { type: 'error'; id: string; message: string };
+type LocalImportPreviewMode = 'full' | 'embedded';
 
 export interface LocalExposureDraft extends ExposureFile {
   file: File;
@@ -605,7 +606,7 @@ function matchScore(left: GroupingFrame, right: GroupingFrame) {
   return score;
 }
 
-async function parseGroupingFrame(file: File) {
+async function parseGroupingFrame(file: File, previewMode: LocalImportPreviewMode) {
   const extension = getFileExtension(file.name);
   const exifr = (await loadExifr()).default;
   const readBytes = createFileByteReader(file);
@@ -629,7 +630,7 @@ async function parseGroupingFrame(file: File) {
     : ((await parseEmbeddedRawMetadata(file, readBytes).catch(() => null)) as Record<string, unknown> | null);
   const metadataState: LocalImportMetadataState = hasUsableExifMetadata(metadata) ? 'exif' : 'fallback';
 
-  const previewUrl = await createLocalPreviewUrl(file, readBytes);
+  const previewUrl = previewMode === 'full' ? await createLocalPreviewUrl(file, readBytes) : null;
   const previewState: LocalImportPreviewState = previewUrl ? 'ready' : 'missing';
 
   return {
@@ -703,17 +704,25 @@ function buildGroupingFrameFromWorkerPayload(files: File[], payload: LocalImport
   };
 }
 
-async function parseGroupingFramesSequential(files: File[], onProgress?: (progressPercent: number) => void) {
+async function parseGroupingFramesSequential(
+  files: File[],
+  onProgress?: (progressPercent: number) => void,
+  previewMode: LocalImportPreviewMode = 'full'
+) {
   const frames: GroupingFrame[] = [];
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index]!;
-    frames.push(await parseGroupingFrame(file));
+    frames.push(await parseGroupingFrame(file, previewMode));
     onProgress?.(Math.round(((index + 1) / files.length) * 100));
   }
   return frames;
 }
 
-function parseGroupingFramesInWorker(files: File[], onProgress?: (progressPercent: number) => void) {
+function parseGroupingFramesInWorker(
+  files: File[],
+  onProgress?: (progressPercent: number) => void,
+  previewMode: LocalImportPreviewMode = 'full'
+) {
   if (typeof Worker === 'undefined') {
     return Promise.reject(new Error('Web Worker is not available.'));
   }
@@ -756,15 +765,19 @@ function parseGroupingFramesInWorker(files: File[], onProgress?: (progressPercen
       settle(() => reject(event.error instanceof Error ? event.error : new Error(event.message)));
     });
 
-    worker.postMessage({ type: 'parse', id, files });
+    worker.postMessage({ type: 'parse', id, files, previewMode });
   });
 }
 
-async function parseGroupingFrames(files: File[], onProgress?: (progressPercent: number) => void) {
+async function parseGroupingFrames(
+  files: File[],
+  onProgress?: (progressPercent: number) => void,
+  previewMode: LocalImportPreviewMode = 'full'
+) {
   try {
-    return await parseGroupingFramesInWorker(files, onProgress);
+    return await parseGroupingFramesInWorker(files, onProgress, previewMode);
   } catch {
-    return parseGroupingFramesSequential(files, onProgress);
+    return parseGroupingFramesSequential(files, onProgress, previewMode);
   }
 }
 
@@ -875,9 +888,10 @@ function pickDefaultExposure(exposures: LocalExposureDraft[]) {
 export async function buildLocalImportDraft(
   projectId: string,
   files: File[],
-  onProgress?: (progressPercent: number) => void
+  onProgress?: (progressPercent: number) => void,
+  options: { previewMode?: LocalImportPreviewMode } = {}
 ) {
-  const frames = await parseGroupingFrames(files, onProgress);
+  const frames = await parseGroupingFrames(files, onProgress, options.previewMode ?? 'full');
 
   const objectUrls = frames
     .map((frame) => frame.previewUrl)

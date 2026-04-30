@@ -39,11 +39,13 @@ const TIFF_TAG_NAMES = new Map<number, string>([
 
 type LocalImportMetadataState = 'exif' | 'fallback';
 type LocalImportPreviewState = 'ready' | 'missing';
+type LocalImportPreviewMode = 'full' | 'embedded';
 
 interface ParseRequest {
   type: 'parse';
   id: string;
   files: File[];
+  previewMode?: LocalImportPreviewMode;
 }
 
 interface ParsedFramePayload {
@@ -432,7 +434,7 @@ function hasUsableExifMetadata(metadata: Record<string, unknown> | null) {
   return candidateFields.some((value) => value !== null && value !== undefined && value !== '');
 }
 
-async function parseFrame(file: File, index: number): Promise<ParsedFramePayload> {
+async function parseFrame(file: File, index: number, previewMode: LocalImportPreviewMode): Promise<ParsedFramePayload> {
   const extension = getFileExtension(file.name);
   const exifr = (await import('exifr')).default;
   const readBytes = createFileByteReader(file);
@@ -458,7 +460,7 @@ async function parseFrame(file: File, index: number): Promise<ParsedFramePayload
   const exifrPreviewBlob = isJpegFile(file.name)
     ? null
     : thumbnailToBlob(await exifr.thumbnail(file).catch(() => undefined));
-  const previewBlob = exifrPreviewBlob ?? (await createLocalPreviewBlob(file, readBytes));
+  const previewBlob = exifrPreviewBlob ?? (previewMode === 'full' ? await createLocalPreviewBlob(file, readBytes) : null);
   const previewState: LocalImportPreviewState = previewBlob || isJpegFile(file.name) ? 'ready' : 'missing';
 
   return {
@@ -504,12 +506,13 @@ self.addEventListener('message', (event: MessageEvent<ParseRequest>) => {
       const PARSE_CONCURRENCY = 2;
       const frames: ParsedFramePayload[] = [];
       let completed = 0;
+      const previewMode = request.previewMode === 'embedded' ? 'embedded' : 'full';
       for (let start = 0; start < request.files.length; start += PARSE_CONCURRENCY) {
         const end = Math.min(start + PARSE_CONCURRENCY, request.files.length);
         const chunkFrames = await Promise.all(
           Array.from({ length: end - start }, (_unused, i) => {
             const fileIndex = start + i;
-            return parseFrame(request.files[fileIndex]!, fileIndex).then((frame) => {
+            return parseFrame(request.files[fileIndex]!, fileIndex, previewMode).then((frame) => {
               completed += 1;
               self.postMessage({ type: 'progress', id: request.id, completed, total: request.files.length });
               return frame;
