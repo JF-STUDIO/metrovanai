@@ -13,7 +13,7 @@ import {
   type WorkflowExecutionProgress,
   type TaskExecutionRunContext
 } from './task-executor.js';
-import { deleteObjectsFromStorage, deleteProjectIncomingObjects, isConfiguredObjectStorageKey } from './object-storage.js';
+import { isConfiguredObjectStorageKey } from './object-storage.js';
 
 const POINT_PRICE_USD = 0.25;
 const STREAMING_UPLOAD_POLL_MS = 750;
@@ -449,7 +449,6 @@ export class ProjectProcessor {
     const finalProject = this.store.getProject(projectId);
     if (finalProject) {
       const completedCount = this.countCompletedHdrItems(finalProject);
-      const allItemsCompleted = finalProject.hdrItems.length > 0 && finalProject.hdrItems.every((item) => this.isHdrItemCompleted(item));
       const hasSuccess = completedCount > 0;
       const failedCount = Math.max(0, finalProject.hdrItems.length - completedCount);
 
@@ -484,10 +483,6 @@ export class ProjectProcessor {
           currentNodePercent: hasSuccess ? 100 : job.workflowRealtime.currentNodePercent
         }
       }));
-
-      if (allItemsCompleted) {
-        await this.cleanupProjectIncomingObjects(finalProject);
-      }
     }
 
     return summary;
@@ -790,9 +785,6 @@ export class ProjectProcessor {
     await this.runParallelMergeAndWorkflow(projectId, taskExecution, projectDirs.hdr);
     const finalProject = this.store.getProject(projectId);
     const hasSuccess = Boolean(finalProject?.resultAssets.length);
-    const allItemsCompleted = Boolean(
-      finalProject?.hdrItems.length && finalProject.hdrItems.every((item) => this.isHdrItemCompleted(item))
-    );
     const finalFailed = finalProject?.job?.workflowRealtime.failed ?? 0;
 
     this.store.updateProject(projectId, (project) => ({
@@ -813,10 +805,6 @@ export class ProjectProcessor {
       currentHdrItemId: null,
       percent: hasSuccess ? 100 : Math.max(job.percent, 1)
     }));
-    const completedProject = this.store.getProject(projectId);
-    if (allItemsCompleted && completedProject) {
-      await this.cleanupProjectIncomingObjects(completedProject);
-    }
   }
 
   private countCompletedHdrItems(project: ProjectRecord) {
@@ -1409,47 +1397,6 @@ export class ProjectProcessor {
     );
   }
 
-  private collectExposureObjectKeys(item: HdrItem) {
-    return item.exposures.flatMap((exposure) => [exposure.storageKey, exposure.previewKey]).filter((key): key is string =>
-      isConfiguredObjectStorageKey(key)
-    );
-  }
-
-  private async cleanupCompletedSourceObjects(projectId: string, completedHdrItemId: string) {
-    const project = this.store.getProject(projectId);
-    const completedItem = project?.hdrItems.find((item) => item.id === completedHdrItemId);
-    if (!project || !completedItem || !this.isHdrItemCompleted(completedItem)) {
-      return;
-    }
-
-    const protectedKeys = new Set(
-      project.hdrItems
-        .filter((item) => item.id !== completedHdrItemId && !this.isHdrItemCompleted(item))
-        .flatMap((item) => this.collectExposureObjectKeys(item))
-    );
-    const keysToDelete = this.collectExposureObjectKeys(completedItem).filter((key) => !protectedKeys.has(key));
-    if (!keysToDelete.length) {
-      return;
-    }
-
-    const cleanup = await deleteObjectsFromStorage(keysToDelete);
-    if (cleanup.failed.length) {
-      console.warn('R2 source cleanup skipped some objects', cleanup.failed);
-    }
-  }
-
-  private async cleanupProjectIncomingObjects(project: ProjectRecord) {
-    const cleanup = await deleteProjectIncomingObjects({
-      userKey: project.userKey,
-      projectId: project.id,
-      userDisplayName: project.userDisplayName,
-      projectName: project.name
-    });
-    if (cleanup.failed.length) {
-      console.warn('R2 project incoming cleanup skipped some objects', cleanup.failed);
-    }
-  }
-
   private async completeWorkflowItem(projectId: string, hdrItem: HdrItem, result: WorkflowExecutionArtifact) {
     const resultStorageKey = result.resultStorageKey ?? this.store.toStorageKey(result.resultPath);
     const now = new Date().toISOString();
@@ -1498,7 +1445,6 @@ export class ProjectProcessor {
         currentNodePercent: 100
       }
     }));
-    await this.cleanupCompletedSourceObjects(projectId, hdrItem.id);
   }
 
   private failWorkflowItem(projectId: string, hdrItem: HdrItem, message: string) {

@@ -5816,11 +5816,7 @@ app.delete('/api/projects/:id/hdr-items/:hdrItemId', async (req, res) => {
 
   const targetItem = currentProject.hdrItems.find((item) => item.id === String(req.params.hdrItemId ?? ''));
   if (targetItem) {
-    const cleanup = await deleteObjectsFromStorage([
-      targetItem.mergedKey,
-      targetItem.resultKey,
-      ...targetItem.exposures.flatMap((exposure) => [exposure.storageKey, exposure.previewKey])
-    ]);
+    const cleanup = await deleteObjectsFromStorage([targetItem.mergedKey, targetItem.resultKey]);
     if (cleanup.failed.length) {
       console.warn(`R2 cleanup skipped ${cleanup.failed.length} objects for HDR item ${targetItem.id}`, cleanup.failed);
     }
