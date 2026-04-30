@@ -5,6 +5,7 @@
 CI runs on every push and pull request:
 
 - `pnpm test:critical`
+- `pnpm test:e2e`
 - client lint
 - server build
 - client build
@@ -51,6 +52,7 @@ pnpm test:critical
 pnpm --filter metrovan-ai-client lint
 pnpm --filter metrovan-ai-server build
 pnpm --filter metrovan-ai-client build
+pnpm test:e2e
 pnpm maintain:check
 pnpm check:commercial
 ```

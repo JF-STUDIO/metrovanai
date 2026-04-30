@@ -12,6 +12,9 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  METROVAN_CHECK_API_ROOT: https://api.metrovanai.com
+  METROVAN_CHECK_FRONTEND_URL: https://metrovanai.com
+  METROVAN_CHECK_ADMIN_KEY: ${{ secrets.METROVAN_CHECK_ADMIN_KEY }}
 
 jobs:
   verify:
@@ -46,3 +49,9 @@ jobs:
 
       - name: Client build
         run: pnpm --filter metrovan-ai-client build
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser E2E tests
+        run: pnpm test:e2e

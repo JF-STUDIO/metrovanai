@@ -11,8 +11,12 @@
     "maintain:check": "node ./scripts/maintenance-check.mjs",
     "test:regression": "node ./scripts/regression-checks.mjs",
     "test:critical": "pnpm test:regression && node ./scripts/critical-flow-contracts.mjs",
+    "test:e2e": "playwright test",
     "smoke:runpod-worker": "node ./scripts/smoke-runpod-worker.mjs",
     "smoke:auth-billing": "node ./scripts/smoke-auth-billing.mjs",
     "check:commercial": "node ./scripts/check-commercial-readiness.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }
