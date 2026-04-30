@@ -114,7 +114,6 @@ import {
   DEMO_BILLING_PACKAGES,
   DEMO_BILLING_SUMMARY,
   IMPORT_FILE_ACCEPT,
-  LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY,
   MAX_RUNNINGHUB_MAX_IN_FLIGHT,
   MAX_RUNPOD_HDR_BATCH_SIZE,
   MIN_RUNNINGHUB_MAX_IN_FLIGHT,
@@ -1119,14 +1118,6 @@ function App() {
       }
     }
     return Array.from(filesByIdentity.values());
-  }
-
-  function buildSingleHdrLayoutPayload(
-    draft: LocalImportDraft,
-    hdrItem: LocalHdrItemDraft,
-    uploadedObjects: UploadedObjectReference[] = []
-  ) {
-    return buildHdrLayoutPayload({ ...draft, hdrItems: [hdrItem] }, uploadedObjects);
   }
 
   function buildHdrLayoutPayload(draft: LocalImportDraft, uploadedObjects: UploadedObjectReference[] = draft.uploadedObjects ?? []) {
@@ -3446,15 +3437,34 @@ function App() {
         const completedHdrItemIds = new Set(
           uploadHdrItems.filter((hdrItem) => isHdrItemUploaded(hdrItem)).map((hdrItem) => hdrItem.id)
         );
+        const filesByUploadIdentity = new Map<string, File>();
+        const uploadIdentityToHdrItemId = new Map<string, string>();
+        for (const hdrItem of uploadHdrItems) {
+          const groupFiles = collectLocalHdrItemFiles(hdrItem);
+          for (const file of groupFiles) {
+            if (retryUploadFileIdentity && getLocalFileUploadIdentity(file) !== retryUploadFileIdentity) {
+              continue;
+            }
+            const identity = getLocalFileUploadIdentity(file);
+            if (!filesByUploadIdentity.has(identity)) {
+              filesByUploadIdentity.set(identity, file);
+              uploadIdentityToHdrItemId.set(identity, hdrItem.id);
+            }
+          }
+        }
+        const uploadFilesForRun = Array.from(filesByUploadIdentity.values());
         const updateAggregateUploadProgress = (
           stage: UploadProgressSnapshot['stage'] = 'uploading',
-          details: Pick<Partial<UploadProgressSnapshot>, 'currentFileName' | 'attempt' | 'maxAttempts' | 'offline'> = {}
+          details: Pick<Partial<UploadProgressSnapshot>, 'currentFileName' | 'attempt' | 'maxAttempts' | 'offline'> = {},
+          percentOverride?: number
         ) => {
           const uploadedGroups = Math.min(uploadTotalGroups, completedHdrItemIds.size);
           const percent =
             stage === 'completed'
               ? 100
-              : Math.max(1, Math.min(99, Math.round((uploadedGroups / uploadTotalGroups) * 100)));
+              : percentOverride === undefined
+                ? Math.max(1, Math.min(99, Math.round((uploadedGroups / uploadTotalGroups) * 100)))
+                : Math.max(1, Math.min(99, Math.round(percentOverride)));
           setUploadPercent(percent);
           setUploadSnapshot({
             stage,
@@ -3474,9 +3484,9 @@ function App() {
             uploadStatus: 'uploading',
             uploadedObjects: mergeUploadedObjectReferences(draft.uploadedObjects, [uploaded])
           }));
-          updateAggregateUploadProgress('uploading');
         };
-        const rememberGroupFailedUploadFile = (hdrItemId: string) => (failed: FailedUploadFile) => {
+        const rememberFailedUploadFile = (failed: FailedUploadFile) => {
+          const hdrItemId = uploadIdentityToHdrItemId.get(failed.fileIdentity) ?? '';
           const entry: FailedUploadEntry = { ...failed, hdrItemId };
           failedUploadBuffer = [...failedUploadBuffer.filter((item) => item.fileIdentity !== failed.fileIdentity), entry];
           setFailedUploadFiles(failedUploadBuffer);
@@ -3506,93 +3516,70 @@ function App() {
         });
         upsertProject(initialLayoutResponse.project);
 
-        let nextHdrItemIndex = 0;
-        const uploadGroupWorker = async () => {
-          while (nextHdrItemIndex < uploadHdrItems.length) {
-            if (uploadAbortController.signal.aborted) {
-              throw new DOMException('Upload cancelled.', 'AbortError');
-            }
-            const hdrItemIndex = nextHdrItemIndex;
-            nextHdrItemIndex += 1;
-            const hdrItem = uploadHdrItems[hdrItemIndex];
-            if (!hdrItem) {
-              continue;
-            }
-
-            const allGroupFiles = collectLocalHdrItemFiles(hdrItem);
-            const groupFiles = retryUploadFileIdentity
-              ? allGroupFiles.filter((file) => getLocalFileUploadIdentity(file) === retryUploadFileIdentity)
-              : allGroupFiles;
-            if (!groupFiles.length) {
-              continue;
-            }
-
-            const existingUploadsForRun = getUploadedObjectsForFiles(uploadedObjects, groupFiles);
-            if (existingUploadsForRun.length < groupFiles.length) {
-              try {
-                const uploadResponse = await uploadFiles(projectId, groupFiles, (_percent, snapshot) => {
-                  const stage =
-                    snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' || snapshot?.stage === 'verifying'
-                      ? snapshot.stage
-                      : 'uploading';
-                  updateAggregateUploadProgress(stage, {
-                    currentFileName: snapshot?.currentFileName,
-                    attempt: snapshot?.attempt,
-                    maxAttempts: snapshot?.maxAttempts,
-                    offline: snapshot?.offline
-                  });
-                }, {
-                  signal: uploadAbortController.signal,
-                  completedObjects: existingUploadsForRun,
-                  onFileUploaded: rememberUploadedObject,
-                  onFileFailed: rememberGroupFailedUploadFile(hdrItem.id),
-                  pauseController: uploadPauseControllerRef.current,
-                  continueOnFileError: true
-                });
-                uploadedObjects = mergeUploadedObjectReferences(
-                  uploadedObjects,
-                  'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : getUploadedObjectsForFiles(uploadedObjects, groupFiles)
-                );
-              } catch (error) {
-                if (error instanceof DOMException && error.name === 'AbortError') {
-                  throw error;
-                }
-                updateAggregateUploadProgress('uploading');
-                continue;
-              }
-            }
-            if (retryUploadFileIdentity) {
-              failedUploadBuffer = failedUploadBuffer.filter((file) => file.fileIdentity !== retryUploadFileIdentity);
-              setFailedUploadFiles(failedUploadBuffer);
-            }
-            const groupUploads = getUploadedObjectsForFiles(uploadedObjects, allGroupFiles);
-            if (groupUploads.length < allGroupFiles.length) {
-              continue;
-            }
-            for (const file of allGroupFiles) {
-              completedFileIdentities.add(getUploadReferenceIdentity({ originalName: file.name, size: file.size }));
-            }
-            completedHdrItemIds.add(hdrItem.id);
-            updateAggregateUploadProgress('uploading');
-
-            const layoutResponse = await applyHdrLayout(
-              projectId,
-              buildSingleHdrLayoutPayload(
-                activeLocalDraft,
-                hdrItem,
-                groupUploads
-              ),
-              { mode: 'merge', inputComplete: false }
+        if (uploadFilesForRun.length) {
+          const existingUploadsForRun = getUploadedObjectsForFiles(uploadedObjects, uploadFilesForRun);
+          try {
+            const uploadResponse = await uploadFiles(projectId, uploadFilesForRun, (_percent, snapshot) => {
+              const stage =
+                snapshot?.stage === 'paused' ||
+                snapshot?.stage === 'retrying' ||
+                snapshot?.stage === 'verifying' ||
+                snapshot?.stage === 'preparing'
+                  ? snapshot.stage
+                  : 'uploading';
+              updateAggregateUploadProgress(
+                stage,
+                {
+                  currentFileName: snapshot?.currentFileName,
+                  attempt: snapshot?.attempt,
+                  maxAttempts: snapshot?.maxAttempts,
+                  offline: snapshot?.offline
+                },
+                snapshot?.percent
+              );
+            }, {
+              signal: uploadAbortController.signal,
+              completedObjects: existingUploadsForRun,
+              onFileUploaded: rememberUploadedObject,
+              onFileFailed: rememberFailedUploadFile,
+              pauseController: uploadPauseControllerRef.current,
+              continueOnFileError: true
+            });
+            uploadedObjects = mergeUploadedObjectReferences(
+              uploadedObjects,
+              'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : getUploadedObjectsForFiles(uploadedObjects, uploadFilesForRun)
             );
-            upsertProject(layoutResponse.project);
+          } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') {
+              throw error;
+            }
+            throw error;
           }
-        };
+        }
 
-        const groupUploadWorkerCount = Math.max(
-          1,
-          Math.min(LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY, uploadHdrItems.length)
-        );
-        await Promise.all(Array.from({ length: groupUploadWorkerCount }, () => uploadGroupWorker()));
+        if (retryUploadFileIdentity && !failedUploadBuffer.some((file) => file.fileIdentity === retryUploadFileIdentity)) {
+          failedUploadBuffer = failedUploadBuffer.filter((file) => file.fileIdentity !== retryUploadFileIdentity);
+          setFailedUploadFiles(failedUploadBuffer);
+        }
+
+        for (const hdrItem of uploadHdrItems) {
+          const allGroupFiles = collectLocalHdrItemFiles(hdrItem);
+          const groupUploads = getUploadedObjectsForFiles(uploadedObjects, allGroupFiles);
+          if (groupUploads.length < allGroupFiles.length) {
+            continue;
+          }
+          for (const file of allGroupFiles) {
+            completedFileIdentities.add(getUploadReferenceIdentity({ originalName: file.name, size: file.size }));
+          }
+          completedHdrItemIds.add(hdrItem.id);
+        }
+
+        updateAggregateUploadProgress(failedUploadBuffer.length ? 'uploading' : 'finalizing', {}, failedUploadBuffer.length ? undefined : 96);
+        const uploadedLayoutResponse = await applyHdrLayout(projectId, buildHdrLayoutPayload(activeLocalDraft, uploadedObjects), {
+          mode: 'replace',
+          inputComplete: false
+        });
+        upsertProject(uploadedLayoutResponse.project);
 
         if (failedUploadBuffer.length) {
           updateLocalImportDraft(projectId, (draft) => ({ ...draft, uploadStatus: 'paused', uploadedObjects }));
