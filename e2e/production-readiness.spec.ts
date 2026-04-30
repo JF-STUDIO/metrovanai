@@ -35,6 +35,32 @@ test('production API exposes safe anonymous readiness', async ({ request }) => {
   expect(payload.directUploadTargets.maxFiles).toBeGreaterThanOrEqual(100);
 });
 
+test('production protected APIs reject anonymous access', async ({ request }) => {
+  const protectedReads = [
+    `${apiRoot}/api/billing`,
+    `${apiRoot}/api/projects`,
+    `${apiRoot}/api/admin/users`
+  ];
+
+  for (const url of protectedReads) {
+    const response = await request.get(url);
+    expect(response.ok()).toBeFalsy();
+    expect([401, 403]).toContain(response.status());
+  }
+
+  const projectCreate = await request.post(`${apiRoot}/api/projects`, {
+    data: { name: 'Anonymous probe' }
+  });
+  expect(projectCreate.ok()).toBeFalsy();
+  expect([401, 403]).toContain(projectCreate.status());
+
+  const checkoutCreate = await request.post(`${apiRoot}/api/billing/checkout`, {
+    data: { packageId: 'recharge-100' }
+  });
+  expect(checkoutCreate.ok()).toBeFalsy();
+  expect([401, 403]).toContain(checkoutCreate.status());
+});
+
 test('production admin readiness has no action-required checks', async ({ request }) => {
   test.skip(!adminKey, 'Set METROVAN_CHECK_ADMIN_KEY to include admin readiness in E2E.');
 
@@ -47,6 +73,8 @@ test('production admin readiness has no action-required checks', async ({ reques
 
   const payload = await response.json();
   expect(payload.mode).toBe('commercial-ready');
+  expect(Array.isArray(payload.checks)).toBeTruthy();
+  expect(payload.checks.length).toBeGreaterThan(0);
   const required = payload.checks.filter((check: { status: string }) => check.status === 'action-required');
   expect(required).toEqual([]);
 });
