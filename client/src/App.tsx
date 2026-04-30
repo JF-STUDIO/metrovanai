@@ -373,6 +373,7 @@ function App() {
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const uploadAbortControllerRef = useRef<AbortController | null>(null);
+  const preuploadTasksRef = useRef<Record<string, Promise<UploadedObjectReference[]>>>({});
   const uploadPausedRef = useRef(false);
   const uploadPauseResolversRef = useRef<Array<() => void>>([]);
   const uploadPauseControllerRef = useRef<UploadPauseController>({
@@ -3003,6 +3004,7 @@ function App() {
     let failedUploadBuffer: FailedUploadEntry[] = [];
     const uploadAbortController = new AbortController();
     uploadAbortControllerRef.current = uploadAbortController;
+    let preuploadCompleted = false;
     resetUploadPause();
     setBusy(true);
     setUploadActive(true);
@@ -3016,66 +3018,101 @@ function App() {
     });
     setDragActive(false);
     setFailedUploadFiles([]);
-    try {
-      const rememberUploadedObject = (uploaded: UploadedObjectReference) => {
-        uploadedObjects = mergeUploadedObjectReferences(uploadedObjects, [uploaded]);
+    const rememberUploadedObject = (uploaded: UploadedObjectReference) => {
+      uploadedObjects = mergeUploadedObjectReferences(uploadedObjects, [uploaded]);
+      updateLocalImportDraft(targetProject.id, (draft) => ({
+        ...draft,
+        uploadStatus: 'uploading',
+        uploadedObjects: mergeUploadedObjectReferences(draft.uploadedObjects, [uploaded])
+      }));
+    };
+    const rememberFailedUploadFile = (failed: FailedUploadFile) => {
+      const entry: FailedUploadEntry = { ...failed, hdrItemId: '' };
+      failedUploadBuffer = [...failedUploadBuffer.filter((item) => item.fileIdentity !== failed.fileIdentity), entry];
+      setFailedUploadFiles(failedUploadBuffer);
+    };
+    const preuploadTask = preuploadFiles(
+      targetProject.id,
+      supported,
+      (_percent, snapshot) => {
+        const percent = Math.max(1, Math.min(99, Math.round(snapshot?.percent ?? _percent)));
+        setUploadPercent(percent);
+        setUploadSnapshot({
+          stage: snapshot?.stage ?? 'uploading',
+          percent,
+          uploadedFiles: snapshot?.uploadedFiles ?? 0,
+          totalFiles: snapshot?.totalFiles ?? supported.length,
+          currentFileName: snapshot?.currentFileName,
+          attempt: snapshot?.attempt,
+          maxAttempts: snapshot?.maxAttempts,
+          offline: snapshot?.offline
+        });
+      },
+      {
+        signal: uploadAbortController.signal,
+        completedObjects: uploadedObjects,
+        onFileUploaded: rememberUploadedObject,
+        onFileFailed: rememberFailedUploadFile,
+        pauseController: uploadPauseControllerRef.current,
+        continueOnFileError: true
+      }
+    )
+      .then((response) => {
+        uploadedObjects = mergeUploadedObjectReferences(uploadedObjects, response.directUploadFiles ?? []);
+        preuploadCompleted = failedUploadBuffer.length === 0;
         updateLocalImportDraft(targetProject.id, (draft) => ({
           ...draft,
-          uploadStatus: 'uploading',
-          uploadedObjects: mergeUploadedObjectReferences(draft.uploadedObjects, [uploaded])
+          uploadStatus: failedUploadBuffer.length ? 'paused' : 'completed',
+          uploadedObjects: mergeUploadedObjectReferences(draft.uploadedObjects, uploadedObjects)
         }));
-      };
-      const rememberFailedUploadFile = (failed: FailedUploadFile) => {
-        const entry: FailedUploadEntry = { ...failed, hdrItemId: '' };
-        failedUploadBuffer = [...failedUploadBuffer.filter((item) => item.fileIdentity !== failed.fileIdentity), entry];
-        setFailedUploadFiles(failedUploadBuffer);
-      };
-      const preuploadPromise = preuploadFiles(
-        targetProject.id,
-        supported,
-        (_percent, snapshot) => {
-          const percent = Math.max(1, Math.min(99, Math.round(snapshot?.percent ?? _percent)));
-          setUploadPercent(percent);
-          setUploadSnapshot({
-            stage: snapshot?.stage ?? 'uploading',
-            percent,
-            uploadedFiles: snapshot?.uploadedFiles ?? 0,
-            totalFiles: snapshot?.totalFiles ?? supported.length,
-            currentFileName: snapshot?.currentFileName,
-            attempt: snapshot?.attempt,
-            maxAttempts: snapshot?.maxAttempts,
-            offline: snapshot?.offline
-          });
-        },
-        {
-          signal: uploadAbortController.signal,
-          completedObjects: uploadedObjects,
-          onFileUploaded: rememberUploadedObject,
-          onFileFailed: rememberFailedUploadFile,
-          pauseController: uploadPauseControllerRef.current,
-          continueOnFileError: true
-        }
-      ).then((response) => {
-        uploadedObjects = mergeUploadedObjectReferences(uploadedObjects, response.directUploadFiles ?? []);
-        setUploadPercent(99);
+        setUploadPercent(100);
         setUploadSnapshot({
-          stage: 'finalizing',
-          percent: 99,
+          stage: 'completed',
+          percent: 100,
           uploadedFiles: supported.length,
           totalFiles: supported.length
         });
-        return response;
+        return uploadedObjects;
+      })
+      .catch((error) => {
+        preuploadCompleted = false;
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          setMessage(locale === 'en' ? 'Upload cancelled. Uploaded files were saved and can be resumed.' : '上传已取消，已上传的文件会保留记录，可继续上传。');
+        } else {
+          setMessage(getUserFacingErrorMessage(error, copy.uploadFailed, locale));
+        }
+        updateLocalImportDraft(targetProject.id, (draft) => ({
+          ...draft,
+          uploadStatus: 'paused',
+          uploadedObjects: mergeUploadedObjectReferences(draft.uploadedObjects, uploadedObjects)
+        }));
+        return uploadedObjects;
+      })
+      .finally(() => {
+        if (preuploadTasksRef.current[targetProject.id] === preuploadTask) {
+          delete preuploadTasksRef.current[targetProject.id];
+        }
+        if (uploadAbortControllerRef.current === uploadAbortController) {
+          uploadAbortControllerRef.current = null;
+        }
+        setUploadActive(false);
+        setUploadMode(null);
+        setUploadPercent(0);
+        setUploadSnapshot(null);
+        resetUploadPause();
       });
+    preuploadTasksRef.current[targetProject.id] = preuploadTask;
+    try {
       const importPromise = (async () => {
         await new Promise((resolve) => window.setTimeout(resolve, 650));
         const { buildLocalImportDraft } = await loadLocalImportModule();
         return buildLocalImportDraft(targetProject.id, supported);
       })();
-      const [nextDraft] = await Promise.all([importPromise, preuploadPromise]);
+      const nextDraft = await importPromise;
       const nextDraftWithUploads: LocalImportDraft = {
         ...nextDraft,
         uploadedObjects,
-        uploadStatus: failedUploadBuffer.length ? 'paused' : 'completed'
+        uploadStatus: failedUploadBuffer.length ? 'paused' : preuploadCompleted ? 'completed' : 'uploading'
       };
       const response = await patchProject(targetProject.id, { currentStep: 2, status: 'review' });
       upsertProject(response.project);
@@ -3084,7 +3121,7 @@ function App() {
         const mergedDraft: LocalImportDraft = {
           ...merged.draft,
           uploadedObjects: mergeUploadedObjectReferences(merged.draft.uploadedObjects, uploadedObjects),
-          uploadStatus: failedUploadBuffer.length ? 'paused' : 'completed'
+          uploadStatus: failedUploadBuffer.length ? 'paused' : preuploadCompleted ? 'completed' : 'uploading'
         };
         updateLocalImportDraft(targetProject.id, () => mergedDraft);
         merged.unusedObjectUrls.forEach((url) => URL.revokeObjectURL(url));
@@ -3110,19 +3147,14 @@ function App() {
         ].filter(Boolean);
         setMessage(notices.join(' '));
       }
-      setUploadActive(false);
-      setUploadMode(null);
-      setUploadPercent(0);
-      setUploadSnapshot(null);
     } catch (error) {
+      uploadAbortController.abort();
       setUploadActive(false);
       setUploadMode(null);
       setUploadPercent(0);
       setUploadSnapshot(null);
       setMessage(getUserFacingErrorMessage(error, copy.uploadFailed, locale));
     } finally {
-      uploadAbortControllerRef.current = null;
-      resetUploadPause();
       setBusy(false);
     }
   }
@@ -3516,6 +3548,13 @@ function App() {
           return;
         }
         let uploadedObjects = [...(activeLocalDraft.uploadedObjects ?? [])];
+        const backgroundPreupload = preuploadTasksRef.current[projectId];
+        if (backgroundPreupload) {
+          setUploadActive(true);
+          setUploadMode('originals');
+          setMessage(copy.uploadOriginalsDoNotClose);
+          uploadedObjects = mergeUploadedObjectReferences(uploadedObjects, await backgroundPreupload);
+        }
         const completedFileIdentities = new Set(
           uploadedObjects.map((uploaded) => getUploadReferenceIdentity(uploaded))
         );
@@ -6056,7 +6095,7 @@ function App() {
                                 className="solid-button small"
                                 type="button"
                                 onClick={() => void handleStartProcessing()}
-                                disabled={busy || uploadActive || !workspaceHdrItems.length}
+                                disabled={busy || !workspaceHdrItems.length}
                               >
                                 {showReviewUploadProgress ? copy.uploadOriginalsTitle : copy.confirmSend}
                               </button>

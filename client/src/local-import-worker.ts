@@ -501,7 +501,7 @@ self.addEventListener('message', (event: MessageEvent<ParseRequest>) => {
 
   void (async () => {
     try {
-      const PARSE_CONCURRENCY = 1;
+      const PARSE_CONCURRENCY = 2;
       const frames: ParsedFramePayload[] = [];
       let completed = 0;
       for (let start = 0; start < request.files.length; start += PARSE_CONCURRENCY) {
