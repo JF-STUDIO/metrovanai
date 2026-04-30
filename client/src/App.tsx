@@ -142,7 +142,7 @@ const MIN_RUNPOD_HDR_BATCH_SIZE = 10;
 const MAX_RUNNINGHUB_MAX_IN_FLIGHT = 200;
 const MIN_RUNNINGHUB_MAX_IN_FLIGHT = 1;
 const DEFAULT_RUNNINGHUB_MAX_IN_FLIGHT = 48;
-const LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY = 1;
+const LOCAL_HDR_GROUP_UPLOAD_CONCURRENCY = 4;
 const ADMIN_POINT_PRICE_USD = 0.25;
 const ADMIN_MAX_BATCH_CODES = 100;
 
@@ -2168,41 +2168,6 @@ function formatGroupSummary(groupCount: number, photoCount: number, locale: UiLo
     : `${groupCount} 组 / ${photoCount} 张照片`;
 }
 
-function formatUploadSpeed(bytesPerSecond: number) {
-  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '';
-  const megabytesPerSecond = bytesPerSecond / (1024 * 1024);
-  if (megabytesPerSecond >= 0.95) {
-    return `${megabytesPerSecond.toFixed(1)} MB/s`;
-  }
-  const kilobytesPerSecond = bytesPerSecond / 1024;
-  return `${Math.max(1, Math.round(kilobytesPerSecond))} KB/s`;
-}
-
-function formatUploadRemainingTime(seconds: number, copy: (typeof UI_TEXT)[UiLocale]) {
-  if (!Number.isFinite(seconds) || seconds < 0) return '';
-  const safeSeconds = Math.max(1, Math.ceil(seconds));
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  const remainingSeconds = safeSeconds % 60;
-  if (copy === UI_TEXT.en) {
-    if (hours > 0) return `${hours} hr ${minutes} min`;
-    if (minutes > 0) return `${minutes} min ${remainingSeconds} sec`;
-    return `${remainingSeconds} sec`;
-  }
-  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`;
-  if (minutes > 0) return `${minutes} 分 ${remainingSeconds} 秒`;
-  return `${remainingSeconds} 秒`;
-}
-
-function formatUploadTelemetryLabel(snapshot: UploadProgressSnapshot | null, copy: (typeof UI_TEXT)[UiLocale]) {
-  if (!snapshot?.bytesPerSecond || !snapshot.estimatedSecondsRemaining || snapshot.stage !== 'uploading') {
-    return '';
-  }
-  const speed = formatUploadSpeed(snapshot.bytesPerSecond);
-  const remaining = formatUploadRemainingTime(snapshot.estimatedSecondsRemaining, copy);
-  return speed && remaining ? copy.uploadSpeedEtaProgress(speed, remaining) : '';
-}
-
 function formatUploadProgressLabel(
   snapshot: UploadProgressSnapshot | null,
   fallbackPercent: number,
@@ -2212,46 +2177,7 @@ function formatUploadProgressLabel(
     return fallbackPercent > 0 ? copy.uploadProgress(fallbackPercent) : copy.uploadStarting;
   }
 
-  if (snapshot.stage === 'finalizing') {
-    return copy.uploadFinalizeProgress(snapshot.totalFiles);
-  }
-
-  if (snapshot.stage === 'completed') {
-    return copy.uploadFileProgress(snapshot.totalFiles, snapshot.totalFiles);
-  }
-
-  if (snapshot.stage === 'preparing') {
-    return copy.uploadPreparingProgress(snapshot.uploadedFiles, snapshot.totalFiles);
-  }
-
-  if (snapshot.stage === 'verifying') {
-    return copy.uploadVerifyingProgress(snapshot.uploadedFiles, snapshot.totalFiles);
-  }
-
-  if (snapshot.stage === 'retrying') {
-    return copy.uploadRetryProgress(
-      snapshot.currentFileName || '',
-      snapshot.attempt || 2,
-      snapshot.maxAttempts || 3,
-      snapshot.uploadedFiles,
-      snapshot.totalFiles
-    );
-  }
-
-  if (snapshot.stage === 'paused') {
-    const pausedLabel = snapshot.offline
-      ? copy === UI_TEXT.en
-        ? 'waiting for network'
-        : '等待网络恢复'
-      : copy === UI_TEXT.en
-        ? 'paused'
-        : '已暂停';
-    return `${copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles)} · ${pausedLabel}`;
-  }
-
-  const telemetryLabel = formatUploadTelemetryLabel(snapshot, copy);
-  const fileProgressLabel = copy.uploadFileProgress(snapshot.uploadedFiles, snapshot.totalFiles);
-  return telemetryLabel ? `${fileProgressLabel} · ${telemetryLabel}` : fileProgressLabel;
+  return copy.uploadOriginalsProgress(snapshot.percent ?? fallbackPercent);
 }
 
 function isHdrItemProcessing(status: HdrItem['status']) {
@@ -2980,7 +2906,7 @@ function App() {
       ? copy.processingGroupsTitle
     : currentProject?.job?.label || copy.waitingProcessing;
   const processingPanelDetail = showProcessingUploadProgress
-    ? `${uploadProgressLabel} · ${copy.uploadOriginalsDoNotClose}`
+    ? uploadProgressLabel
     : jobFailedWhileItemsActive
       ? copy.processingGroupsHint
     : currentProject?.job?.detail || copy.waitingProcessingHint;
@@ -3466,19 +3392,6 @@ function App() {
     setAdminActivationPackages(settings.billingPackages);
     setBillingPackages(settings.billingPackages);
     setAdminSystemLoaded(true);
-  }
-
-  function collectLocalDraftFiles(draft: LocalImportDraft) {
-    const filesByIdentity = new Map<string, File>();
-    for (const hdrItem of draft.hdrItems) {
-      for (const exposure of hdrItem.exposures) {
-        const key = normalizeFileIdentity(exposure.originalName || exposure.fileName);
-        if (!filesByIdentity.has(key)) {
-          filesByIdentity.set(key, exposure.file);
-        }
-      }
-    }
-    return Array.from(filesByIdentity.values());
   }
 
   function collectLocalHdrItemFiles(hdrItem: LocalHdrItemDraft) {
@@ -5790,7 +5703,6 @@ function App() {
         if (!retryUploadFileIdentity) {
           setFailedUploadFiles([]);
         }
-        const draftFiles = collectLocalDraftFiles(activeLocalDraft);
         const uploadHdrItems = retryUploadFileIdentity
           ? activeLocalDraft.hdrItems.filter((item) =>
               collectLocalHdrItemFiles(item).some((file) => getLocalFileUploadIdentity(file) === retryUploadFileIdentity)
@@ -5801,58 +5713,38 @@ function App() {
           setMessage(locale === 'en' ? 'That file is no longer in this project.' : '这个文件已不在当前项目里。');
           return;
         }
-        const uploadTotalFiles = Math.max(1, draftFiles.length);
         let uploadedObjects = [...(activeLocalDraft.uploadedObjects ?? [])];
         const completedFileIdentities = new Set(
           uploadedObjects.map((uploaded) => getUploadReferenceIdentity(uploaded))
         );
-        const inFlightGroupProgress = new Map<string, number>();
-        const inFlightGroupByteProgress = new Map<string, { uploadedBytes: number; bytesPerSecond: number; updatedAt: number }>();
-        const uploadTotalBytes = Math.max(1, draftFiles.reduce((sum, file) => sum + Math.max(1, file.size), 0));
-        const getConfirmedUploadedBytes = () =>
-          draftFiles.reduce(
-            (sum, file) =>
+        const uploadTotalGroups = Math.max(1, uploadHdrItems.length);
+        const isHdrItemUploaded = (hdrItem: LocalHdrItemDraft) => {
+          const groupFiles = collectLocalHdrItemFiles(hdrItem);
+          return (
+            groupFiles.length > 0 &&
+            groupFiles.every((file) =>
               completedFileIdentities.has(getUploadReferenceIdentity({ originalName: file.name, size: file.size }))
-                ? sum + Math.max(1, file.size)
-                : sum,
-            0
+            )
           );
+        };
+        const completedHdrItemIds = new Set(
+          uploadHdrItems.filter((hdrItem) => isHdrItemUploaded(hdrItem)).map((hdrItem) => hdrItem.id)
+        );
         const updateAggregateUploadProgress = (
           stage: UploadProgressSnapshot['stage'] = 'uploading',
           details: Pick<Partial<UploadProgressSnapshot>, 'currentFileName' | 'attempt' | 'maxAttempts' | 'offline'> = {}
         ) => {
-          const inFlightFiles = Array.from(inFlightGroupProgress.values()).reduce((sum, value) => sum + value, 0);
-          const uploadedFiles = Math.min(uploadTotalFiles, completedFileIdentities.size);
-          const progressFiles = Math.min(uploadTotalFiles, uploadedFiles + inFlightFiles);
-          const confirmedUploadedBytes = getConfirmedUploadedBytes();
-          const activeUploadedBytes = Array.from(inFlightGroupByteProgress.values()).reduce(
-            (sum, value) => sum + Math.max(0, value.uploadedBytes),
-            0
-          );
-          const uploadedBytes = Math.min(uploadTotalBytes, confirmedUploadedBytes + activeUploadedBytes);
-          const now = Date.now();
-          const bytesPerSecond = Array.from(inFlightGroupByteProgress.values()).reduce(
-            (sum, value) => sum + (now - value.updatedAt <= 6000 ? Math.max(0, value.bytesPerSecond) : 0),
-            0
-          );
-          const estimatedSecondsRemaining =
-            bytesPerSecond > 0 && stage === 'uploading'
-              ? Math.max(0, Math.ceil((uploadTotalBytes - uploadedBytes) / bytesPerSecond))
-              : undefined;
+          const uploadedGroups = Math.min(uploadTotalGroups, completedHdrItemIds.size);
           const percent =
             stage === 'completed'
               ? 100
-              : Math.max(1, Math.min(96, Math.round((progressFiles / uploadTotalFiles) * 96)));
+              : Math.max(1, Math.min(99, Math.round((uploadedGroups / uploadTotalGroups) * 100)));
           setUploadPercent(percent);
           setUploadSnapshot({
             stage,
             percent,
-            uploadedFiles,
-            totalFiles: uploadTotalFiles,
-            uploadedBytes,
-            totalBytes: uploadTotalBytes,
-            bytesPerSecond: bytesPerSecond > 0 ? bytesPerSecond : undefined,
-            estimatedSecondsRemaining,
+            uploadedFiles: uploadedGroups,
+            totalFiles: uploadTotalGroups,
             ...details
           });
         };
@@ -5875,12 +5767,13 @@ function App() {
         };
         setUploadActive(true);
         setUploadMode('originals');
-        setUploadPercent(1);
+        const initialUploadPercent = Math.max(1, Math.min(99, Math.round((completedHdrItemIds.size / uploadTotalGroups) * 100)));
+        setUploadPercent(initialUploadPercent);
         setUploadSnapshot({
           stage: 'preparing',
-          percent: 1,
-          uploadedFiles: 0,
-          totalFiles: draftFiles.length
+          percent: initialUploadPercent,
+          uploadedFiles: Math.min(uploadTotalGroups, completedHdrItemIds.size),
+          totalFiles: uploadTotalGroups
         });
         setMessage(copy.uploadOriginalsDoNotClose);
 
@@ -5922,25 +5815,6 @@ function App() {
             if (existingUploadsForRun.length < groupFiles.length) {
               try {
                 const uploadResponse = await uploadFiles(projectId, groupFiles, (_percent, snapshot) => {
-                  const uploadedInGroup = Math.min(
-                    groupFiles.length,
-                    snapshot?.uploadedFiles ?? Math.round(((_percent || 0) / 100) * groupFiles.length)
-                  );
-                  inFlightGroupProgress.set(hdrItem.id, uploadedInGroup);
-                  const groupTotalBytes = groupFiles.reduce((sum, file) => sum + Math.max(1, file.size), 0);
-                  const groupConfirmedBytes = groupFiles.reduce(
-                    (sum, file) =>
-                      completedFileIdentities.has(getUploadReferenceIdentity({ originalName: file.name, size: file.size }))
-                        ? sum + Math.max(1, file.size)
-                        : sum,
-                    0
-                  );
-                  const groupUploadedBytes = Math.min(groupTotalBytes, snapshot?.uploadedBytes ?? 0);
-                  inFlightGroupByteProgress.set(hdrItem.id, {
-                    uploadedBytes: Math.max(0, groupUploadedBytes - groupConfirmedBytes),
-                    bytesPerSecond: snapshot?.bytesPerSecond ?? 0,
-                    updatedAt: Date.now()
-                  });
                   const stage =
                     snapshot?.stage === 'paused' || snapshot?.stage === 'retrying' || snapshot?.stage === 'verifying'
                       ? snapshot.stage
@@ -5964,16 +5838,11 @@ function App() {
                   'directUploadFiles' in uploadResponse ? uploadResponse.directUploadFiles : getUploadedObjectsForFiles(uploadedObjects, groupFiles)
                 );
               } catch (error) {
-                inFlightGroupProgress.delete(hdrItem.id);
-                inFlightGroupByteProgress.delete(hdrItem.id);
                 if (error instanceof DOMException && error.name === 'AbortError') {
                   throw error;
                 }
                 updateAggregateUploadProgress('uploading');
                 continue;
-              } finally {
-                inFlightGroupProgress.delete(hdrItem.id);
-                inFlightGroupByteProgress.delete(hdrItem.id);
               }
             }
             if (retryUploadFileIdentity) {
@@ -5987,6 +5856,7 @@ function App() {
             for (const file of allGroupFiles) {
               completedFileIdentities.add(getUploadReferenceIdentity({ originalName: file.name, size: file.size }));
             }
+            completedHdrItemIds.add(hdrItem.id);
             updateAggregateUploadProgress('uploading');
 
             const layoutResponse = await applyHdrLayout(
@@ -6031,8 +5901,8 @@ function App() {
         setUploadSnapshot({
           stage: 'completed',
           percent: 100,
-          uploadedFiles: draftFiles.length,
-          totalFiles: draftFiles.length
+          uploadedFiles: uploadTotalGroups,
+          totalFiles: uploadTotalGroups
         });
         setMessage(copy.uploadOriginalsReceived);
         upsertProject(syncedProject);
@@ -8400,7 +8270,7 @@ function App() {
                       {!isDemoMode && (showReviewLocalImportProgress || showReviewUploadProgress) && (
                         <div className="review-upload-status" aria-live="polite">
                           <div>
-                            <strong>{showReviewLocalImportProgress ? copy.uploadStarting : copy.uploadOriginalsDoNotClose}</strong>
+                            <strong>{showReviewLocalImportProgress ? copy.uploadStarting : copy.uploadOriginalsTitle}</strong>
                             <span>
                               {uploadProgressLabel}
                             </span>
