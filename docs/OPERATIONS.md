@@ -17,6 +17,7 @@ The production monitor runs hourly and can also be started manually from GitHub 
 - database connectivity and metadata table access
 - R2 object storage list access
 - commercial readiness endpoints
+- strict CSP enforcement
 
 ## GitHub Secrets For Production Monitor
 

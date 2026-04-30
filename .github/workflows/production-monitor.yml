@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 15
     env:
       CI: "true"
+      METROVAN_CHECK_STRICT: "true"
       METROVAN_CHECK_FRONTEND_URL: https://metrovanai.com/
       METROVAN_CHECK_API_ROOT: https://api.metrovanai.com
       METROVAN_CHECK_ADMIN_KEY: ${{ secrets.METROVAN_CHECK_ADMIN_KEY }}
