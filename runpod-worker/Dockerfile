@@ -42,6 +42,15 @@ RUN lensfun-update-data || true \
   && command -v rawtherapee-cli \
   && rawtherapee-cli --version 2>&1 | grep -q "RawTherapee"
 
+RUN mkdir -p /root/.config/RawTherapee \
+  && printf '%s\n' \
+    '[General]' \
+    'Version=5.12' \
+    '' \
+    '[Raw Decoder]' \
+    'EnableLibRaw=true' \
+    > /root/.config/RawTherapee/options
+
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
