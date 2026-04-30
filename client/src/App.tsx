@@ -9,14 +9,19 @@ import { AdminRefundDialog } from './components/AdminRefundDialog';
 import { BillingPanel } from './components/BillingPanel';
 import { DeleteProjectConfirmDialog } from './components/DeleteProjectConfirmDialog';
 import { FeatureCreateDialog } from './components/FeatureCreateDialog';
+import { LocalImportReviewNotices } from './components/LocalImportReviewNotices';
 import { ProcessingStatusPanel } from './components/ProcessingStatusPanel';
 import { ProjectStepStrip } from './components/ProjectStepStrip';
 import { ProjectDownloadDialog } from './components/ProjectDownloadDialog';
 import { ProjectWorkspaceHeader } from './components/ProjectWorkspaceHeader';
 import { ResultEditorDialog } from './components/ResultEditorDialog';
+import { ResultsPanel } from './components/ResultsPanel';
+import { ReviewPanelHeader } from './components/ReviewPanelHeader';
+import { ReviewUploadStatus } from './components/ReviewUploadStatus';
 import { StudioFeatureLaunchPanel } from './components/StudioFeatureLaunchPanel';
 import { StudioHeader } from './components/StudioHeader';
 import { StudioGuideDialog } from './components/StudioGuideDialog';
+import { UploadDropzone } from './components/UploadDropzone';
 import { LandingPage } from './pages/LandingPage';
 import logoMark from './assets/metrovan-logo-mark.webp';
 import { isDemoModeEnabled } from './demo-mode';
@@ -146,7 +151,6 @@ import {
   createHdrItemFromExposure,
   filterSupportedImportFiles,
   formatGroupSummary,
-  formatPhotoCount,
   formatUploadProgressLabel,
   getAuthErrorMessage,
   getAuthFeedbackMessage,
@@ -4375,7 +4379,7 @@ function App() {
               刷新全部数据
             </button>
           </>
-        )}
+                )}
         <div className="kpi-grid">
           {kpi('注册用户', <>{adminTotals.users.toLocaleString()}<span className="unit">人</span></>, <><span>▲ 实时</span><span className="vs">后台用户</span></>)}
           {kpi('已支付营收', <>${paidOrderRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</>, <><span>▲ {paidOrders.length}</span><span className="vs">笔订单</span></>)}
@@ -5534,42 +5538,16 @@ function App() {
                 )}
 
                 {showUploadStepContent && !isDemoMode && (
-                  <section
-                    className={`panel upload-dropzone${dragActive ? ' drag-active' : ''}`}
-                    onDragEnter={(event) => {
-                      event.preventDefault();
-                      setDragActive(true);
-                    }}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDragLeave={(event) => {
-                      event.preventDefault();
-                      setDragActive(false);
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      void handleUpload(event.dataTransfer.files);
-                    }}
-                  >
-                    <div>
-                      <strong>{copy.uploadPhotos}</strong>
-                      <p>{copy.uploadPhotosHint}</p>
-                    </div>
-                    <div className="upload-actions">
-                      <button className="solid-button" type="button" onClick={triggerFilePicker}>
-                        {copy.selectPhotos}
-                      </button>
-                      {showUploadProgress && (
-                        <span className="meta-pill">{uploadProgressLabel}</span>
-                      )}
-                    </div>
-                    {showUploadProgress && (
-                      <div className="upload-progress-inline" aria-live="polite">
-                        <div className="upload-progress-bar">
-                          <span style={{ width: `${uploadProgressWidth}%` }} />
-                        </div>
-                      </div>
-                    )}
-                  </section>
+                  <UploadDropzone
+                    copy={copy}
+                    dragActive={dragActive}
+                    showUploadProgress={showUploadProgress}
+                    uploadProgressLabel={uploadProgressLabel}
+                    uploadProgressWidth={uploadProgressWidth}
+                    onDragActiveChange={setDragActive}
+                    onFiles={(files) => void handleUpload(files)}
+                    onTriggerFilePicker={triggerFilePicker}
+                  />
                 )}
 
                 {showReviewStepContent && (
@@ -5587,98 +5565,44 @@ function App() {
 
                     <section className="panel review-panel">
                       {!isDemoMode && (
-                        <div className="panel-head">
-                          <div>
-                            <strong>{showProcessingGroupGrid ? copy.processingGroupsTitle : copy.reviewGrouping}</strong>
-                            <span className="muted">{showProcessingGroupGrid ? copy.processingGroupsHint : copy.reviewGroupingHint}</span>
-                          </div>
-                          {showReviewActions && (
-                            <div className="review-actions">
-                              {showAdvancedGroupingControls && (
-                                <button className="ghost-button small" type="button" onClick={() => void handleCreateGroup()}>
-                                  {copy.createGroup}
-                                </button>
-                              )}
-                              <button
-                                className="ghost-button small"
-                                type="button"
-                                onClick={triggerFilePicker}
-                                disabled={busy || uploadActive}
-                              >
-                                {copy.addPhotos}
-                              </button>
-                              <button
-                                className="solid-button small"
-                                type="button"
-                                onClick={() => void handleStartProcessing()}
-                                disabled={busy || !workspaceHdrItems.length}
-                              >
-                                {showReviewUploadProgress ? copy.uploadOriginalsTitle : copy.confirmSend}
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                        <ReviewPanelHeader
+                          busy={busy}
+                          copy={copy}
+                          showAdvancedGroupingControls={showAdvancedGroupingControls}
+                          showProcessingGroupGrid={showProcessingGroupGrid}
+                          showReviewActions={showReviewActions}
+                          showReviewUploadProgress={showReviewUploadProgress}
+                          uploadActive={uploadActive}
+                          workspaceHdrItemCount={workspaceHdrItems.length}
+                          onAddPhotos={triggerFilePicker}
+                          onConfirmSend={() => void handleStartProcessing()}
+                          onCreateGroup={() => void handleCreateGroup()}
+                        />
                       )}
 
-                      {!isDemoMode && (showReviewLocalImportProgress || showReviewUploadProgress) && (
-                        <div className="review-upload-status" aria-live="polite">
-                          <div>
-                            <strong>{showReviewLocalImportProgress ? copy.uploadStarting : copy.uploadOriginalsTitle}</strong>
-                            <span>
-                              {uploadProgressLabel}
-                            </span>
-                          </div>
-                          <div className="upload-progress-bar">
-                            <span style={{ width: `${Math.max(6, uploadProgressWidth)}%` }} />
-                          </div>
-                          {showReviewUploadProgress && (
-                            <>
-                              <button className="ghost-button compact" type="button" onClick={uploadPaused ? handleResumeUpload : handlePauseUpload}>
-                                {uploadPaused ? (locale === 'en' ? 'Resume upload' : '继续上传') : (locale === 'en' ? 'Pause upload' : '暂停上传')}
-                              </button>
-                              <button className="ghost-button compact" type="button" onClick={handleCancelUpload}>
-                                {locale === 'en' ? 'Cancel upload' : '取消上传'}
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
-
-                      {!isDemoMode && failedUploadFiles.length > 0 && (
-                        <div className="review-upload-status" aria-live="polite">
-                          <div>
-                            <strong>{locale === 'en' ? 'Files waiting for retry' : '等待重试的文件'}</strong>
-                            <span>
-                              {locale === 'en' ? 'Retry one file at a time before processing starts.' : '处理开始前请逐个重试失败文件。'}
-                            </span>
-                          </div>
-                          {failedUploadFiles.map((file) => (
-                            <button
-                              key={file.fileIdentity}
-                              className="ghost-button compact"
-                              type="button"
-                              onClick={() => void handleStartProcessing({ retryUploadFileIdentity: file.fileIdentity })}
-                              disabled={busy}
-                            >
-                              {locale === 'en' ? `Retry ${file.fileName}` : `重试 ${file.fileName}`}
-                            </button>
-                          ))}
-                        </div>
+                      {!isDemoMode && (
+                        <ReviewUploadStatus
+                          busy={busy}
+                          copy={copy}
+                          failedUploadFiles={failedUploadFiles}
+                          locale={locale}
+                          showReviewLocalImportProgress={showReviewLocalImportProgress}
+                          showReviewUploadProgress={showReviewUploadProgress}
+                          uploadPaused={uploadPaused}
+                          uploadProgressLabel={uploadProgressLabel}
+                          uploadProgressWidth={uploadProgressWidth}
+                          onCancelUpload={handleCancelUpload}
+                          onPauseUpload={handlePauseUpload}
+                          onResumeUpload={handleResumeUpload}
+                          onRetryUploadFile={(fileIdentity) => void handleStartProcessing({ retryUploadFileIdentity: fileIdentity })}
+                        />
                       )}
 
                       {!isDemoMode && showLocalImportDiagnostics && localDraftDiagnostics && (
-                        <div className="local-import-review-notices" aria-live="polite">
-                          {localDraftDiagnostics.manualReviewCount > 0 && (
-                            <div className="local-import-notice manual-review">
-                              {copy.localImportManualReviewNotice(localDraftDiagnostics.manualReviewCount)}
-                            </div>
-                          )}
-                          {localDraftDiagnostics.previewMissingCount > 0 && (
-                            <div className="local-import-notice preview-missing">
-                              {copy.localImportPreviewMissingNotice(localDraftDiagnostics.previewMissingCount)}
-                            </div>
-                          )}
-                        </div>
+                        <LocalImportReviewNotices
+                          copy={copy}
+                          diagnostics={localDraftDiagnostics}
+                        />
                       )}
 
                       <div className="group-list">
@@ -5913,208 +5837,41 @@ function App() {
                 )}
 
                 {showResultsStepContent && (
-                  <section className="panel results-panel">
-                    <div className="panel-head">
-                      <div>
-                        <strong>{copy.results}</strong>
-                        <span className="muted">{copy.resultsHint}</span>
-                      </div>
-                      <div className="results-head-actions">
-                        <span className="meta-pill">{formatPhotoCount(currentProject.resultAssets.length, locale)}</span>
-                        {showRetryProcessingAction && (
-                          <button
-                            className="ghost-button compact"
-                            type="button"
-                            onClick={() => void handleStartProcessing({ retryFailed: true })}
-                            disabled={busy}
-                          >
-                            {copy.retryProcessing}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    {displayResultAssets.length ? (
-                      <div className={`result-grid${draggedResultHdrItemId ? ' is-reordering' : ''}`}>
-                        {displayResultAssets.map((asset, index) => {
-                          const previewUrl = resolveMediaUrl(resultThumbnailUrls[asset.id] ?? asset.previewUrl ?? asset.storageUrl);
-                          const regeneration = asset.regeneration;
-                          const isRegenerating = regeneration?.status === 'running' || Boolean(resultRegenerateBusy[asset.hdrItemId]);
-                          const selectedColorCard = getResultColorCard(asset);
-                          const normalizedSelectedColor = normalizeHex(selectedColorCard) ?? DEFAULT_REGENERATION_COLOR;
-                          return (
-                            <article
-                              key={asset.id}
-                              ref={(element) => {
-                                resultCardRefs.current[asset.hdrItemId] = element;
-                              }}
-                              role="button"
-                              tabIndex={0}
-                              draggable
-                              className={`result-card${draggedResultHdrItemId === asset.hdrItemId ? ' dragging' : ''}${
-                                dragOverResultHdrItemId === asset.hdrItemId ? ' drag-over' : ''
-                              }`}
-                              onClick={(event) => {
-                                if ((event.target as HTMLElement).closest('.result-regenerate-controls')) return;
-                                openViewer(index);
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault();
-                                  openViewer(index);
-                                }
-                              }}
-                              onDragStart={(event) => {
-                                event.dataTransfer.effectAllowed = 'move';
-                                event.dataTransfer.setData('text/plain', asset.hdrItemId);
-                                setDraggedResultHdrItemId(asset.hdrItemId);
-                                setResultDragPreview({
-                                  projectId: currentProject.id,
-                                  orderedHdrItemIds: currentProject.resultAssets.map((item) => item.hdrItemId)
-                                });
-                              }}
-                              onDragOver={(event) => {
-                                event.preventDefault();
-                                event.dataTransfer.dropEffect = 'move';
-                                if (dragOverResultHdrItemId !== asset.hdrItemId) {
-                                  if (draggedResultHdrItemId) {
-                                    previewResultReorder(draggedResultHdrItemId, asset.hdrItemId);
-                                  }
-                                  setDragOverResultHdrItemId(asset.hdrItemId);
-                                }
-                              }}
-                              onDragLeave={() => {
-                                if (dragOverResultHdrItemId === asset.hdrItemId) {
-                                  setDragOverResultHdrItemId(null);
-                                }
-                              }}
-                              onDragEnd={() => {
-                                setDraggedResultHdrItemId(null);
-                                setDragOverResultHdrItemId(null);
-                                setResultDragPreview(null);
-                              }}
-                              onDrop={(event) => {
-                                event.preventDefault();
-                                const sourceHdrItemId = draggedResultHdrItemId || event.dataTransfer.getData('text/plain');
-                                if (sourceHdrItemId) {
-                                  void handleReorderResults(sourceHdrItemId, asset.hdrItemId);
-                                }
-                              }}
-                            >
-                              <div className="result-frame">
-                                {previewUrl ? (
-                                  <img src={previewUrl} alt={asset.fileName} loading="lazy" decoding="async" />
-                                ) : (
-                                  <div className={`asset-empty${isDemoMode ? ' demo-asset-empty demo-result-empty' : ''}`}>{isDemoMode ? '' : copy.noPreview}</div>
-                                )}
-                                {!isDemoMode && (
-                                  <div
-                                    className="result-regenerate-controls"
-                                    onClick={(event) => event.stopPropagation()}
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                  >
-                                    <div className="result-card-selector">
-                                      <button
-                                        className="result-card-eyedropper"
-                                        type="button"
-                                        onClick={() => void handlePickResultColor(asset)}
-                                        disabled={isRegenerating}
-                                        title={copy.colorDropper}
-                                        aria-label={copy.colorDropper}
-                                      >
-                                        <span className="result-card-eyedropper-swatch" style={{ background: normalizedSelectedColor }} />
-                                        <svg className="result-card-eyedropper-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                          <path d="M14.8 4.2l5 5-2.1 2.1-1.1-1.1-6.5 6.5H7.8l-2.4 2.4-1.5-1.5 2.4-2.4v-2.3l6.5-6.5-1.1-1.1 2.1-2.1z" />
-                                          <path d="M8.4 14.8l5.7-5.7.8.8-5.7 5.7H8.4v-.8z" />
-                                        </svg>
-                                        <em>{copy.colorDropperCompact}</em>
-                                      </button>
-                                      <input
-                                        className="result-card-hex-input"
-                                        type="text"
-                                        inputMode="text"
-                                        value={selectedColorCard}
-                                        maxLength={7}
-                                        onChange={(event) =>
-                                          setResultColorCards((current) => ({
-                                            ...current,
-                                            [asset.hdrItemId]: normalizeHexDraft(event.target.value)
-                                          }))
-                                        }
-                                        onBlur={(event) => {
-                                          const normalized = normalizeHex(event.target.value);
-                                          if (normalized) {
-                                            setResultColorCards((current) => ({
-                                              ...current,
-                                              [asset.hdrItemId]: normalized
-                                            }));
-                                          }
-                                        }}
-                                        placeholder="#F2E8D8"
-                                        disabled={isRegenerating}
-                                      />
-                                      <button
-                                        className="result-regenerate-button"
-                                        type="button"
-                                        onClick={() => void handleRegenerateResult(asset)}
-                                        disabled={isRegenerating}
-                                        title={`${copy.regenerateResultHint} ${projectFreeRegenerationsRemaining}/${currentProjectRegenerationUsage.freeLimit}`}
-                                      >
-                                        {isRegenerating ? copy.regeneratingResult : copy.regenerateResultCompact}
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="result-body">
-                                <strong>{asset.fileName}</strong>
-                                <span>
-                                  {regeneration?.status === 'failed' && regeneration.errorMessage
-                                    ? `${copy.regenerateResultFailed}: ${regeneration.errorMessage}`
-                                    : copy.clickToView}
-                                </span>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="empty-state">
-                        <strong>{copy.noResults}</strong>
-                        <span>{copy.noResultsHint}</span>
-                      </div>
-                    )}
-                    {hasFailedResultHdrItems && (
-                      <div className="failed-results-block">
-                        <div className="panel-head compact">
-                          <div>
-                            <strong>{copy.hdrItemFailed}</strong>
-                            <span className="muted">{copy.retryProcessing}</span>
-                          </div>
-                        </div>
-                        <div className="result-grid failed-result-grid">
-                          {failedResultHdrItems.map((hdrItem) => {
-                            const previewUrl = getHdrPreviewUrl(hdrItem);
-                            const selectedExposure = getSelectedExposure(hdrItem);
-                            return (
-                              <article key={hdrItem.id} className="result-card failed-result-card">
-                                <div className="result-frame">
-                                  {previewUrl ? (
-                                    <img src={previewUrl} alt={selectedExposure?.originalName ?? hdrItem.title} loading="lazy" decoding="async" />
-                                  ) : (
-                                    <div className="asset-empty">{copy.noPreview}</div>
-                                  )}
-                                </div>
-                                <div className="result-body">
-                                  <strong>{selectedExposure?.originalName ?? hdrItem.title}</strong>
-                                  <span>{getHdrItemStatusLabel(hdrItem, locale)}</span>
-                                </div>
-                              </article>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </section>
+                  <ResultsPanel
+                    assets={displayResultAssets}
+                    busy={busy}
+                    copy={copy}
+                    currentProjectId={currentProject.id}
+                    currentProjectResultAssets={currentProject.resultAssets}
+                    dragOverResultHdrItemId={dragOverResultHdrItemId}
+                    draggedResultHdrItemId={draggedResultHdrItemId}
+                    failedResultHdrItems={failedResultHdrItems}
+                    isDemoMode={isDemoMode}
+                    locale={locale}
+                    projectFreeRegenerationsRemaining={projectFreeRegenerationsRemaining}
+                    regenerationFreeLimit={currentProjectRegenerationUsage.freeLimit}
+                    resultCardRefs={resultCardRefs}
+                    resultRegenerateBusy={resultRegenerateBusy}
+                    resultThumbnailUrls={resultThumbnailUrls}
+                    showRetryProcessingAction={showRetryProcessingAction}
+                    getResultColorCard={getResultColorCard}
+                    onOpenViewer={openViewer}
+                    onPickResultColor={(asset) => void handlePickResultColor(asset)}
+                    onPreviewResultReorder={previewResultReorder}
+                    onRegenerateResult={(asset) => void handleRegenerateResult(asset)}
+                    onReorderResults={(sourceHdrItemId, targetHdrItemId) => void handleReorderResults(sourceHdrItemId, targetHdrItemId)}
+                    onRetryProcessing={() => void handleStartProcessing({ retryFailed: true })}
+                    onSetDragOverResultHdrItemId={setDragOverResultHdrItemId}
+                    onSetDraggedResultHdrItemId={setDraggedResultHdrItemId}
+                    onSetResultColorCard={(hdrItemId, color) =>
+                      setResultColorCards((current) => ({
+                        ...current,
+                        [hdrItemId]: color
+                      }))
+                    }
+                    onSetResultDragPreview={setResultDragPreview}
+                    resolveMediaUrl={resolveMediaUrl}
+                  />
                 )}
               </>
             )}
