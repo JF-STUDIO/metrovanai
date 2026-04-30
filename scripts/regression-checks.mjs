@@ -42,34 +42,43 @@ assertIncludes(
 );
 
 assertIncludes(
-  'server/src/index.ts',
+  'server/src/routes/admin.ts',
   'idempotencyKey: `metrovan-refund-${order.id}`',
   'Admin Stripe refunds must use an idempotency key.'
 );
 
 assertIncludes(
-  'server/src/index.ts',
+  'server/src/routes/admin.ts',
   'adminRefundConfirmSchema',
   'Admin Stripe refunds must require a server-side confirmation payload.'
 );
 
 assertIncludes(
-  'server/src/index.ts',
+  'server/src/routes/admin.ts',
   'confirmOrderId',
   'Admin Stripe refund confirmation must include the order id.'
 );
 
 assertIncludes(
-  'server/src/index.ts',
+  'server/src/routes/admin.ts',
   'adminDeleteUserConfirmSchema',
   'Admin user deletion must require explicit server-side user confirmation.'
 );
 
 assertIncludes(
-  'server/src/index.ts',
+  'server/src/routes/admin.ts',
   'confirmUserId',
   'Admin destructive user actions must include the target user id.'
 );
+
+for (const routeFile of [
+  'server/src/routes/auth.ts',
+  'server/src/routes/billing.ts',
+  'server/src/routes/admin.ts',
+  'server/src/routes/projects.ts'
+]) {
+  assertIncludes(routeFile, 'express.Router()', `Route module must own an Express router: ${routeFile}`);
+}
 
 assertIncludes(
   'server/src/csrf.ts',

@@ -4,6 +4,8 @@ import { startTransition, useLayoutEffect } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import { AuthModal } from './components/AuthModal';
 import { AdminRefundDialog } from './components/AdminRefundDialog';
+import { BillingPanel } from './components/BillingPanel';
+import { StudioGuideDialog } from './components/StudioGuideDialog';
 import { LandingPage } from './pages/LandingPage';
 import logoMark from './assets/metrovan-logo-mark.webp';
 import { isDemoModeEnabled } from './demo-mode';
@@ -142,7 +144,6 @@ import {
   formatGroupSummary,
   formatPhotoCount,
   formatUploadProgressLabel,
-  formatUsd,
   getAuthErrorMessage,
   getAuthFeedbackMessage,
   getAvailableResultColorCards,
@@ -6464,310 +6465,53 @@ function App() {
         />
       </main>
 
-      {studioGuideOpen && activeStudioGuideStep && (
-        <div className="modal-backdrop studio-guide-backdrop" onClick={closeStudioGuide}>
-          <section className="studio-guide-card" onClick={(event) => event.stopPropagation()} aria-modal="true" role="dialog">
-            <div className="studio-guide-head">
-              <div>
-                <span>{copy.studioGuideStepCount(safeStudioGuideStep + 1, studioGuideSteps.length)}</span>
-                <strong>{copy.studioGuideTitle}</strong>
-                <p>{copy.studioGuideSubtitle}</p>
-              </div>
-              <button className="close-button" type="button" onClick={closeStudioGuide} aria-label={copy.close}>
-                ×
-              </button>
-            </div>
+      <StudioGuideDialog
+        copy={copy}
+        open={studioGuideOpen}
+        activeStep={activeStudioGuideStep}
+        safeStepIndex={safeStudioGuideStep}
+        steps={studioGuideSteps}
+        onClose={closeStudioGuide}
+        onDismiss={dismissStudioGuide}
+        onSelectStep={setStudioGuideStep}
+        onStepDelta={(delta) =>
+          setStudioGuideStep((current) =>
+            Math.max(0, Math.min(studioGuideSteps.length - 1, current + delta))
+          )
+        }
+      />
 
-            <div className="studio-guide-meter" aria-hidden="true">
-              <span style={{ width: `${((safeStudioGuideStep + 1) / studioGuideSteps.length) * 100}%` }} />
-            </div>
-
-            <div className="studio-guide-body">
-              <div className="studio-guide-step-number">{String(safeStudioGuideStep + 1).padStart(2, '0')}</div>
-              <div>
-                <h3>{activeStudioGuideStep.title}</h3>
-                <p>{activeStudioGuideStep.body}</p>
-              </div>
-            </div>
-
-            <div className="studio-guide-step-list" aria-label={copy.studioGuideTitle}>
-              {studioGuideSteps.map((step, index) => (
-                <button
-                  key={step.id}
-                  className={`studio-guide-step-pill${index === safeStudioGuideStep ? ' active' : ''}`}
-                  type="button"
-                  onClick={() => setStudioGuideStep(index)}
-                >
-                  <span>{index + 1}</span>
-                  <strong>{step.title}</strong>
-                </button>
-              ))}
-            </div>
-
-            <div className="studio-guide-actions">
-              <button className="ghost-button" type="button" onClick={dismissStudioGuide}>
-                {copy.studioGuideDontShow}
-              </button>
-              <div>
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={() => setStudioGuideStep((current) => Math.max(0, current - 1))}
-                  disabled={safeStudioGuideStep === 0}
-                >
-                  {copy.studioGuidePrev}
-                </button>
-                <button
-                  className="solid-button"
-                  type="button"
-                  onClick={() => {
-                    if (safeStudioGuideStep >= studioGuideSteps.length - 1) {
-                      closeStudioGuide();
-                      return;
-                    }
-                    setStudioGuideStep((current) => Math.min(studioGuideSteps.length - 1, current + 1));
-                  }}
-                >
-                  {safeStudioGuideStep >= studioGuideSteps.length - 1 ? copy.studioGuideDone : copy.studioGuideNext}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
-
-      {billingOpen && (
-        <div className="modal-backdrop" onClick={() => !billingBusy && setBillingOpen(false)}>
-          <div className="modal-card billing-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <strong>{billingModalMode === 'topup' ? copy.rechargeTitle : copy.billingTitle}</strong>
-                <span className="muted">{billingModalMode === 'topup' ? copy.rechargeHint : copy.billingHint}</span>
-              </div>
-              <button className="close-button" type="button" onClick={() => setBillingOpen(false)} disabled={billingBusy}>
-                ×
-              </button>
-            </div>
-
-            <div className="billing-summary-grid">
-              <article className="billing-stat-card">
-                <span>{copy.billingCurrentBalance}</span>
-                <strong>{billingSummary?.availablePoints ?? 0} pts</strong>
-              </article>
-              <article className="billing-stat-card">
-                <span>{copy.billingTopUpTotal}</span>
-                <strong>{formatUsd(billingSummary?.totalTopUpUsd ?? 0, locale)}</strong>
-              </article>
-              <article className="billing-stat-card">
-                <span>{copy.billingChargedTotal}</span>
-                <strong>{billingSummary?.totalChargedPoints ?? 0} pts</strong>
-              </article>
-            </div>
-
-            {billingModalMode === 'billing' && latestPaidStripeOrder && (
-              <div className="stripe-success-panel">
-                <div className="stripe-success-copy">
-                  <span className="stripe-badge">Stripe</span>
-                  <strong>{copy.stripePaymentSuccessTitle}</strong>
-                  <span>{copy.stripePaymentSuccessBody}</span>
-                  <em>
-                    {formatUsd(latestPaidStripeOrder.amountUsd, locale)} · {latestPaidStripeOrder.points} pts ·{' '}
-                    {formatDate(latestPaidStripeOrder.paidAt ?? latestPaidStripeOrder.createdAt, locale)}
-                  </em>
-                </div>
-                {renderStripeDocumentLinks(latestPaidStripeOrder)}
-              </div>
-            )}
-
-            <div className="billing-recharge-bar">
-              <div>
-                <strong>{copy.billingOpenRecharge}</strong>
-                <span className="muted">{copy.rechargeHint}</span>
-              </div>
-              <button className="solid-button small" type="button" onClick={openRecharge} disabled={billingBusy}>
-                {copy.billingOpenRecharge}
-              </button>
-            </div>
-
-            {billingModalMode === 'billing' && (
-              <div className="billing-entry-panel">
-                <div className="panel-head compact">
-                  <div>
-                    <strong>{copy.recentBilling}</strong>
-                    <span className="muted">{copy.recentBillingHint}</span>
-                  </div>
-                </div>
-                {billingEntries.length ? (
-                  <div className="billing-entry-list">
-                    {billingEntries.slice(0, 8).map((entry) => {
-                      const stripeOrder = billingOrders.find((order) => order.billingEntryId === entry.id && order.status === 'paid');
-                      return (
-                        <article key={entry.id} className="billing-entry-row">
-                          <div>
-                            <strong>{entry.note}</strong>
-                            <span>{formatDate(entry.createdAt, locale)}</span>
-                            {stripeOrder ? renderStripeDocumentLinks(stripeOrder, true) : null}
-                          </div>
-                          <div className={`billing-entry-amount ${entry.type === 'credit' ? 'credit' : 'charge'}`}>
-                            <strong>
-                              {entry.type === 'credit' ? '+' : '-'}
-                              {entry.points} pts
-                            </strong>
-                            <span>{formatUsd(entry.amountUsd, locale)}</span>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="empty-state billing-empty-state">
-                    <strong>{copy.noBilling}</strong>
-                    <span>{copy.noBillingHint}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button className="ghost-button" type="button" onClick={() => setBillingOpen(false)} disabled={billingBusy}>
-                {copy.close}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {rechargeOpen && (
-        <div
-          className="modal-backdrop"
-          onClick={() => {
-            if (billingBusy) {
-              return;
-            }
-            setRechargeOpen(false);
-            setRechargeMessage('');
-          }}
-        >
-          <div className="modal-card recharge-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <strong>{copy.rechargeTitle}</strong>
-                <span className="muted">{copy.rechargeHint}</span>
-              </div>
-              <button
-                className="close-button"
-                type="button"
-                onClick={() => {
-                  setRechargeOpen(false);
-                  setRechargeMessage('');
-                }}
-                disabled={billingBusy}
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="recharge-offer-panel recharge-compact-panel">
-              <label className="recharge-code-field">
-                <span>{copy.rechargeCouponLabel}</span>
-                <div className="recharge-inline-control">
-                  <input
-                    value={rechargeActivationCode}
-                    onChange={(event) => {
-                      setRechargeActivationCode(event.target.value.toUpperCase());
-                      if (rechargeMessage) {
-                        setRechargeMessage('');
-                      }
-                    }}
-                    placeholder={copy.rechargeCouponPlaceholder}
-                    disabled={billingBusy}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button
-                    className="ghost-button small"
-                    type="button"
-                    onClick={() => void handleRedeemActivationCode()}
-                    disabled={billingBusy || !rechargeActivationCode.trim()}
-                  >
-                    {billingBusy ? copy.authWorking : copy.rechargeRedeemCode}
-                  </button>
-                </div>
-              </label>
-              {rechargeMessage && <div className="auth-feedback settings-feedback">{rechargeMessage}</div>}
-            </div>
-
-            <div className={`recharge-custom-panel recharge-compact-panel${customRechargeIsActive ? ' active' : ''}`}>
-              <label className="recharge-code-field">
-                <span>{copy.rechargeCustomLabel}</span>
-                <div className="recharge-inline-control">
-                  <input
-                    value={customRechargeAmount}
-                    onChange={(event) => {
-                      setCustomRechargeAmount(event.target.value);
-                      if (rechargeMessage) {
-                        setRechargeMessage('');
-                      }
-                    }}
-                    placeholder={copy.rechargeCustomPlaceholder}
-                    disabled={billingBusy}
-                    inputMode="decimal"
-                  />
-                  <span className="recharge-inline-preview">
-                    {customRechargeAmountUsd ? `${customRechargePoints} pts` : copy.rechargeCustomTitle}
-                  </span>
-                </div>
-              </label>
-            </div>
-
-            <div className="billing-package-grid recharge-package-grid">
-              {billingPackages.map((billingPackage) => (
-                <button
-                  key={billingPackage.id}
-                  className={`billing-package-card recharge-package-card${!customRechargeIsActive && activeBillingPackageId === billingPackage.id ? ' active' : ''}`}
-                  type="button"
-                  onClick={() => {
-                    setCustomRechargeAmount('');
-                    setSelectedBillingPackageId(billingPackage.id);
-                  }}
-                  disabled={billingBusy}
-                >
-                  <div className="recharge-package-head">
-                    <span>{billingPackage.name}</span>
-                    <em>{copy.rechargeSave} {billingPackage.discountPercent}%</em>
-                  </div>
-                  <strong className="recharge-package-points">{billingPackage.points} pts</strong>
-                  <span className="recharge-package-price">{formatUsd(billingPackage.amountUsd, locale)}</span>
-                </button>
-              ))}
-            </div>
-
-            {(customRechargeIsActive || selectedBillingPackage) && (
-              <div className="recharge-summary-card recharge-compact-summary">
-                <div>
-                  <strong>{customRechargeIsActive ? copy.rechargeCustomSummary : selectedBillingPackage?.name}</strong>
-                  <span className="muted">
-                    {customRechargeIsActive
-                      ? customRechargeAmountUsd
-                        ? `${copy.rechargeYouPay} ${formatUsd(customRechargeAmountUsd, locale)} · ${copy.rechargeReceive} ${customRechargePoints} pts`
-                        : copy.rechargeCustomInvalid
-                      : `${copy.rechargeYouPay} ${formatUsd(selectedBillingPackage!.amountUsd, locale)} · ${copy.rechargeReceive} ${selectedBillingPackage!.points} pts`}
-                  </span>
-                  {rechargeActivationCode.trim() && <span className="muted">{copy.rechargeCouponLabel}: {rechargeActivationCode.trim()}</span>}
-                </div>
-                <button
-                  className="solid-button"
-                  type="button"
-                  onClick={() => void handleTopUp()}
-                  disabled={billingBusy || (customRechargeIsActive && customRechargeAmountUsd === null)}
-                >
-                  {billingBusy ? copy.authWorking : copy.rechargePayNow}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <BillingPanel
+        billingOpen={billingOpen}
+        billingBusy={billingBusy}
+        billingModalMode={billingModalMode}
+        copy={copy}
+        billingSummary={billingSummary}
+        locale={locale}
+        latestPaidStripeOrder={latestPaidStripeOrder}
+        renderStripeDocumentLinks={renderStripeDocumentLinks}
+        openRecharge={openRecharge}
+        billingEntries={billingEntries}
+        billingOrders={billingOrders}
+        setBillingOpen={setBillingOpen}
+        rechargeOpen={rechargeOpen}
+        setRechargeOpen={setRechargeOpen}
+        setRechargeMessage={setRechargeMessage}
+        rechargeActivationCode={rechargeActivationCode}
+        setRechargeActivationCode={setRechargeActivationCode}
+        rechargeMessage={rechargeMessage}
+        handleRedeemActivationCode={handleRedeemActivationCode}
+        customRechargeIsActive={customRechargeIsActive}
+        customRechargeAmount={customRechargeAmount}
+        setCustomRechargeAmount={setCustomRechargeAmount}
+        customRechargeAmountUsd={customRechargeAmountUsd}
+        customRechargePoints={customRechargePoints}
+        billingPackages={billingPackages}
+        activeBillingPackageId={activeBillingPackageId}
+        setSelectedBillingPackageId={setSelectedBillingPackageId}
+        selectedBillingPackage={selectedBillingPackage}
+        handleTopUp={handleTopUp}
+      />
 
       {settingsOpen && session && (
         <div className="modal-backdrop" onClick={() => !settingsBusy && setSettingsOpen(false)}>
