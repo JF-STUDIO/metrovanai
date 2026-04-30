@@ -32,6 +32,7 @@ const RAW_EXTENSIONS = new Set([
 const JPEG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 export const IMPORT_FILE_ACCEPT = [...RAW_EXTENSIONS, ...JPEG_EXTENSIONS].join(',');
 const MIN_EMBEDDED_JPEG_PREVIEW_BYTES = 8 * 1024;
+const RAW_METADATA_SCAN_BYTES = 32 * 1024 * 1024;
 const TIFF_TAG_NAMES = new Map<number, string>([
   [0x0100, 'ImageWidth'],
   [0x0101, 'ImageHeight'],
@@ -173,6 +174,15 @@ function createFileByteReader(file: File) {
   let bytesPromise: Promise<Uint8Array> | null = null;
   return () => {
     bytesPromise ??= file.arrayBuffer().then((buffer) => new Uint8Array(buffer));
+    return bytesPromise;
+  };
+}
+
+function createFileHeadByteReader(file: File, maxBytes = RAW_METADATA_SCAN_BYTES) {
+  let bytesPromise: Promise<Uint8Array> | null = null;
+  return () => {
+    const end = Math.min(file.size, maxBytes);
+    bytesPromise ??= file.slice(0, end).arrayBuffer().then((buffer) => new Uint8Array(buffer));
     return bytesPromise;
   };
 }
@@ -380,7 +390,7 @@ function parseEmbeddedTiffAt(bytes: Uint8Array, tiffOffset: number) {
   return Object.keys(metadata).length ? metadata : null;
 }
 
-async function parseEmbeddedRawMetadata(file: File, readBytes = createFileByteReader(file)) {
+async function parseEmbeddedRawMetadata(file: File, readBytes = createFileHeadByteReader(file)) {
   if (!isRawFile(file.name)) return null;
   const bytes = await readBytes();
   const candidates = findEmbeddedTiffOffsets(bytes)
@@ -627,7 +637,7 @@ async function parseGroupingFrame(file: File, previewMode: LocalImportPreviewMod
   }).catch(() => null)) as Record<string, unknown> | null;
   const metadata = hasUsableExifMetadata(exifrMetadata)
     ? exifrMetadata
-    : ((await parseEmbeddedRawMetadata(file, readBytes).catch(() => null)) as Record<string, unknown> | null);
+    : ((await parseEmbeddedRawMetadata(file, createFileHeadByteReader(file)).catch(() => null)) as Record<string, unknown> | null);
   const metadataState: LocalImportMetadataState = hasUsableExifMetadata(metadata) ? 'exif' : 'fallback';
 
   const previewUrl = previewMode === 'full' ? await createLocalPreviewUrl(file, readBytes) : null;

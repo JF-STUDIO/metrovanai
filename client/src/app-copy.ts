@@ -266,8 +266,8 @@ export const UI_TEXT = {
     uploadPhotosHint: '先在本地生成预览并自动分组，确认后再上传原图。',
     selectPhotos: '选择照片',
     addPhotos: '添加照片',
-    uploadStarting: '正在读取照片...',
-    uploadProgress: (value: number) => `导入 ${value}%`,
+    uploadStarting: '正在读取并分组照片...',
+    uploadProgress: (value: number) => `分组 ${value}%`,
     uploadPreparingProgress: (uploaded: number, total: number) =>
       uploaded > 0 ? `正在准备上传，已找到 ${uploaded}/${total} 张已上传文件` : `正在准备上传 ${total} 张，申请上传通道...`,
     uploadFileProgress: (uploaded: number, total: number) => `已上传 ${uploaded}/${total} 张`,
@@ -657,8 +657,8 @@ export const UI_TEXT = {
     uploadPhotosHint: 'Create local previews and automatic groups first, then upload the originals after confirmation.',
     selectPhotos: 'Select Photos',
     addPhotos: 'Add Photos',
-    uploadStarting: 'Reading photos...',
-    uploadProgress: (value: number) => `Importing ${value}%`,
+    uploadStarting: 'Reading and grouping photos...',
+    uploadProgress: (value: number) => `Grouping ${value}%`,
     uploadPreparingProgress: (uploaded: number, total: number) =>
       uploaded > 0 ? `Preparing upload; found ${uploaded}/${total} already uploaded` : `Preparing ${total} files and requesting upload slots...`,
     uploadFileProgress: (uploaded: number, total: number) => `Uploaded ${uploaded}/${total}`,
