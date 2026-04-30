@@ -1,4 +1,4 @@
-import type { PointerEvent as ReactPointerEvent, RefObject, WheelEvent as ReactWheelEvent } from 'react';
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent, type RefObject, type WheelEvent as ReactWheelEvent } from 'react';
 import {
   RESULT_EDITOR_ASPECT_RATIOS,
   RESULT_EDITOR_CONTROL_GROUPS,
@@ -97,6 +97,37 @@ export function ResultEditorDialog({
   onUpdateSettings,
   resolveMediaUrl
 }: ResultEditorDialogProps) {
+  const editorImageRef = useRef<HTMLImageElement | null>(null);
+  const cropFrameRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (aspectRatio) {
+      canvas.style.aspectRatio = aspectRatio;
+    } else {
+      canvas.style.removeProperty('aspect-ratio');
+    }
+  }, [aspectRatio, canvasRef]);
+
+  useEffect(() => {
+    const image = editorImageRef.current;
+    if (!image) return;
+    const imageStyle = buildResultEditorImageStyle(settings);
+    image.style.filter = imageStyle.filter;
+    image.style.transform = imageStyle.transform;
+  }, [settings]);
+
+  useEffect(() => {
+    const cropFrame = cropFrameRef.current;
+    if (!cropFrame) return;
+    const frameStyle = buildResultCropFrameStyle(settings);
+    cropFrame.style.left = frameStyle.left;
+    cropFrame.style.top = frameStyle.top;
+    cropFrame.style.width = frameStyle.width;
+    cropFrame.style.height = frameStyle.height;
+  }, [settings]);
+
   return (
     <div className="viewer-backdrop result-editor-backdrop" onClick={onClose}>
       <div className="result-editor-shell" onClick={(event) => event.stopPropagation()}>
@@ -133,7 +164,6 @@ export function ResultEditorDialog({
             <div
               className={`result-editor-canvas crop-adjustable${aspectRatio ? ' cropped' : ''}`}
               ref={canvasRef}
-              style={aspectRatio ? { aspectRatio } : undefined}
               onPointerDown={onStagePointerDown}
               onPointerMove={onStagePointerMove}
               onPointerUp={onStagePointerUp}
@@ -141,15 +171,15 @@ export function ResultEditorDialog({
               onWheel={onStageWheel}
             >
               <img
+                ref={editorImageRef}
                 src={resolveMediaUrl(asset.storageUrl)}
                 alt={asset.fileName}
-                style={buildResultEditorImageStyle(settings)}
                 decoding="async"
                 draggable={false}
               />
               <div
+                ref={cropFrameRef}
                 className="result-editor-crop-frame"
-                style={buildResultCropFrameStyle(settings)}
                 onPointerDown={(event) => onCropFrameDragStart(event, 'move')}
               >
                 <span className="result-editor-crop-grid" aria-hidden="true" />

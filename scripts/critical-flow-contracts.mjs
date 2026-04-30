@@ -23,6 +23,18 @@ function assertMatches(relativePath, pattern, message) {
   }
 }
 
+function listFiles(directory, predicate, output = []) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      listFiles(fullPath, predicate, output);
+    } else if (predicate(fullPath)) {
+      output.push(fullPath);
+    }
+  }
+  return output;
+}
+
 const routeContracts = [
   {
     file: 'server/src/routes/auth.ts',
@@ -116,6 +128,14 @@ assertIncludes(
   'METROVAN_STRICT_CSP',
   'CSP must expose a strict mode for removing style-src unsafe-inline after inline styles are migrated.'
 );
+
+for (const filePath of listFiles(path.join(repoRoot, 'client', 'src'), (file) => /\.(tsx?|jsx?)$/.test(file))) {
+  const relativePath = path.relative(repoRoot, filePath);
+  const source = fs.readFileSync(filePath, 'utf8');
+  if (/(?:\s|<)style=\{/.test(source) || /dangerouslySetInnerHTML/.test(source)) {
+    throw new Error(`Client source must stay compatible with strict CSP (${relativePath})`);
+  }
+}
 
 assertIncludes(
   'server/src/index.ts',

@@ -1,4 +1,3 @@
-import type { CSSProperties } from 'react';
 import { ApiRequestError, getApiRoot } from './api';
 import type { FailedUploadFile, StudioFeatureConfig, UploadProgressSnapshot } from './api';
 import { UI_TEXT, type UiLocale } from './app-copy';
@@ -1373,7 +1372,7 @@ export function getDefaultCropFrameForAspect(
   };
 }
 
-export function buildResultCropFrameStyle(settings: ResultEditorSettings): CSSProperties {
+export function buildResultCropFrameStyle(settings: ResultEditorSettings) {
   const frame = clampResultCropFrame(getResultCropFrame(settings));
   return {
     left: `${frame.x}%`,
@@ -1383,7 +1382,7 @@ export function buildResultCropFrameStyle(settings: ResultEditorSettings): CSSPr
   };
 }
 
-export function buildResultEditorImageStyle(settings: ResultEditorSettings): CSSProperties {
+export function buildResultEditorImageStyle(settings: ResultEditorSettings) {
   const signatureBoost = settings.style === 'signature' ? 1.04 : 1;
   const brightness =
     signatureBoost +
