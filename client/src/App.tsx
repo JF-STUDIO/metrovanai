@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import { AccountSettingsDialog } from './components/AccountSettingsDialog';
 import { AuthModal } from './components/AuthModal';
 import { AdminConsole } from './components/AdminConsole';
@@ -4292,16 +4292,7 @@ function App() {
     };
     const planToneClass = (index: number) => ['tag-gray', 'tag-cyan', 'tag-purple', 'tag-orange'][index % 4];
     const projectToneClass = (index: number) => `work-thumb work-thumb-${(index % 8) + 1}`;
-    const userAvatarStyle = (index: number): CSSProperties => {
-      const gradients = [
-        'linear-gradient(135deg,#c69aff,#7ce8ff)',
-        'linear-gradient(135deg,#7ce8ff,#5ce3a5)',
-        'linear-gradient(135deg,#ffc36b,#ff7a8a)',
-        'linear-gradient(135deg,#5ce3a5,#7ce8ff)',
-        'linear-gradient(135deg,#ff7a8a,#c69aff)'
-      ];
-      return { background: gradients[index % gradients.length] };
-    };
+    const userAvatarClass = (index: number) => `user-avatar user-avatar-${(index % 5) + 1}`;
     const renderAdminOrdersTable = (orders: PaymentOrderRecord[], compact = false) => (
       <div className="table-wrap">
         <table>
@@ -4323,7 +4314,7 @@ function App() {
                 <td className="cell-id">#{order.id}</td>
                 <td>
                   <div className="user-cell">
-                    <div className="user-avatar" style={userAvatarStyle(index)}>
+                    <div className={userAvatarClass(index)}>
                       {getAdminInitials(order.email)}
                     </div>
                     <div>
@@ -4545,7 +4536,7 @@ function App() {
                       <tr key={user.id}>
                         <td>
                           <div className="user-cell">
-                            <div className="user-avatar" style={userAvatarStyle(index)}>{getAdminInitials(user.displayName || user.email)}</div>
+                            <div className={userAvatarClass(index)}>{getAdminInitials(user.displayName || user.email)}</div>
                             <div>
                               <div className="name">{user.displayName}</div>
                               <div className="email">{user.email}</div>
@@ -5025,7 +5016,7 @@ function App() {
                     <td>
                       <div className="tbl-actions">
                         <button className="tbl-icon" type="button" title={item.active ? '停用' : '启用'} onClick={() => void handleAdminToggleActivationCode(item)} disabled={adminActivationBusy}>{item.active ? '⏸' : '▶'}</button>
-                        <button className="tbl-icon" type="button" title={item.redemptionCount > 0 ? '已兑换，无法删除' : '删除'} onClick={() => void handleAdminDeleteActivationCode(item)} disabled={adminActivationBusy || item.redemptionCount > 0} style={item.redemptionCount > 0 ? { opacity: 0.35, cursor: 'not-allowed' } : {}}>✕</button>
+                        <button className="tbl-icon" type="button" title={item.redemptionCount > 0 ? '已兑换，无法删除' : '删除'} onClick={() => void handleAdminDeleteActivationCode(item)} disabled={adminActivationBusy || item.redemptionCount > 0}>✕</button>
                       </div>
                     </td>
                   </tr>
@@ -5229,7 +5220,7 @@ function App() {
                   .map((entry, index) => (
                     <tr key={entry.id}>
                       <td className="cell-id">{formatAdminDate(entry.createdAt)}</td>
-                      <td><div className="user-cell"><div className="user-avatar" style={userAvatarStyle(index)}>{getAdminInitials(entry.actorEmail ?? entry.actorType)}</div><div><div className="name">{entry.actorEmail ?? entry.actorType}</div></div></div></td>
+                      <td><div className="user-cell"><div className={userAvatarClass(index)}>{getAdminInitials(entry.actorEmail ?? entry.actorType)}</div><div><div className="name">{entry.actorEmail ?? entry.actorType}</div></div></div></td>
                       <td><span className="tag tag-cyan">{entry.action.split('.')[0] || '系统'}</span></td>
                       <td>{entry.action}</td>
                       <td className="mono">{entry.targetUserId ?? entry.targetProjectId ?? '—'}</td>
@@ -5277,16 +5268,16 @@ function App() {
                 <div className="label-side"><div className="name">当前生效设置</div><div className="desc">最近从服务器读取的批量和并发值</div></div>
                 <div>
                   <span className="tag tag-cyan">{adminSystemSettings?.runpodHdrBatchSize ?? '未读取'} 组 / Runpod 批</span>
-                  <span className="tag tag-gray" style={{marginLeft: 8}}>{adminSystemSettings?.runningHubMaxInFlight ?? '未读取'} 张 / RunningHub 并发</span>
+                  <span className="tag tag-gray admin-inline-gap">{adminSystemSettings?.runningHubMaxInFlight ?? '未读取'} 张 / RunningHub 并发</span>
                 </div>
               </div>
               <div className="settings-row">
                 <div className="label-side"><div className="name">套餐数量</div><div className="desc">前台 Plans 页展示的充值档位数</div></div>
-                <div><span className="tag tag-gray">{adminSystemSettings?.billingPackages?.length ?? planPackages.length} 档</span> <button className="btn btn-ghost" type="button" onClick={() => setAdminConsolePage('plans')} style={{marginLeft: 8}}>管理套餐 →</button></div>
+                <div><span className="tag tag-gray">{adminSystemSettings?.billingPackages?.length ?? planPackages.length} 档</span> <button className="btn btn-ghost admin-inline-gap" type="button" onClick={() => setAdminConsolePage('plans')}>管理套餐 →</button></div>
               </div>
               <div className="settings-row">
                 <div className="label-side"><div className="name">功能卡片</div><div className="desc">前台 Studio 展示的 AI 功能卡片数</div></div>
-                <div><span className="tag tag-gray">{adminSystemSettings?.studioFeatures?.length ?? adminFeatureDrafts.length} 个</span> <button className="btn btn-ghost" type="button" onClick={() => setAdminConsolePage('content')} style={{marginLeft: 8}}>管理卡片 →</button></div>
+                <div><span className="tag tag-gray">{adminSystemSettings?.studioFeatures?.length ?? adminFeatureDrafts.length} 个</span> <button className="btn btn-ghost admin-inline-gap" type="button" onClick={() => setAdminConsolePage('content')}>管理卡片 →</button></div>
               </div>
             </div>
           </div>
@@ -5324,7 +5315,7 @@ function App() {
                 <div className="label-side"><div className="name">当前管理员账号</div><div className="desc">已登录的超级管理员</div></div>
                 <div>
                   <div className="name">{session?.displayName ?? '—'}</div>
-                  <div className="email" style={{color: 'var(--text-dim)', fontSize: 12}}>{session?.email ?? '—'}</div>
+                  <div className="email admin-account-email">{session?.email ?? '—'}</div>
                 </div>
               </div>
               <div className="settings-row">

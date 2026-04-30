@@ -1209,6 +1209,11 @@ export function getProjectProgress(project: ProjectRecord, uploadPercent: number
   return project.hdrItems.length ? 40 : 0;
 }
 
+export function getProgressWidthClass(value: number, minimum = 0) {
+  const clamped = Math.max(minimum, Math.min(100, Number.isFinite(value) ? value : 0));
+  return `progress-width-${Math.round(clamped / 5) * 5}`;
+}
+
 export function getMaxNavigableStep(project: ProjectRecord) {
   if (project.status === 'draft' || project.status === 'importing') return 1;
   if (project.status === 'review') return 2;

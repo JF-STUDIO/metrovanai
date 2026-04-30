@@ -1,5 +1,5 @@
 import type { UiLocale } from '../app-copy';
-import { getProjectProgress } from '../app-utils';
+import { getProgressWidthClass, getProjectProgress } from '../app-utils';
 import type { ProjectRecord } from '../types';
 
 interface ProcessingStatusPanelCopy {
@@ -79,7 +79,7 @@ export function ProcessingStatusPanel({
         )}
       </div>
       <div className="progress-bar">
-        <span style={{ width: `${getProjectProgress(project, uploadPercent)}%` }} />
+        <span className={getProgressWidthClass(getProjectProgress(project, uploadPercent))} />
       </div>
     </section>
   );

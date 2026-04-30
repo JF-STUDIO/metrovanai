@@ -201,7 +201,9 @@ export function ResultEditorDialog({
                   disabled={isRegenerating}
                   title={copy.colorDropper}
                 >
-                  <span style={{ background: normalizedColor }} />
+                  <svg className="result-editor-eyedropper-swatch" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="1" y="1" width="22" height="22" rx="5" fill={normalizedColor} />
+                  </svg>
                   <b>⌖</b>
                 </button>
                 <label>
@@ -227,7 +229,9 @@ export function ResultEditorDialog({
                   return (
                     <div className={`result-editor-color-card${isActive ? ' active' : ''}${card.source === 'saved' ? ' saved' : ''}`} key={card.id}>
                       <button type="button" onClick={() => onApplyColorCard(asset, card.color)}>
-                        <span style={{ background: card.color }} />
+                        <svg className="result-editor-color-card-swatch" viewBox="0 0 100 30" aria-hidden="true">
+                          <rect x="0" y="0" width="100" height="30" rx="6" fill={card.color} />
+                        </svg>
                         <strong>{card.label}</strong>
                         <em>{card.color}</em>
                       </button>

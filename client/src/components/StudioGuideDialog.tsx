@@ -1,3 +1,5 @@
+import { getProgressWidthClass } from '../app-utils';
+
 interface StudioGuideStep {
   id: string;
   title: string;
@@ -59,7 +61,7 @@ export function StudioGuideDialog({
         </div>
 
         <div className="studio-guide-meter" aria-hidden="true">
-          <span style={{ width: `${((safeStepIndex + 1) / steps.length) * 100}%` }} />
+          <span className={getProgressWidthClass(((safeStepIndex + 1) / steps.length) * 100)} />
         </div>
 
         <div className="studio-guide-body">

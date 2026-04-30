@@ -1,4 +1,5 @@
 import type { DragEvent } from 'react';
+import { getProgressWidthClass } from '../app-utils';
 
 interface UploadDropzoneCopy {
   selectPhotos: string;
@@ -59,7 +60,7 @@ export function UploadDropzone({
       {showUploadProgress && (
         <div className="upload-progress-inline" aria-live="polite">
           <div className="upload-progress-bar">
-            <span style={{ width: `${uploadProgressWidth}%` }} />
+            <span className={getProgressWidthClass(uploadProgressWidth)} />
           </div>
         </div>
       )}

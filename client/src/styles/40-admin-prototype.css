@@ -2489,6 +2489,26 @@
   font-weight: 700;
 }
 
+.admin-prototype .user-avatar-1 {
+  background: linear-gradient(135deg, #c69aff, #7ce8ff);
+}
+
+.admin-prototype .user-avatar-2 {
+  background: linear-gradient(135deg, #7ce8ff, #5ce3a5);
+}
+
+.admin-prototype .user-avatar-3 {
+  background: linear-gradient(135deg, #ffc36b, #ff7a8a);
+}
+
+.admin-prototype .user-avatar-4 {
+  background: linear-gradient(135deg, #5ce3a5, #7ce8ff);
+}
+
+.admin-prototype .user-avatar-5 {
+  background: linear-gradient(135deg, #ff7a8a, #c69aff);
+}
+
 .admin-prototype .user-cell .name {
   font-weight: 500;
 }
@@ -2563,6 +2583,20 @@
 .admin-prototype .tbl-icon:hover {
   background: rgba(124, 232, 255, 0.08);
   color: var(--accent);
+}
+
+.admin-prototype .tbl-icon:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.admin-prototype .admin-inline-gap {
+  margin-left: 8px;
+}
+
+.admin-prototype .admin-account-email {
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
 .admin-prototype .toolbar {

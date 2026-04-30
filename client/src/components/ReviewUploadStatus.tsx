@@ -1,4 +1,5 @@
 import type { UiLocale } from '../app-copy';
+import { getProgressWidthClass } from '../app-utils';
 
 interface FailedUploadRetryItem {
   fileIdentity: string;
@@ -50,7 +51,7 @@ export function ReviewUploadStatus({
             <span>{uploadProgressLabel}</span>
           </div>
           <div className="upload-progress-bar">
-            <span style={{ width: `${Math.max(6, uploadProgressWidth)}%` }} />
+            <span className={getProgressWidthClass(uploadProgressWidth, 5)} />
           </div>
           {showReviewUploadProgress && (
             <>

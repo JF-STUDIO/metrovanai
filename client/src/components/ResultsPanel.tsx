@@ -193,7 +193,9 @@ export function ResultsPanel({
                           title={copy.colorDropper}
                           aria-label={copy.colorDropper}
                         >
-                          <span className="result-card-eyedropper-swatch" style={{ background: normalizedSelectedColor }} />
+                          <svg className="result-card-eyedropper-swatch" viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="12" cy="12" r="11" fill={normalizedSelectedColor} />
+                          </svg>
                           <svg className="result-card-eyedropper-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M14.8 4.2l5 5-2.1 2.1-1.1-1.1-6.5 6.5H7.8l-2.4 2.4-1.5-1.5 2.4-2.4v-2.3l6.5-6.5-1.1-1.1 2.1-2.1z" />
                             <path d="M8.4 14.8l5.7-5.7.8.8-5.7 5.7H8.4v-.8z" />

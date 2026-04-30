@@ -53,3 +53,8 @@ pnpm --filter metrovan-ai-client build
 pnpm maintain:check
 pnpm check:commercial
 ```
+
+## Remaining Hardening
+
+- Remove remaining React inline styles, then enable `METROVAN_STRICT_CSP=true` on Render.
+- Keep `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` in GitHub workflows until all marketplace actions default to Node 24.
