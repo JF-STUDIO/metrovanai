@@ -27,7 +27,10 @@ RUN curl -L \
   && mkdir -p /opt/rawtherapee-5.12 \
   && cd /opt/rawtherapee-5.12 \
   && /tmp/RawTherapee_5.12_release.AppImage --appimage-extract \
-  && ln -sf /opt/rawtherapee-5.12/squashfs-root/usr/bin/rawtherapee-cli /usr/local/bin/rawtherapee-cli \
+  && printf '%s\n' '#!/bin/sh' \
+      'exec /opt/rawtherapee-5.12/squashfs-root/AppRun "$@"' \
+      > /usr/local/bin/rawtherapee-cli \
+  && chmod +x /usr/local/bin/rawtherapee-cli \
   && rm /tmp/RawTherapee_5.12_release.AppImage
 
 RUN lensfun-update-data || true \
