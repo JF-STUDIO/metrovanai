@@ -30,6 +30,14 @@ function uniqueSources(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
+function buildStyleSources() {
+  const sources = ["'self'", 'https://api.fontshare.com', 'https://fonts.googleapis.com'];
+  if (!isEnabledEnv('METROVAN_STRICT_CSP')) {
+    sources.splice(1, 0, "'unsafe-inline'");
+  }
+  return sources;
+}
+
 function buildContentSecurityPolicy(req: express.Request, shouldUseSecureCookies: (req: express.Request) => boolean) {
   const objectStorageOrigin = envOrigin('METROVAN_OBJECT_STORAGE_ENDPOINT');
   const appOrigin =
@@ -50,7 +58,7 @@ function buildContentSecurityPolicy(req: express.Request, shouldUseSecureCookies
   const directives: Record<string, string[]> = {
     'default-src': ["'self'"],
     'script-src': ["'self'"],
-    'style-src': ["'self'", "'unsafe-inline'", 'https://api.fontshare.com', 'https://fonts.googleapis.com'],
+    'style-src': buildStyleSources(),
     'img-src': ["'self'", 'data:', 'blob:', 'https:'],
     'font-src': ["'self'", 'data:', 'https://cdn.fontshare.com', 'https://fonts.gstatic.com'],
     'connect-src': connectSources,

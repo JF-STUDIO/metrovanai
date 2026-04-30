@@ -57,14 +57,23 @@ async function checkSecurityHeaders() {
       '';
     const frameOptions = response.headers.get('x-frame-options') || '';
     const contentTypeOptions = response.headers.get('x-content-type-options') || '';
+    const styleUnsafeInline = /(?:^|;)\s*style-src\s+[^;]*'unsafe-inline'/.test(csp);
     record('security_headers', Boolean(csp) && frameOptions.toUpperCase() === 'DENY' && contentTypeOptions === 'nosniff', {
       status: response.status,
       csp: Boolean(csp),
       xFrameOptions: frameOptions,
       xContentTypeOptions: contentTypeOptions
     });
+    record('strict_csp_ready', !styleUnsafeInline, {
+      status: response.status,
+      styleUnsafeInline,
+      note: styleUnsafeInline
+        ? 'style-src still allows unsafe-inline; enable METROVAN_STRICT_CSP after dynamic inline styles are migrated.'
+        : 'style-src does not allow unsafe-inline.'
+    });
   } catch (error) {
     record('security_headers', false, { error: error instanceof Error ? error.message : String(error) });
+    record('strict_csp_ready', false, { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
