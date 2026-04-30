@@ -75,7 +75,10 @@ for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',
   'server/src/routes/admin.ts',
-  'server/src/routes/projects.ts'
+  'server/src/routes/projects.ts',
+  'server/src/routes/project-downloads.ts',
+  'server/src/routes/project-results.ts',
+  'server/src/routes/project-uploads.ts'
 ]) {
   assertIncludes(routeFile, 'express.Router()', `Route module must own an Express router: ${routeFile}`);
 }
