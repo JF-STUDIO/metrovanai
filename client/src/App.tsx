@@ -7,9 +7,12 @@ import { AuthModal } from './components/AuthModal';
 import { AdminConsole } from './components/AdminConsole';
 import { AdminRefundDialog } from './components/AdminRefundDialog';
 import { BillingPanel } from './components/BillingPanel';
+import { DeleteProjectConfirmDialog } from './components/DeleteProjectConfirmDialog';
 import { FeatureCreateDialog } from './components/FeatureCreateDialog';
 import { ProjectDownloadDialog } from './components/ProjectDownloadDialog';
 import { ResultEditorDialog } from './components/ResultEditorDialog';
+import { StudioFeatureLaunchPanel } from './components/StudioFeatureLaunchPanel';
+import { StudioHeader } from './components/StudioHeader';
 import { StudioGuideDialog } from './components/StudioGuideDialog';
 import { LandingPage } from './pages/LandingPage';
 import logoMark from './assets/metrovan-logo-mark.webp';
@@ -139,7 +142,6 @@ import {
   createDemoProjects,
   createHdrItemFromExposure,
   filterSupportedImportFiles,
-  formatDate,
   formatGroupCount,
   formatGroupSummary,
   formatPhotoCount,
@@ -5450,172 +5452,45 @@ function App() {
     <>
       <main className={`studio-shell${isDemoMode ? ' demo-shell' : ''}`}>
         <div className="ambient-layer studio-ambient" />
-        <header className="studio-header">
-          <button className="brand-button" type="button" onClick={returnToStudioFeatureCards}>
-            <span className="studio-brand-mark-shell" aria-hidden="true">
-              <img className="studio-brand-mark" src={logoMark} alt="Metrovan AI" decoding="async" />
-            </span>
-            <span className="brand-copy">
-              <strong>{copy.studioLabel}</strong>
-              <em>{copy.studioSubLabel}</em>
-            </span>
-          </button>
-          <div className="header-actions">
-            <div className="points-pill">
-              <span className="points-pill-label">{copy.points}</span>
-              <strong className="points-pill-value">{isDemoMode ? '42.5' : billingSummary?.availablePoints ?? 0}</strong>
-              <button className="points-plus" type="button" aria-label={copy.topUp} onClick={() => void handleOpenBilling('topup')}>
-                {copy.billingOpenRecharge}
-              </button>
-            </div>
-            <div className="history-menu" ref={historyMenuRef}>
-              <button
-                className="history-menu-trigger"
-                type="button"
-                aria-haspopup="dialog"
-                aria-expanded={historyMenuOpen}
-                onClick={() => setHistoryMenuOpen((current) => !current)}
-              >
-                {copy.historyProjects}
-              </button>
-              {historyMenuOpen && (
-                <div className="history-menu-popover" role="dialog" aria-label={copy.historyProjects}>
-                  <div className="history-menu-head">
-                    <strong>{copy.historyProjects}</strong>
-                    <span>{isDemoMode ? copy.historyProjectsHintDemo : copy.historyProjectsHint}</span>
-                  </div>
-                  <div className="project-list compact-history-list">
-                    {visibleProjects.map((project) => (
-                      <article key={project.id} className={`project-tile${project.id === currentProjectId ? ' active' : ''}`}>
-                        <div className="project-tile-head">
-                          <div className="project-tile-heading-row">
-                            <strong>{project.name}</strong>
-                            <button className="text-link tile-rename-link" type="button" onClick={() => void handleRenameProject(project)}>
-                              {copy.rename}
-                            </button>
-                          </div>
-                          <span>{formatPhotoCount(project.photoCount, locale)} / {formatDate(project.createdAt, locale)}</span>
-                          <em>{getProjectStatusLabel(project, locale)}</em>
-                        </div>
-                        <div className="project-tile-actions">
-                          <button
-                            className="ghost-button compact"
-                            type="button"
-                            onClick={() => {
-                              setCurrentProjectId(project.id);
-                              setHistoryMenuOpen(false);
-                            }}
-                          >
-                            {copy.open}
-                          </button>
-                          <button
-                            className="ghost-button compact"
-                            type="button"
-                            disabled={!project.downloadReady}
-                            onClick={() => handleDownloadProject(project)}
-                          >
-                            {copy.download}
-                          </button>
-                          <button className="ghost-button compact" type="button" onClick={() => handleDeleteProject(project)}>
-                            {copy.delete}
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-
-                    {!visibleProjects.length && (
-                      <div className="empty-state">
-                        <strong>{copy.noProject}</strong>
-                        <span>{copy.noProjectHint}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="user-menu" ref={userMenuRef}>
-              <button
-                className="user-pill"
-                type="button"
-                aria-haspopup="menu"
-                aria-expanded={userMenuOpen}
-                onClick={() => setUserMenuOpen((current) => !current)}
-              >
-                <span className="avatar">{session.displayName.slice(0, 2).toUpperCase()}</span>
-                <span>{session.displayName}</span>
-                <span className="user-pill-chevron" aria-hidden="true">
-                  ▾
-                </span>
-              </button>
-              {userMenuOpen && (
-                <div className="user-menu-popover" role="menu">
-                  <button className="user-menu-item" type="button" role="menuitem" onClick={openSettings}>
-                    {copy.menuSettings}
-                  </button>
-                  <button className="user-menu-item" type="button" role="menuitem" onClick={() => void handleOpenBilling('billing')}>
-                    {copy.menuBilling}
-                  </button>
-                  <button className="user-menu-item danger" type="button" role="menuitem" onClick={() => void signOut()}>
-                    {copy.menuLogout}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
+        <StudioHeader
+          billingSummary={billingSummary}
+          copy={copy}
+          currentProjectId={currentProjectId}
+          historyMenuOpen={historyMenuOpen}
+          historyMenuRef={historyMenuRef}
+          isDemoMode={isDemoMode}
+          locale={locale}
+          logoMark={logoMark}
+          session={session}
+          userMenuOpen={userMenuOpen}
+          userMenuRef={userMenuRef}
+          visibleProjects={visibleProjects}
+          onDeleteProject={handleDeleteProject}
+          onDownloadProject={handleDownloadProject}
+          onOpenBilling={(mode) => void handleOpenBilling(mode)}
+          onOpenSettings={openSettings}
+          onRenameProject={(project) => void handleRenameProject(project)}
+          onReturnToStudioFeatureCards={returnToStudioFeatureCards}
+          onSelectProject={(projectId) => {
+            setCurrentProjectId(projectId);
+            setHistoryMenuOpen(false);
+          }}
+          onSetHistoryMenuOpen={setHistoryMenuOpen}
+          onSetUserMenuOpen={setUserMenuOpen}
+          onSignOut={() => void signOut()}
+        />
 
         {message && <div className="global-message">{message}</div>}
 
         <div className="studio-layout">
           <section className="workspace">
             {!currentProject ? (
-              <section className="feature-launch-panel">
-                <div className="feature-launch-head">
-                  <div>
-                    <p>选择最贴合您拍摄场景的修图功能。每张功能卡片对应一条经过调校的处理流程，所需积分实时显示。</p>
-                  </div>
-                </div>
-                <div className="feature-card-grid">
-                  {visibleStudioFeatures.map((feature) => {
-                    const locked = feature.status === 'locked';
-                    return (
-                      <button
-                        key={feature.id}
-                        className={`studio-feature-card tone-${feature.tone}${locked ? ' locked' : ''}`}
-                        type="button"
-                        onClick={() => openFeatureProjectDialog(feature)}
-                        disabled={locked}
-                      >
-                        <div className="studio-feature-visual">
-                          {feature.beforeImage && feature.afterImage ? (
-                            <>
-                              <img className="studio-feature-before" src={feature.beforeImage} alt="" loading="lazy" decoding="async" />
-                              <img className="studio-feature-after" src={feature.afterImage} alt="" loading="lazy" decoding="async" />
-                              <span className="studio-feature-scanline" aria-hidden="true" />
-                            </>
-                          ) : (
-                            <span className="studio-feature-gradient" aria-hidden="true" />
-                          )}
-                          <span className="studio-feature-tag">{feature.tag[locale]}</span>
-                          {locked && <span className="studio-feature-lock">建设中</span>}
-                        </div>
-                        <div className="studio-feature-body">
-                          <strong>{feature.title[locale]}</strong>
-                          <p>{feature.description[locale]}</p>
-                          <div className="studio-feature-meta">
-                            <em>{feature.pointLabel[locale]}</em>
-                            <span className="studio-feature-use">{locale === 'en' ? 'Use' : '去使用'}</span>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="feature-launch-note">
-                  <strong>{availableFeatureCount}</strong>
-                  <span>个功能可用，更多功能正在接入。</span>
-                </div>
-              </section>
+              <StudioFeatureLaunchPanel
+                availableFeatureCount={availableFeatureCount}
+                locale={locale}
+                visibleStudioFeatures={visibleStudioFeatures}
+                onOpenFeatureProjectDialog={openFeatureProjectDialog}
+              />
             ) : (
               <>
                 <section className="panel project-head-card">
@@ -6452,30 +6327,13 @@ function App() {
         />
       )}
       {projectToDelete && (
-        <div className="modal-backdrop delete-confirm-backdrop" onClick={() => setProjectToDelete(null)}>
-          <div className="modal-card delete-confirm-card" onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true" aria-labelledby="delete-confirm-title">
-            <div className="delete-confirm-icon" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14H6L5 6" />
-                <path d="M10 11v6M14 11v6" />
-                <path d="M9 6V4h6v2" />
-              </svg>
-            </div>
-            <strong id="delete-confirm-title" className="delete-confirm-title">
-              {locale === 'zh' ? '删除项目' : 'Delete Project'}
-            </strong>
-            <p className="delete-confirm-desc">{copy.deleteProjectConfirm(projectToDelete.name)}</p>
-            <div className="delete-confirm-actions">
-              <button className="ghost-button delete-confirm-cancel" type="button" onClick={() => setProjectToDelete(null)}>
-                {copy.cancel}
-              </button>
-              <button className="delete-confirm-btn" type="button" onClick={() => void handleConfirmDeleteProject()}>
-                {copy.delete}
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteProjectConfirmDialog
+          copy={copy}
+          locale={locale}
+          project={projectToDelete}
+          onCancel={() => setProjectToDelete(null)}
+          onConfirm={() => void handleConfirmDeleteProject()}
+        />
       )}
     </>
   );
