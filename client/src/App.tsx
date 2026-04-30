@@ -3,8 +3,10 @@ import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import { AuthModal } from './components/AuthModal';
+import { AdminRefundDialog } from './components/AdminRefundDialog';
 import { LandingPage } from './pages/LandingPage';
 import logoMark from './assets/metrovan-logo-mark.webp';
+import { isDemoModeEnabled } from './demo-mode';
 import type { LocalExposureDraft, LocalHdrItemDraft, LocalImportDraft } from './local-import';
 import { UI_TEXT, type UiLocale } from './app-copy';
 import {
@@ -207,7 +209,7 @@ import {
 } from './app-utils';
 
 function App() {
-  const isDemoMode = new URLSearchParams(window.location.search).get('demo') === '1';
+  const isDemoMode = isDemoModeEnabled();
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => getRouteFromPath());
   const [locale, setLocale] = useState<UiLocale>(getStoredLocale);
   const [session, setSession] = useState<SessionState | null>(() => {
@@ -1705,7 +1707,7 @@ function App() {
     setAdminRefundBusy(true);
     setAdminMessage('');
     try {
-      const response = await refundAdminOrder(adminRefundOrder.id);
+      const response = await refundAdminOrder(adminRefundOrder.id, { email: adminRefundOrder.email });
       setAdminOrders((current) => current.map((order) => (order.id === response.order.id ? response.order : order)));
       if (response.billing && response.order.userKey === session?.userKey) {
         syncBilling(response.billing);
@@ -1910,7 +1912,7 @@ function App() {
     setAdminActionBusy(true);
     setAdminMessage('');
     try {
-      const response = await deleteAdminUser(userId);
+      const response = await deleteAdminUser(userId, { email: confirmationText });
       setAdminUsers((current) => current.filter((user) => user.id !== response.deletedUserId));
       setAdminTotalUsers((current) => Math.max(0, current - 1));
       if (adminSelectedUser?.id === response.deletedUserId) {
@@ -5461,56 +5463,14 @@ function App() {
       }
 
       return (
-        <div className="modal-backdrop admin-refund-backdrop" onClick={closeAdminRefundDialog}>
-          <div className="modal-card admin-refund-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-            <div className="modal-head">
-              <div>
-                <strong>退款订单</strong>
-                <span className="muted">
-                  #{adminRefundOrder.id} · {adminRefundOrder.email}
-                </span>
-              </div>
-              <button className="close-button" type="button" onClick={closeAdminRefundDialog} disabled={adminRefundBusy}>
-                ×
-              </button>
-            </div>
-            <div className="admin-refund-grid">
-              <article>
-                <span>订单金额</span>
-                <strong>{formatUsd(adminRefundPreview.orderAmountUsd, locale)}</strong>
-              </article>
-              <article>
-                <span>到账积分</span>
-                <strong>{adminRefundPreview.creditedPoints.toLocaleString()} pts</strong>
-              </article>
-              <article>
-                <span>已消费积分</span>
-                <strong>{adminRefundPreview.consumedPoints.toLocaleString()} pts</strong>
-              </article>
-              <article>
-                <span>可退金额</span>
-                <strong>{formatUsd(adminRefundPreview.refundableAmountUsd, locale)}</strong>
-              </article>
-              <article>
-                <span>退款后余额</span>
-                <strong className={adminRefundPreview.balanceAfterRefund < 0 ? 'danger-text' : ''}>
-                  {adminRefundPreview.balanceAfterRefund.toLocaleString()} pts
-                </strong>
-              </article>
-            </div>
-            <p className="admin-refund-note">
-              确认后会先调用 Stripe Refund API。Stripe 返回成功后，系统再写入积分扣回流水；如果余额不足，会显示为负债并抵扣后续充值。
-            </p>
-            <div className="modal-actions">
-              <button className="btn btn-ghost" type="button" onClick={closeAdminRefundDialog} disabled={adminRefundBusy}>
-                取消
-              </button>
-              <button className="btn btn-primary" type="button" onClick={() => void handleAdminConfirmRefund()} disabled={adminRefundBusy}>
-                {adminRefundBusy ? '退款中...' : '确认 Stripe 退款并扣回积分'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AdminRefundDialog
+          order={adminRefundOrder}
+          preview={adminRefundPreview}
+          busy={adminRefundBusy}
+          locale={locale}
+          onClose={closeAdminRefundDialog}
+          onConfirm={() => void handleAdminConfirmRefund()}
+        />
       );
     };
 

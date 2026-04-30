@@ -897,10 +897,14 @@ export async function fetchAdminOrderRefundPreview(orderId: string) {
   );
 }
 
-export async function refundAdminOrder(orderId: string) {
+export async function refundAdminOrder(orderId: string, confirmation: { email: string }) {
   return await jsonRequest<AdminOrderRefundPayload>(`/api/admin/orders/${encodeURIComponent(orderId)}/refund`, {
     method: 'POST',
-    body: JSON.stringify({})
+    body: JSON.stringify({
+      confirm: true,
+      confirmOrderId: orderId,
+      confirmEmail: confirmation.email
+    })
   });
 }
 
@@ -938,7 +942,7 @@ export async function adjustAdminUserBilling(
     auditLogs: AdminAuditLogEntry[];
   }>(`/api/admin/users/${encodeURIComponent(userId)}/billing-adjustments`, {
     method: 'POST',
-    body: JSON.stringify({ ...input, confirm: true })
+    body: JSON.stringify({ ...input, confirm: true, confirmUserId: userId })
   });
 }
 
@@ -952,7 +956,7 @@ export async function logoutAdminUserSessions(userId: string) {
   );
 }
 
-export async function deleteAdminUser(userId: string) {
+export async function deleteAdminUser(userId: string, confirmation: { email: string }) {
   return await jsonRequest<{
     ok: true;
     deletedUserId: string;
@@ -969,7 +973,11 @@ export async function deleteAdminUser(userId: string) {
     archiveErrors: Array<{ projectId: string; error: string }>;
   }>(`/api/admin/users/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
-    body: JSON.stringify({ confirm: true })
+    body: JSON.stringify({
+      confirm: true,
+      confirmUserId: userId,
+      confirmEmail: confirmation.email
+    })
   });
 }
 

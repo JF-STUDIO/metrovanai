@@ -18,9 +18,20 @@ type LandingAuthMode = 'signin' | 'signup';
 export interface LandingPageCopy extends PlansPageCopy {
   home: string;
   plansNav: string;
+  examplesNav: string;
+  workflowNav: string;
+  faqNav: string;
   studioLabel: string;
   landingSignIn: string;
   landingStartProject: string;
+  landingViewExamples: string;
+  landingHeroBadge: string;
+  landingHeroTitle: string;
+  landingHeroAccent: string;
+  landingHeroSub: string;
+  landingTrustFast: string;
+  landingTrustColor: string;
+  landingTrustBilling: string;
 }
 
 interface LandingPageProps {
@@ -136,6 +147,14 @@ function ShowcaseStatusRow({ label, value }: { label: string; value: string }) {
 
 export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate, onOpenAuth }: LandingPageProps) {
   const landingVideoRef = useRef<HTMLVideoElement | null>(null);
+  const scrollToHomeSection = (sectionId: string) => {
+    if (activeRoute !== 'home') {
+      onNavigate('home');
+      window.setTimeout(() => document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+      return;
+    }
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   useEffect(() => {
     const video = landingVideoRef.current;
@@ -276,6 +295,15 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
           >
             {copy.plansNav}
           </button>
+          <button className="landing-home-link" type="button" onClick={() => scrollToHomeSection('examples')}>
+            {copy.examplesNav}
+          </button>
+          <button className="landing-home-link" type="button" onClick={() => scrollToHomeSection('workflow')}>
+            {copy.workflowNav}
+          </button>
+          <button className="landing-home-link" type="button" onClick={() => scrollToHomeSection('faq')}>
+            {copy.faqNav}
+          </button>
         </nav>
         <div className="landing-actions">
           <button
@@ -295,15 +323,20 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
           <section className="landing-hero restored-hero">
             <div className="hero-copy centered">
               <span className="hero-badge restored-badge">
-                <span className="hero-badge-pill">New</span>
-                <span>AI real estate image alchemy</span>
+                <span className="hero-badge-pill">AI</span>
+                <span>{copy.landingHeroBadge}</span>
               </span>
               <h1>
-                Real estate edits.
+                {copy.landingHeroTitle}
                 <br />
-                One clear <em>glow.</em>
+                <em>{copy.landingHeroAccent}</em>
               </h1>
-              <p>Keep wall colors consistent across every listing.</p>
+              <p>{copy.landingHeroSub}</p>
+              <div className="hero-trust-row" aria-label="Metrovan AI service highlights">
+                <span>{copy.landingTrustFast}</span>
+                <span>{copy.landingTrustColor}</span>
+                <span>{copy.landingTrustBilling}</span>
+              </div>
               <div className="hero-actions centered">
                 <button
                   className="solid-button large rounded-pill"
@@ -312,11 +345,14 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
                 >
                   {copy.landingStartProject}
                 </button>
+                <button className="ghost-button large rounded-pill" type="button" onClick={() => scrollToHomeSection('examples')}>
+                  {copy.landingViewExamples}
+                </button>
               </div>
             </div>
           </section>
 
-          <section className="showcase-section">
+          <section className="showcase-section" id="examples">
             <div className="showcase-stage showcase-stage-sci">
               <div className="showcase-sci-grid">
                 <article className="showcase-sci-main showcase-sci-shell">
@@ -369,7 +405,7 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
                     </figcaption>
                   </figure>
 
-                  <div className="showcase-sci-steps" aria-hidden="true">
+                  <div className="showcase-sci-steps" id="workflow" aria-hidden="true">
                     <article className="showcase-sci-step-card">
                       <span>01</span>
                       <div>
@@ -437,7 +473,7 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
             </div>
           </section>
 
-          <section className="quote-section">
+          <section className="quote-section" id="faq">
             <div className="quote-marks">"</div>
             <p className="quote-copy">
               Metrovan AI gives every listing a quiet cinematic finish. Rooms feel aligned, colors stay calm,

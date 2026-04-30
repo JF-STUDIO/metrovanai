@@ -14,19 +14,24 @@
 
 .landing-nav {
   max-width: 1420px;
-  min-height: 104px;
+  min-height: 82px;
   padding: 0.82rem 1.35rem;
 }
 
 .landing-brand-logo {
-  width: 104px !important;
-  height: 104px !important;
+  width: 76px !important;
+  height: 76px !important;
+  object-fit: contain;
 }
 
 .landing-home-link {
   font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0;
+}
+
+.landing-links {
+  gap: clamp(0.72rem, 1.8vw, 1.42rem);
 }
 
 .landing-actions .nav-signin {
@@ -69,10 +74,35 @@
 }
 
 .restored-hero .hero-copy p {
-  max-width: 34rem;
+  max-width: 46rem;
   font-size: 1.04rem;
   line-height: 1.7;
   color: rgba(255, 255, 255, 0.76);
+}
+
+.hero-trust-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.52rem;
+  max-width: 46rem;
+}
+
+.hero-trust-row span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.42rem 0.78rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.hero-actions.centered {
+  flex-wrap: wrap;
 }
 
 .rounded-pill {
@@ -330,13 +360,25 @@
 
 @media (max-width: 720px) {
   .landing-brand-logo {
-    width: 82px !important;
-    height: 82px !important;
+    width: 62px !important;
+    height: 62px !important;
   }
 
   .landing-nav {
     min-height: 82px;
     padding: 0.6rem 0.9rem;
+  }
+
+  .landing-links {
+    gap: 0.7rem;
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding: 0.2rem 0.1rem;
+    scrollbar-width: none;
+  }
+
+  .landing-links::-webkit-scrollbar {
+    display: none;
   }
 
   .restored-hero {
@@ -1151,4 +1193,3 @@
   color: inherit;
   cursor: pointer;
 }
-

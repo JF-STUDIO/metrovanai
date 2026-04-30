@@ -2,11 +2,9 @@ import './env.js';
 import express from 'express';
 import multer from 'multer';
 import { nanoid } from 'nanoid';
-import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import pg from 'pg';
 import { z } from 'zod';
 import {
   AUTH_COOKIE_NAME,
@@ -86,6 +84,7 @@ import {
 import { ProjectProcessor } from './processor.js';
 import { LocalStore } from './store.js';
 import { normalizeBillingPackages } from './billing-packages.js';
+import { getCsrfTokenFromRequest, isCsrfProtectedRequest, safeHashEqual } from './csrf.js';
 import { getEnabledStudioFeatures } from './studio-features.js';
 import type Stripe from 'stripe';
 import type {
@@ -105,9 +104,11 @@ import { createCorsMiddleware } from './middleware/cors.js';
 import { createHelmetMiddleware, createSecurityHeadersMiddleware } from './middleware/security-headers.js';
 import { traceIdMiddleware } from './middleware/trace-id.js';
 import { captureServerError, initServerObservability, logServerEvent } from './observability.js';
+import { createRateLimiter } from './rate-limit.js';
+import { getClientIp, getForwardedHeader } from './request-utils.js';
+import { assertCloudProductionRuntime, isLocalProxyUploadEnabled, isProductionRuntime } from './runtime-config.js';
 import { loadWorkflowConfig } from './workflows.js';
 
-const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..');
@@ -121,60 +122,6 @@ function isEnabledEnv(name: string) {
   return value === '1' || value === 'true' || value === 'yes';
 }
 
-function isProductionRuntime() {
-  return process.env.NODE_ENV === 'production' || isEnabledEnv('METROVAN_CLOUD_ONLY_MODE');
-}
-
-function assertCloudProductionRuntime() {
-  if (!isProductionRuntime() || isEnabledEnv('METROVAN_ALLOW_LOCAL_PRODUCTION')) {
-    return;
-  }
-
-  const missing: string[] = [];
-  const metadataProvider = String(process.env.METROVAN_METADATA_PROVIDER ?? '').trim().toLowerCase();
-  const taskExecutor = String(process.env.METROVAN_TASK_EXECUTOR ?? '').trim().toLowerCase();
-
-  if (!['postgres-json', 'supabase-postgres'].includes(metadataProvider)) {
-    missing.push('METROVAN_METADATA_PROVIDER=postgres-json');
-  }
-  if (!String(process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? '').trim()) {
-    missing.push('SUPABASE_DB_URL or DATABASE_URL');
-  }
-  if (!isEnabledEnv('METROVAN_DIRECT_UPLOAD_ENABLED')) {
-    missing.push('METROVAN_DIRECT_UPLOAD_ENABLED=true');
-  }
-
-  for (const key of [
-    'METROVAN_OBJECT_STORAGE_ENDPOINT',
-    'METROVAN_OBJECT_STORAGE_BUCKET',
-    'METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID',
-    'METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY'
-  ]) {
-    if (!String(process.env[key] ?? '').trim()) {
-      missing.push(key);
-    }
-  }
-
-  if (!['runpod-native', 'runpod-serverless'].includes(taskExecutor)) {
-    missing.push('METROVAN_TASK_EXECUTOR=runpod-native');
-  }
-  if (taskExecutor === 'runpod-native' || taskExecutor === 'runpod-serverless') {
-    for (const key of ['METROVAN_RUNPOD_ENDPOINT_ID', 'METROVAN_RUNPOD_API_KEY']) {
-      if (!String(process.env[key] ?? '').trim()) {
-        missing.push(key);
-      }
-    }
-  }
-
-  if (missing.length) {
-    throw new Error(`Cloud production configuration is incomplete: ${Array.from(new Set(missing)).join(', ')}`);
-  }
-}
-
-function isLocalProxyUploadEnabled() {
-  return !isProductionRuntime() || isEnabledEnv('METROVAN_LOCAL_PROXY_UPLOAD_ENABLED');
-}
-
 assertCloudProductionRuntime();
 await initServerObservability();
 const store = new LocalStore(repoRoot);
@@ -185,7 +132,6 @@ const POINT_PRICE_USD = 0.25;
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 60;
 const EMAIL_VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24;
 const TRASH_CLEANUP_INTERVAL_MS = 1000 * 60 * 60 * 6;
-const RATE_LIMIT_CLEANUP_INTERVAL_MS = 1000 * 60 * 10;
 const RESULT_THUMBNAIL_LONG_EDGE = 320;
 const RESULT_THUMBNAIL_URL_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
@@ -210,25 +156,7 @@ const trashCleanupTimer = setInterval(() => {
 }, TRASH_CLEANUP_INTERVAL_MS);
 trashCleanupTimer.unref?.();
 
-interface RateLimitBucket {
-  count: number;
-  resetAt: number;
-}
-
-const rateLimitBuckets = new Map<string, RateLimitBucket>();
-let externalRateLimitWarningLogged = false;
-let postgresRateLimitWarningLogged = false;
-let postgresRateLimitPool: pg.Pool | null | undefined;
-let postgresRateLimitTableReady: Promise<void> | null = null;
-const rateLimitCleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of rateLimitBuckets.entries()) {
-    if (bucket.resetAt <= now) {
-      rateLimitBuckets.delete(key);
-    }
-  }
-}, RATE_LIMIT_CLEANUP_INTERVAL_MS);
-rateLimitCleanupTimer.unref?.();
+const { checkRateLimit, checkUserRateLimit } = createRateLimiter();
 let resultRecoverySweepRunning = false;
 
 async function runResultRecoverySweep(source: 'startup' | 'timer' | 'admin') {
@@ -502,16 +430,6 @@ function addQueryParam(target: string, key: string, value: string) {
   }
 }
 
-function getForwardedHeader(value: string | string[] | undefined) {
-  if (Array.isArray(value)) {
-    return value[0] ?? '';
-  }
-  return String(value ?? '')
-    .split(',')
-    .map((part) => part.trim())
-    .find(Boolean) ?? '';
-}
-
 function getRawHeaderValue(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
     return value[0]?.trim() ?? '';
@@ -583,11 +501,6 @@ function buildPasswordResetUrl(req: express.Request, token: string) {
   return url.toString();
 }
 
-function getClientIp(req: express.Request) {
-  const forwardedFor = getForwardedHeader(req.headers['x-forwarded-for']);
-  return forwardedFor || req.ip || req.socket.remoteAddress || 'unknown';
-}
-
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
@@ -622,240 +535,6 @@ function checkDirectUploadTargetLimits(files: Array<{ size: number }>) {
     const maxGb = Math.floor(limits.maxBatchBytes / (1024 * 1024 * 1024));
     throw new Error(`This upload batch is too large. Keep each batch under ${maxGb} GB.`);
   }
-}
-
-function getExternalRateLimitConfig() {
-  const url = String(process.env.UPSTASH_REDIS_REST_URL ?? process.env.METROVAN_UPSTASH_REDIS_REST_URL ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  const token = String(process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.METROVAN_UPSTASH_REDIS_REST_TOKEN ?? '').trim();
-  return url && token ? { url, token } : null;
-}
-
-function getPostgresRateLimitDatabaseUrl() {
-  return String(
-    process.env.METROVAN_RATE_LIMIT_DATABASE_URL ??
-      process.env.SUPABASE_DB_URL ??
-      process.env.DATABASE_URL ??
-      process.env.POSTGRES_URL ??
-      ''
-  ).trim();
-}
-
-function getPostgresRateLimitTableName() {
-  const raw = String(process.env.METROVAN_RATE_LIMIT_TABLE ?? 'metrovan_rate_limits').trim();
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) ? raw : 'metrovan_rate_limits';
-}
-
-function getPostgresRateLimitPool() {
-  if (postgresRateLimitPool !== undefined) {
-    return postgresRateLimitPool;
-  }
-
-  const databaseUrl = getPostgresRateLimitDatabaseUrl();
-  if (!databaseUrl) {
-    postgresRateLimitPool = null;
-    return null;
-  }
-
-  const sslValue = (process.env.METROVAN_POSTGRES_SSL ?? process.env.SUPABASE_POSTGRES_SSL ?? 'true').trim().toLowerCase();
-  const useSsl = sslValue !== 'false' && sslValue !== '0' && sslValue !== 'no';
-  postgresRateLimitPool = new Pool({
-    connectionString: databaseUrl,
-    max: 2,
-    ssl: useSsl ? { rejectUnauthorized: false } : undefined
-  });
-  return postgresRateLimitPool;
-}
-
-async function ensurePostgresRateLimitTable(pool: pg.Pool) {
-  const tableName = getPostgresRateLimitTableName();
-  postgresRateLimitTableReady ??= pool.query(`
-    CREATE TABLE IF NOT EXISTS ${tableName} (
-      rate_key text PRIMARY KEY,
-      hit_count integer NOT NULL,
-      reset_at timestamptz NOT NULL,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )
-  `).then(() => undefined);
-  await postgresRateLimitTableReady;
-}
-
-async function getPostgresRateLimitBucket(key: string, windowMs: number) {
-  const pool = getPostgresRateLimitPool();
-  if (!pool) {
-    return null;
-  }
-
-  await ensurePostgresRateLimitTable(pool);
-  const resetAt = Date.now() + windowMs;
-  const tableName = getPostgresRateLimitTableName();
-  const response = await pool.query<{ hit_count: number; reset_at_ms: string | number | null }>(
-    `
-      INSERT INTO ${tableName} (rate_key, hit_count, reset_at, updated_at)
-      VALUES ($1, 1, to_timestamp($2::double precision / 1000.0), now())
-      ON CONFLICT (rate_key) DO UPDATE SET
-        hit_count = CASE
-          WHEN ${tableName}.reset_at <= now() THEN 1
-          ELSE ${tableName}.hit_count + 1
-        END,
-        reset_at = CASE
-          WHEN ${tableName}.reset_at <= now() THEN EXCLUDED.reset_at
-          ELSE ${tableName}.reset_at
-        END,
-        updated_at = now()
-      RETURNING hit_count, EXTRACT(EPOCH FROM reset_at) * 1000 AS reset_at_ms
-    `,
-    [key, resetAt]
-  );
-
-  const row = response.rows[0];
-  if (!row) {
-    return null;
-  }
-
-  const parsedResetAt = Number(row.reset_at_ms);
-  return {
-    count: Number(row.hit_count) || 1,
-    resetAt: Number.isFinite(parsedResetAt) ? parsedResetAt : resetAt
-  };
-}
-
-function getLocalRateLimitBucket(key: string, windowMs: number) {
-  const now = Date.now();
-  const existing = rateLimitBuckets.get(key);
-  const bucket: RateLimitBucket =
-    existing && existing.resetAt > now
-      ? existing
-      : {
-          count: 0,
-          resetAt: now + windowMs
-        };
-
-  bucket.count += 1;
-  rateLimitBuckets.set(key, bucket);
-  return bucket;
-}
-
-function normalizeUpstashPipelineResult(payload: unknown) {
-  return Array.isArray(payload) ? payload : [];
-}
-
-function readUpstashResultNumber(item: unknown) {
-  if (item && typeof item === 'object' && 'result' in item) {
-    const parsed = Number((item as { result?: unknown }).result);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  const parsed = Number(item);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-async function callUpstashPipeline(config: { url: string; token: string }, commands: unknown[][]) {
-  const response = await fetch(`${config.url}/pipeline`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(commands)
-  });
-  if (!response.ok) {
-    throw new Error(`Upstash rate limit request failed: ${response.status}`);
-  }
-  return normalizeUpstashPipelineResult(await response.json());
-}
-
-async function getExternalRateLimitBucket(key: string, windowMs: number) {
-  const config = getExternalRateLimitConfig();
-  if (!config) {
-    return null;
-  }
-
-  const redisKey = `metrovan:rate-limit:${key}`;
-  const firstResult = await callUpstashPipeline(config, [
-    ['INCR', redisKey],
-    ['PTTL', redisKey]
-  ]);
-  const count = readUpstashResultNumber(firstResult[0]) ?? 1;
-  let ttlMs = readUpstashResultNumber(firstResult[1]) ?? -1;
-  if (count === 1 || ttlMs < 0) {
-    const secondResult = await callUpstashPipeline(config, [
-      ['PEXPIRE', redisKey, windowMs],
-      ['PTTL', redisKey]
-    ]);
-    ttlMs = readUpstashResultNumber(secondResult[1]) ?? windowMs;
-  }
-
-  return {
-    count,
-    resetAt: Date.now() + Math.max(1, ttlMs)
-  };
-}
-
-async function getRateLimitBucket(key: string, windowMs: number) {
-  try {
-    const externalBucket = await getExternalRateLimitBucket(key, windowMs);
-    if (externalBucket) {
-      return externalBucket;
-    }
-  } catch (error) {
-    if (!externalRateLimitWarningLogged) {
-      externalRateLimitWarningLogged = true;
-      console.warn(
-        `External rate limit backend failed; falling back to in-memory limits: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  }
-
-  try {
-    const postgresBucket = await getPostgresRateLimitBucket(key, windowMs);
-    if (postgresBucket) {
-      return postgresBucket;
-    }
-  } catch (error) {
-    if (!postgresRateLimitWarningLogged) {
-      postgresRateLimitWarningLogged = true;
-      console.warn(
-        `Postgres rate limit backend failed; falling back to in-memory limits: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  }
-
-  return getLocalRateLimitBucket(key, windowMs);
-}
-
-async function checkRateLimit(
-  req: express.Request,
-  res: express.Response,
-  input: { scope: string; limit: number; windowMs: number; message?: string }
-) {
-  const key = `${input.scope}:${getClientIp(req)}`;
-  const bucket = await getRateLimitBucket(key, input.windowMs);
-  if (bucket.count <= input.limit) {
-    return true;
-  }
-
-  const now = Date.now();
-  const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
-  res.setHeader('Retry-After', String(retryAfterSeconds));
-  res.status(429).json({ error: input.message ?? 'Too many attempts. Please try again later.' });
-  return false;
-}
-
-async function checkUserRateLimit(
-  req: express.Request,
-  res: express.Response,
-  user: UserRecord,
-  input: { scope: string; limit: number; windowMs: number; message?: string }
-) {
-  return checkRateLimit(req, res, {
-    ...input,
-    scope: `${input.scope}:user:${user.userKey}`
-  });
 }
 
 async function sendVerificationForUser(req: express.Request, user: NonNullable<ReturnType<typeof store.getUserById>>) {
@@ -915,43 +594,10 @@ function requireAuthenticatedUser(req: express.Request, res: express.Response) {
   return auth.user;
 }
 
-function safeHashEqual(left: string, right: string) {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-  return timingSafeEqual(leftBuffer, rightBuffer);
-}
-
 function createCsrfTokenForSession(sessionId: string) {
   const token = createSessionToken();
   store.setSessionCsrfTokenHash(sessionId, hashSessionToken(token));
   return token;
-}
-
-function getCsrfTokenFromRequest(req: express.Request) {
-  const headerValue = req.headers['x-csrf-token'];
-  if (Array.isArray(headerValue)) {
-    return headerValue[0]?.trim() ?? '';
-  }
-  return typeof headerValue === 'string' ? headerValue.trim() : '';
-}
-
-function isCsrfProtectedRequest(req: express.Request) {
-  if (!req.path.startsWith('/api/')) {
-    return false;
-  }
-  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
-    return false;
-  }
-  if (req.path.startsWith('/api/auth/')) {
-    return false;
-  }
-  if (req.path === '/api/stripe/webhook') {
-    return false;
-  }
-  return true;
 }
 
 function requireValidCsrf(req: express.Request, res: express.Response, auth: AuthContext) {
@@ -2637,7 +2283,8 @@ const adminBillingAdjustmentSchema = z.object({
   type: z.enum(['credit', 'charge']),
   points: z.number().int().min(1).max(100000),
   note: z.string().trim().min(1).max(240),
-  confirm: z.literal(true)
+  confirm: z.literal(true),
+  confirmUserId: z.string().trim().min(1).max(120)
 });
 
 const adminBillingPackageSchema = z.object({
@@ -2691,6 +2338,14 @@ const adminSystemSettingsSchema = z.object({
 
 const adminConfirmSchema = z.object({
   confirm: z.literal(true)
+});
+const adminDeleteUserConfirmSchema = adminConfirmSchema.extend({
+  confirmUserId: z.string().trim().min(1).max(120),
+  confirmEmail: z.string().trim().email()
+});
+const adminRefundConfirmSchema = adminConfirmSchema.extend({
+  confirmOrderId: z.string().trim().min(1).max(120),
+  confirmEmail: z.string().trim().email()
 });
 
 function isSupportedUploadFileName(fileName: string) {
@@ -3528,6 +3183,12 @@ app.post('/api/admin/orders/:id/refund', async (req, res) => {
     return;
   }
 
+  const parsed = adminRefundConfirmSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
   if (!isStripeConfigured()) {
     res.status(503).json({ error: 'Stripe is not configured.' });
     return;
@@ -3537,6 +3198,10 @@ app.post('/api/admin/orders/:id/refund', async (req, res) => {
   const order = orderId ? store.getPaymentOrderById(orderId) : null;
   if (!order) {
     res.status(404).json({ error: '找不到该订单。' });
+    return;
+  }
+  if (parsed.data.confirmOrderId !== order.id || normalizeEmail(parsed.data.confirmEmail) !== normalizeEmail(order.email)) {
+    res.status(400).json({ error: '退款确认信息与订单不匹配。' });
     return;
   }
   if (!order.fulfilledAt || !order.billingEntryId || order.status !== 'paid') {
@@ -3564,6 +3229,8 @@ app.post('/api/admin/orders/:id/refund', async (req, res) => {
         userId: order.userId,
         userKey: order.userKey
       }
+    }, {
+      idempotencyKey: `metrovan-refund-${order.id}`
     });
 
     if (refund.status !== 'succeeded') {
@@ -3883,7 +3550,7 @@ app.delete('/api/admin/users/:id', async (req, res) => {
     return;
   }
 
-  const parsed = adminConfirmSchema.safeParse(req.body);
+  const parsed = adminDeleteUserConfirmSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
@@ -3897,6 +3564,10 @@ app.delete('/api/admin/users/:id', async (req, res) => {
 
   if (actor.actorUser?.id === user.id) {
     res.status(400).json({ error: '不能删除自己的管理员账号。' });
+    return;
+  }
+  if (parsed.data.confirmUserId !== user.id || normalizeEmail(parsed.data.confirmEmail) !== normalizeEmail(user.email)) {
+    res.status(400).json({ error: '删除确认信息与用户不匹配。' });
     return;
   }
 
@@ -3950,6 +3621,10 @@ app.post('/api/admin/users/:id/billing-adjustments', (req, res) => {
   const parsed = adminBillingAdjustmentSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  if (parsed.data.confirmUserId !== user.id) {
+    res.status(400).json({ error: '积分调整确认信息与用户不匹配。' });
     return;
   }
 

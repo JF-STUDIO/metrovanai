@@ -2,6 +2,7 @@ node_modules/
 dist/
 build/
 .DS_Store
+._*
 Thumbs.db
 server-runtime/
 tmp/
