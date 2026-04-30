@@ -100,6 +100,9 @@ COMMON_TOOL_PATHS = {
         "C:/Program Files/Hugin/bin/enfuse.exe",
         "C:/Program Files (x86)/Hugin/bin/enfuse.exe",
     ],
+    "METROVAN_RAWTHERAPEE_CLI": [
+        "C:/Program Files/RawTherapee/5.12/rawtherapee-cli.exe",
+    ],
 }
 
 
@@ -122,6 +125,7 @@ TOOLS = {
     "magick": find_tool("METROVAN_MAGICK", ["magick", "convert"]),
     "align": find_tool("METROVAN_ALIGN_IMAGE_STACK", ["align_image_stack"]),
     "enfuse": find_tool("METROVAN_ENFUSE", ["enfuse"]),
+    "rawtherapee": find_tool("METROVAN_RAWTHERAPEE_CLI", ["rawtherapee-cli"]),
 }
 
 
@@ -1085,6 +1089,114 @@ def render_raw_to_jpeg(
     image.save(destination, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
 
 
+def build_rawtherapee_profile(mode: str, resize_long_edge: int) -> str:
+    wb_setting = "Camera" if mode == "camera" else mode
+    return "\n".join(
+        [
+            "[Exposure]",
+            "Auto=false",
+            "HistogramMatching=true",
+            "",
+            "[HLRecovery]",
+            "Enabled=true",
+            "Method=Coloropp",
+            "",
+            "[LensProfile]",
+            "LcMode=none",
+            "UseDistortion=false",
+            "UseVignette=false",
+            "UseCA=false",
+            "",
+            "[RAW]",
+            "CA=true",
+            "",
+            "[White Balance]",
+            "Enabled=true",
+            f"Setting={wb_setting}",
+            "Temperature=5000",
+            "Green=1",
+            "Equal=1",
+            "TemperatureBias=0",
+            "StandardObserver=TWO_DEGREES",
+            "Itcwb_green=0",
+            "Itcwb_rangegreen=1",
+            "Itcwb_nopurple=false",
+            "Itcwb_alg=false",
+            "Itcwb_prim=beta",
+            "Itcwb_sampling=false",
+            "CompatibilityVersion=2",
+            "",
+            "[Color Management]",
+            "InputProfile=(cameraICC)",
+            "ToneCurve=true",
+            "ApplyLookTable=true",
+            "ApplyBaselineExposureOffset=true",
+            "ApplyHueSatMap=true",
+            "DCPIlluminant=0",
+            "WorkingProfile=ProPhoto",
+            "OutputProfile=RT_sRGB",
+            "OutputProfileIntent=Relative",
+            "OutputBPC=true",
+            "",
+            "[RAW Preprocess WB]",
+            "Mode=1",
+            "",
+            "[Resize]",
+            "Enabled=true",
+            "Scale=1",
+            "AppliesTo=Cropped area",
+            "Method=Lanczos",
+            "DataSpecified=3",
+            f"Width={resize_long_edge}",
+            f"Height={resize_long_edge}",
+            "AllowUpscaling=false",
+            "",
+        ]
+    )
+
+
+def render_single_raw_to_jpeg(
+    source: Path,
+    destination: Path,
+    quality: int,
+    resize_long_edge: int = HDR_LONG_EDGE,
+) -> None:
+    rawtherapee = TOOLS.get("rawtherapee") or ""
+    if not rawtherapee:
+        raise RuntimeError("RawTherapee CLI is required for single RAW rendering.")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="metrovan-rt-single-") as temp_root:
+        work_dir = Path(temp_root)
+        profile_path = work_dir / "single-autold.pp3"
+        rendered_path = work_dir / "single-rendered.jpg"
+        profile_path.write_text(build_rawtherapee_profile("autold", resize_long_edge), encoding="utf-8")
+        result = run_process(
+            rawtherapee,
+            [
+                "-q",
+                "-Y",
+                "-d",
+                "-p",
+                str(profile_path),
+                "-o",
+                str(rendered_path),
+                f"-j{max(1, min(100, round(quality)))}",
+                "-c",
+                str(source),
+            ],
+            work_dir,
+            timeout=300,
+        )
+        if result.returncode != 0 or not rendered_path.exists():
+            details = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"RawTherapee single RAW render failed: {details[:800]}")
+
+        image = Image.open(rendered_path).convert("RGB")
+        image = apply_lens_correction(image, source)
+        image.save(destination, quality=max(1, min(100, quality)), subsampling=0, optimize=True)
+
+
 def extract_raw_preview_to_jpeg(source: Path, destination: Path, quality: int, resize_long_edge: int | None = None) -> bool:
     exiftool = TOOLS["exiftool"]
     if not exiftool:
@@ -1120,16 +1232,7 @@ def resize_with_pillow(source: Path, destination: Path, quality: int, long_edge:
 
 def convert_to_jpeg(source: Path, destination: Path, quality: int, long_edge: int | None = None) -> None:
     if is_raw(source):
-        raw_user_wb = estimate_raw_rgb_grey_user_wb(source)
-        render_raw_to_jpeg(
-            source,
-            destination,
-            quality,
-            raw_user_wb,
-            long_edge or HDR_LONG_EDGE,
-            display_mode="single",
-            render_bright=1.0,
-        )
+        render_single_raw_to_jpeg(source, destination, quality, long_edge or HDR_LONG_EDGE)
         return
     resize_with_pillow(source, destination, quality, long_edge)
 
@@ -1620,16 +1723,7 @@ def process_default(input_payload: dict[str, Any], output_path: Path) -> None:
             exposure = normalized_exposures[0]
             source = source_paths[str(exposure.get("id"))]
             if is_raw(source):
-                raw_user_wb = estimate_raw_rgb_grey_user_wb(source)
-                render_raw_to_jpeg(
-                    source,
-                    output_path,
-                    95,
-                    raw_user_wb,
-                    HDR_LONG_EDGE,
-                    display_mode="single",
-                    render_bright=1.0,
-                )
+                render_single_raw_to_jpeg(source, output_path, 95, HDR_LONG_EDGE)
             else:
                 convert_to_jpeg(source, output_path, 95, HDR_LONG_EDGE)
             return
