@@ -1,0 +1,59 @@
+name: Production Monitor
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    name: Production health and readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: "true"
+      METROVAN_CHECK_FRONTEND_URL: https://metrovanai.com/
+      METROVAN_CHECK_API_ROOT: https://api.metrovanai.com
+      METROVAN_CHECK_ADMIN_KEY: ${{ secrets.METROVAN_CHECK_ADMIN_KEY }}
+      METROVAN_RENDER_PRODUCTION_SERVICE_ID: ${{ secrets.METROVAN_RENDER_PRODUCTION_SERVICE_ID }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+      METROVAN_METADATA_TABLE: ${{ secrets.METROVAN_METADATA_TABLE }}
+      METROVAN_METADATA_DOCUMENT_ID: ${{ secrets.METROVAN_METADATA_DOCUMENT_ID }}
+      METROVAN_POSTGRES_SSL: ${{ secrets.METROVAN_POSTGRES_SSL }}
+      METROVAN_OBJECT_STORAGE_ENDPOINT: ${{ secrets.METROVAN_OBJECT_STORAGE_ENDPOINT }}
+      METROVAN_OBJECT_STORAGE_BUCKET: ${{ secrets.METROVAN_OBJECT_STORAGE_BUCKET }}
+      METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID: ${{ secrets.METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID }}
+      METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY }}
+      METROVAN_OBJECT_STORAGE_REGION: ${{ secrets.METROVAN_OBJECT_STORAGE_REGION }}
+      METROVAN_OBJECT_STORAGE_FORCE_PATH_STYLE: ${{ secrets.METROVAN_OBJECT_STORAGE_FORCE_PATH_STYLE }}
+      METROVAN_OBJECT_STORAGE_INCOMING_PREFIX: ${{ secrets.METROVAN_OBJECT_STORAGE_INCOMING_PREFIX }}
+      METROVAN_OBJECT_STORAGE_PERSISTENT_PREFIX: ${{ secrets.METROVAN_OBJECT_STORAGE_PERSISTENT_PREFIX }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Production infrastructure checks
+        run: pnpm maintain:check
+
+      - name: Commercial readiness checks
+        run: pnpm check:commercial

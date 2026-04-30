@@ -229,7 +229,12 @@ async function checkR2() {
 
 async function main() {
   const loadedSecrets = loadEnvFile(secretFile);
-  record('local_secrets_file', loadedSecrets, { loaded: loadedSecrets, path: loadedSecrets ? '<configured>' : secretFile });
+  const ciEnvironment = process.env.CI === 'true';
+  record('local_secrets_file', loadedSecrets || ciEnvironment, {
+    loaded: loadedSecrets,
+    skipped: !loadedSecrets && ciEnvironment,
+    path: loadedSecrets ? '<configured>' : secretFile
+  });
   await checkUrl('frontend', frontendUrl, { method: 'HEAD' });
   await checkUrl('backend_health', `${apiRoot}/api/health`);
   await checkRender();

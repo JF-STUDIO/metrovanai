@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   verify:
-    name: Lint, build, and regression checks
+    name: Lint, build, and critical checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -32,8 +32,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Regression checks
-        run: pnpm test:regression
+      - name: Critical flow checks
+        run: pnpm test:critical
 
       - name: Client lint
         run: pnpm --filter metrovan-ai-client lint
