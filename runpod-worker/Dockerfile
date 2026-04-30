@@ -16,7 +16,6 @@ RUN apt-get update \
     libimage-exiftool-perl \
     liblensfun-bin \
     liblensfun-data-v1 \
-    rawtherapee \
   && rm -rf /var/lib/apt/lists/*
 
 RUN curl -L \
@@ -28,7 +27,10 @@ RUN curl -L \
   && cd /opt/rawtherapee-5.12 \
   && /tmp/RawTherapee_5.12_release.AppImage --appimage-extract \
   && printf '%s\n' '#!/bin/sh' \
-      'exec /opt/rawtherapee-5.12/squashfs-root/AppRun "$@"' \
+      'export APPDIR=/opt/rawtherapee-5.12/squashfs-root' \
+      'export PATH="$APPDIR/usr/bin:$PATH"' \
+      'export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu:$APPDIR/lib:$APPDIR/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"' \
+      'exec "$APPDIR/usr/bin/rawtherapee-cli" "$@"' \
       > /usr/local/bin/rawtherapee-cli \
   && chmod +x /usr/local/bin/rawtherapee-cli \
   && rm /tmp/RawTherapee_5.12_release.AppImage
@@ -38,7 +40,7 @@ RUN lensfun-update-data || true \
   && command -v enfuse \
   && command -v exiftool \
   && command -v rawtherapee-cli \
-  && rawtherapee-cli -v >/tmp/rawtherapee-version.txt 2>&1
+  && rawtherapee-cli --version 2>&1 | grep -q "RawTherapee"
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
