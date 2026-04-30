@@ -14,6 +14,24 @@ const frontendUrl = process.env.METROVAN_CHECK_FRONTEND_URL || 'https://metrovan
 const apiRoot = (process.env.METROVAN_CHECK_API_ROOT || 'https://api.metrovanai.com').replace(/\/+$/, '');
 const serverRequire = createRequire(path.join(repoRoot, 'server', 'package.json'));
 const results = [];
+const monitoredEnvNames = [
+  'METROVAN_RENDER_PRODUCTION_SERVICE_ID',
+  'RENDER_API_KEY',
+  'SUPABASE_DB_URL',
+  'DATABASE_URL',
+  'POSTGRES_URL',
+  'METROVAN_METADATA_TABLE',
+  'METROVAN_METADATA_DOCUMENT_ID',
+  'METROVAN_POSTGRES_SSL',
+  'METROVAN_OBJECT_STORAGE_ENDPOINT',
+  'METROVAN_OBJECT_STORAGE_BUCKET',
+  'METROVAN_OBJECT_STORAGE_ACCESS_KEY_ID',
+  'METROVAN_OBJECT_STORAGE_SECRET_ACCESS_KEY',
+  'METROVAN_OBJECT_STORAGE_REGION',
+  'METROVAN_OBJECT_STORAGE_FORCE_PATH_STYLE',
+  'METROVAN_OBJECT_STORAGE_INCOMING_PREFIX',
+  'METROVAN_OBJECT_STORAGE_PERSISTENT_PREFIX'
+];
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -45,6 +63,15 @@ function record(id, ok, details = {}) {
   const item = { id, ok, ...details };
   results.push(item);
   console.log(JSON.stringify(item));
+}
+
+function normalizeMonitoredEnv() {
+  for (const name of monitoredEnvNames) {
+    const value = process.env[name];
+    if (typeof value === 'string') {
+      process.env[name] = value.replace(/[\r\n]+$/g, '');
+    }
+  }
 }
 
 function redactError(error) {
@@ -229,6 +256,7 @@ async function checkR2() {
 
 async function main() {
   const loadedSecrets = loadEnvFile(secretFile);
+  normalizeMonitoredEnv();
   const ciEnvironment = process.env.CI === 'true';
   record('local_secrets_file', loadedSecrets || ciEnvironment, {
     loaded: loadedSecrets,
