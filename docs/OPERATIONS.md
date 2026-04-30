@@ -23,6 +23,7 @@ The production monitor runs hourly and can also be started manually from GitHub 
 Configure these repository secrets so the scheduled monitor can check the full stack:
 
 - `METROVAN_CHECK_ADMIN_KEY`
+- `METROVAN_ADMIN_READINESS_KEY` on the Render service, with the same value as `METROVAN_CHECK_ADMIN_KEY`
 - `METROVAN_RENDER_PRODUCTION_SERVICE_ID`
 - `RENDER_API_KEY`
 - `SUPABASE_DB_URL` or `DATABASE_URL` or `POSTGRES_URL`

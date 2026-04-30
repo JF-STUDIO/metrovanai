@@ -52,6 +52,7 @@ export function createAdminRouter(ctx: RouteContext) {
     parseAdminExpiresAt,
     processor,
     requireAdminApiAccess,
+    requireAdminReadinessAccess,
     sendPublicFeatureImageFile,
     store,
     syncStripeRefundToOrder,
@@ -109,7 +110,7 @@ app.get('/api/admin/audit-logs', (req, res) => {
 });
 
 app.get('/api/admin/readiness', (req, res) => {
-  if (!requireAdminApiAccess(req, res)) {
+  if (!requireAdminReadinessAccess(req, res)) {
     return;
   }
 

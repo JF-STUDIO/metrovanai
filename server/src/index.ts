@@ -867,6 +867,42 @@ function requireAdminApiAccess(req: express.Request, res: express.Response) {
   return null;
 }
 
+function getSingleHeaderValue(req: express.Request, name: string) {
+  const value = req.headers[name.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value[0]?.trim() ?? '';
+  }
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function hasValidAdminReadinessKey(req: express.Request) {
+  const configuredKey = String(process.env.METROVAN_ADMIN_READINESS_KEY ?? '').trim();
+  const submittedKey = getSingleHeaderValue(req, 'x-metrovan-admin-key');
+  if (configuredKey.length < 32 || submittedKey.length !== configuredKey.length) {
+    return false;
+  }
+  return safeHashEqual(submittedKey, configuredKey);
+}
+
+function requireAdminReadinessAccess(req: express.Request, res: express.Response) {
+  const auth = getAuthenticatedContext(req);
+  if (auth?.user && isAdminUser(auth.user)) {
+    return true;
+  }
+
+  if (auth?.user && !isAdminUser(auth.user)) {
+    res.status(403).json({ error: '需要管理员权限。' });
+    return false;
+  }
+
+  if (hasValidAdminReadinessKey(req)) {
+    return true;
+  }
+
+  res.status(401).json({ error: '需要管理员身份验证。' });
+  return false;
+}
+
 function writeAdminAuditLog(
   req: express.Request,
   actor: AdminAccessContext,
@@ -2770,6 +2806,7 @@ app.use(createAdminRouter({
   parseAdminExpiresAt,
   processor,
   requireAdminApiAccess,
+  requireAdminReadinessAccess,
   sendPublicFeatureImageFile,
   store,
   syncStripeRefundToOrder,

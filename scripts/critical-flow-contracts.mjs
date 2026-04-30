@@ -86,7 +86,9 @@ const routeContracts = [
       ['idempotencyKey: `metrovan-refund-${order.id}`', 'Stripe refunds must keep idempotency keys.'],
       ['writeAdminAuditLog', 'Admin refund actions must be audited.'],
       ['app.delete(\'/api/admin/users/:id\'', 'Admin user delete route must exist.'],
-      ['adminDeleteUserConfirmSchema.safeParse', 'Admin user delete must validate confirmation body.']
+      ['adminDeleteUserConfirmSchema.safeParse', 'Admin user delete must validate confirmation body.'],
+      ['app.get(\'/api/admin/readiness\'', 'Admin readiness route must exist.'],
+      ['requireAdminReadinessAccess', 'Admin readiness must support scoped monitor access without opening all admin routes.']
     ]
   }
 ];
@@ -113,6 +115,24 @@ assertIncludes(
   'server/src/middleware/security-headers.ts',
   'METROVAN_STRICT_CSP',
   'CSP must expose a strict mode for removing style-src unsafe-inline after inline styles are migrated.'
+);
+
+assertIncludes(
+  'server/src/index.ts',
+  'METROVAN_ADMIN_READINESS_KEY',
+  'Server must expose a dedicated admin readiness key for production monitoring.'
+);
+
+assertIncludes(
+  'server/src/index.ts',
+  'x-metrovan-admin-key',
+  'Server must read the same admin readiness header used by production monitoring.'
+);
+
+assertIncludes(
+  'scripts/check-commercial-readiness.mjs',
+  'METROVAN_CHECK_ADMIN_KEY',
+  'Commercial readiness check must support the production monitor admin key.'
 );
 
 assertIncludes(
