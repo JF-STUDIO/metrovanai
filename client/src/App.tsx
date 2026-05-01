@@ -691,6 +691,27 @@ function App() {
       ),
     [adminProjects]
   );
+  const adminPriorityProjects = useMemo(
+    () =>
+      adminProjects
+        .map((project) => {
+          const health = project.adminHealth;
+          const errorCount = health?.issues?.filter((issue) => issue.severity === 'error').length ?? 0;
+          const warningCount = health?.issues?.filter((issue) => issue.severity !== 'error').length ?? 0;
+          const failedDownload = health?.latestDownloadJob?.status === 'failed' ? 1 : 0;
+          const failedItems = health?.failedCount ?? project.hdrItems.filter((item) => item.status === 'error').length;
+          const stalled = health?.recommendedActions?.includes('mark-stalled-failed') ? 1 : 0;
+          const score = errorCount * 100 + failedItems * 25 + failedDownload * 20 + stalled * 30 + warningCount * 10;
+          return { project, score, errorCount, warningCount };
+        })
+        .filter((item) => item.score > 0)
+        .sort((left, right) => {
+          if (right.score !== left.score) return right.score - left.score;
+          return Date.parse(right.project.updatedAt) - Date.parse(left.project.updatedAt);
+        })
+        .slice(0, 5),
+    [adminProjects]
+  );
   const hasAdminSession = session?.role === 'admin' && session.accountStatus === 'active';
   const adminUserQuery = useMemo<AdminUserListQuery>(
     () => ({
@@ -4806,6 +4827,11 @@ function App() {
       if (action === 'deep-health') return '深度巡检';
       return action;
     };
+    const getAdminPriorityLabel = (score: number) => {
+      if (score >= 100) return '高优先级';
+      if (score >= 40) return '中优先级';
+      return '低优先级';
+    };
 
     const renderWorksPage = () => (
       <div className="page-content active">
@@ -4824,6 +4850,28 @@ function App() {
           {kpi('需检查', <>{adminProjectHealthCounts.attention}<span className="unit">项</span></>, <><span>失败/缺失/可疑</span><span className="vs">优先处理</span></>, adminProjectHealthCounts.attention ? 'down' : 'up')}
           {kpi('处理中', <>{adminProjectHealthCounts.processing}<span className="unit">项</span></>, <><span>队列</span><span className="vs">实时刷新</span></>)}
           {kpi('下载异常', <>{adminProjects.filter((project) => project.adminHealth?.latestDownloadJob?.status === 'failed').length}<span className="unit">项</span></>, <><span>最近任务</span><span className="vs">下载包</span></>, adminProjects.some((project) => project.adminHealth?.latestDownloadJob?.status === 'failed') ? 'down' : 'up')}
+        </div>
+        <div className="card admin-priority-queue">
+          <div className="admin-mini-head">
+            <strong>待处理队列</strong>
+            <span>{adminPriorityProjects.length ? `优先处理 ${adminPriorityProjects.length} 项` : '暂无异常'}</span>
+          </div>
+          {adminPriorityProjects.length ? (
+            <div className="admin-priority-list">
+              {adminPriorityProjects.map(({ project, score, errorCount, warningCount }) => (
+                <button className="admin-priority-row" type="button" key={project.id} onClick={() => void handleAdminSelectProject(project.id)}>
+                  <span className={score >= 100 ? 'tag tag-red' : score >= 40 ? 'tag tag-orange' : 'tag tag-gray'}>
+                    {getAdminPriorityLabel(score)}
+                  </span>
+                  <strong>{project.name}</strong>
+                  <small>{project.adminHealth?.rootCauseSummary ?? '需要检查项目状态。'}</small>
+                  <em>{errorCount} 错误 · {warningCount} 警告 · {formatAdminShortDate(project.updatedAt)}</em>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="admin-health-ok">当前载入项目没有需要优先处理的健康问题。</div>
+          )}
         </div>
         <div className="card">
           <div className="toolbar">

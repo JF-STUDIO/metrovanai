@@ -1252,6 +1252,11 @@
   .admin-live-grid {
     grid-template-columns: 1fr;
   }
+
+  .admin-priority-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
 }
 
 @media (max-width: 640px) {
@@ -2793,6 +2798,59 @@
 .admin-health-strip small {
   color: var(--text-mute);
   font-size: 11px;
+}
+
+.admin-priority-queue {
+  margin-bottom: 16px;
+}
+
+.admin-priority-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.admin-priority-row {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 0.75fr) minmax(220px, 1.5fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+  text-align: left;
+}
+
+.admin-priority-row:hover {
+  border-color: rgba(96, 189, 255, 0.28);
+  background: rgba(96, 189, 255, 0.06);
+}
+
+.admin-priority-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.admin-priority-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.admin-priority-row em {
+  color: var(--text-mute);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
 }
 
 .admin-health-panel {

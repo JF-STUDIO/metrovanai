@@ -312,6 +312,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'client/src/App.tsx',
+  '待处理队列',
+  'Admin works view must surface a prioritized issue queue.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  'adminPriorityProjects',
+  'Admin works view must compute prioritized projects from health diagnostics.'
+);
+
+assertIncludes(
   'scripts/maintenance-check.mjs',
   'checkApplicationData',
   'Maintenance automation must inspect production application data.'
