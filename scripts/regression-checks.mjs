@@ -336,6 +336,24 @@ assertIncludes(
 );
 
 assertIncludes(
+  'scripts/maintenance-check.mjs',
+  'buildApplicationPriorityQueue',
+  'Maintenance automation must compute prioritized project issues.'
+);
+
+assertIncludes(
+  'scripts/maintenance-check.mjs',
+  'Top project issues:',
+  'Maintenance alert email must include prioritized project issues.'
+);
+
+assertIncludes(
+  'scripts/maintenance-check.mjs',
+  'recommendedActionLabels',
+  'Maintenance report must include human-readable recommended actions.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'

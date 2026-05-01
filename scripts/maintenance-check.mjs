@@ -201,6 +201,147 @@ function hasRawJpegSidecarMix(exposures) {
   return Array.from(jpegStems).some((stem) => rawStems.has(stem));
 }
 
+function getProjectName(project) {
+  return String(project?.name || project?.address || project?.id || 'Untitled project');
+}
+
+function getRecommendedActionLabel(action) {
+  if (action === 'retry-failed-processing') return '重试失败照片';
+  if (action === 'regenerate-download') return '重新生成下载包';
+  if (action === 'mark-stalled-failed') return '标记卡住失败';
+  if (action === 'deep-health') return '深度巡检';
+  return action;
+}
+
+function buildApplicationPriorityQueue({ projects, failedItems, sidecarGroups, stalledProjects, recentFailedDownloads, creditMismatchProjects }) {
+  const byProject = new Map();
+  const ensure = (project) => {
+    const id = String(project?.id || '').trim();
+    if (!id) return null;
+    if (!byProject.has(id)) {
+      byProject.set(id, {
+        projectId: id,
+        projectName: getProjectName(project),
+        userKey: project.userKey ?? null,
+        updatedAt: project.updatedAt ?? null,
+        score: 0,
+        errorCount: 0,
+        warningCount: 0,
+        reasons: [],
+        recommendedActions: []
+      });
+    }
+    return byProject.get(id);
+  };
+  const addReason = (project, reason) => {
+    const entry = ensure(project);
+    if (!entry) return;
+    entry.score += reason.score;
+    if (reason.severity === 'error') entry.errorCount += 1;
+    else entry.warningCount += 1;
+    entry.reasons.push({
+      code: reason.code,
+      severity: reason.severity,
+      title: reason.title,
+      detail: reason.detail
+    });
+    if (reason.action && !entry.recommendedActions.includes(reason.action)) {
+      entry.recommendedActions.push(reason.action);
+    }
+  };
+
+  const failedByProject = new Map();
+  for (const { project } of failedItems) {
+    const id = String(project?.id || '');
+    failedByProject.set(id, (failedByProject.get(id) ?? 0) + 1);
+  }
+  for (const [projectId, count] of failedByProject.entries()) {
+    const project = projects.find((item) => item.id === projectId);
+    addReason(project, {
+      code: 'failed-processing-items',
+      severity: 'error',
+      title: '照片处理失败',
+      detail: `${count} 张失败照片没有结果图。`,
+      action: 'retry-failed-processing',
+      score: 100 + count * 25
+    });
+  }
+
+  const sidecarsByProject = new Map();
+  for (const { project } of sidecarGroups) {
+    const id = String(project?.id || '');
+    sidecarsByProject.set(id, (sidecarsByProject.get(id) ?? 0) + 1);
+  }
+  for (const [projectId, count] of sidecarsByProject.entries()) {
+    const project = projects.find((item) => item.id === projectId);
+    addReason(project, {
+      code: 'raw-jpeg-sidecar-groups',
+      severity: 'warning',
+      title: 'RAW/JPG 混组',
+      detail: `${count} 个 HDR 组混入同名 JPG 副本。`,
+      action: 'deep-health',
+      score: 10 + count * 5
+    });
+  }
+
+  const failedDownloadsByProject = new Map();
+  for (const job of recentFailedDownloads) {
+    const id = String(job?.projectId || '');
+    if (!id) continue;
+    const current = failedDownloadsByProject.get(id);
+    if (!current || Number(job.completedAt || job.createdAt || 0) > Number(current.completedAt || current.createdAt || 0)) {
+      failedDownloadsByProject.set(id, job);
+    }
+  }
+  for (const [projectId, job] of failedDownloadsByProject.entries()) {
+    const project = projects.find((item) => item.id === projectId);
+    addReason(project, {
+      code: 'recent-failed-downloads',
+      severity: 'warning',
+      title: '下载包生成失败',
+      detail: job.error ? `最近下载任务失败：${String(job.error).slice(0, 160)}` : '最近下载任务失败。',
+      action: 'regenerate-download',
+      score: 30
+    });
+  }
+
+  for (const project of stalledProjects) {
+    const minutes = Math.floor((Date.now() - Date.parse(project.updatedAt)) / 60000);
+    addReason(project, {
+      code: 'stalled-project',
+      severity: 'error',
+      title: '项目疑似卡住',
+      detail: `项目已 ${minutes} 分钟没有更新。`,
+      action: 'mark-stalled-failed',
+      score: 130
+    });
+  }
+
+  for (const project of creditMismatchProjects) {
+    addReason(project, {
+      code: 'credit-mismatch-project',
+      severity: 'warning',
+      title: '积分和结果数量不一致',
+      detail: `记录扣费 ${Number(project.pointsSpent ?? 0)}，完成结果 ${(project.hdrItems ?? []).filter(isCompletedHdrItem).length}。`,
+      action: 'deep-health',
+      score: 15
+    });
+  }
+
+  return Array.from(byProject.values())
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return Date.parse(right.updatedAt || '') - Date.parse(left.updatedAt || '');
+    })
+    .slice(0, 5)
+    .map((entry) => ({
+      ...entry,
+      priority: entry.score >= 100 ? 'high' : entry.score >= 40 ? 'medium' : 'low',
+      rootCauseSummary: entry.reasons[0]?.detail ?? '需要检查项目状态。',
+      recommendedActionLabels: entry.recommendedActions.map(getRecommendedActionLabel)
+    }));
+}
+
 async function checkApplicationData() {
   const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL;
   if (!connectionString) {
@@ -251,6 +392,14 @@ async function checkApplicationData() {
       recentFailedDownloads.length ? { code: 'recent-failed-downloads', value: recentFailedDownloads.length } : null,
       creditMismatchProjects.length ? { code: 'credit-mismatch-projects', value: creditMismatchProjects.length } : null
     ].filter(Boolean);
+    const priorityQueue = buildApplicationPriorityQueue({
+      projects,
+      failedItems,
+      sidecarGroups,
+      stalledProjects,
+      recentFailedDownloads,
+      creditMismatchProjects
+    });
 
     record('application_data', alerts.length === 0, {
       totals: {
@@ -263,7 +412,8 @@ async function checkApplicationData() {
         failedProjectIds: Array.from(new Set(failedItems.map(({ project }) => project.id))).slice(0, 10),
         stalledProjectIds: stalledProjects.slice(0, 10).map((project) => project.id),
         failedDownloadJobIds: recentFailedDownloads.slice(0, 10).map((job) => job.jobId)
-      }
+      },
+      priorityQueue
     });
   } catch (error) {
     record('application_data', false, { error: redactError(error) });
@@ -431,11 +581,21 @@ async function sendMaintenanceAlert(report, reportPath) {
     .filter((item) => !item.ok)
     .map((item) => `- ${item.id}: ${JSON.stringify(item).slice(0, 800)}`)
     .join('\n');
+  const applicationData = report.results.find((item) => item.id === 'application_data');
+  const priorityQueue = Array.isArray(applicationData?.priorityQueue) ? applicationData.priorityQueue : [];
+  const priorityLines = priorityQueue.length
+    ? priorityQueue
+        .map((item, index) => {
+          const actions = item.recommendedActionLabels?.length ? item.recommendedActionLabels.join(' / ') : '后台查看';
+          return `${index + 1}. [${item.priority}] ${item.projectName} (${item.projectId})\n   ${item.rootCauseSummary}\n   建议：${actions}`;
+        })
+        .join('\n')
+    : 'No prioritized project issues were found in the application data check.';
   await transporter.sendMail({
     from,
     to: recipients,
     subject: `[Metrovan AI] Maintenance alert (${report.failedCount})`,
-    text: `Metrovan AI automated maintenance found ${report.failedCount} failing check(s).\n\n${failedLines}\n\nReport: ${reportPath}\nCompleted: ${report.completedAt}`
+    text: `Metrovan AI automated maintenance found ${report.failedCount} failing check(s).\n\nTop project issues:\n${priorityLines}\n\nFailing checks:\n${failedLines}\n\nReport: ${reportPath}\nCompleted: ${report.completedAt}`
   });
   return { sent: true, recipients: recipients.length };
 }
