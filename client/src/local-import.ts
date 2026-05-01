@@ -69,16 +69,41 @@ export function isSupportedImportFile(file: File) {
 }
 
 export function filterSupportedImportFiles(files: File[]) {
-  const supported: File[] = [];
+  const supportedCandidates: File[] = [];
   const unsupported: File[] = [];
   for (const file of files) {
     if (isSupportedImportFile(file)) {
-      supported.push(file);
+      supportedCandidates.push(file);
     } else {
       unsupported.push(file);
     }
   }
-  return { supported, unsupported };
+  const rawFileKeys = new Set(supportedCandidates.filter((file) => isRawFile(file.name)).map(getRawSidecarKey));
+  const supported: File[] = [];
+  const ignoredRawSidecars: File[] = [];
+  for (const file of supportedCandidates) {
+    if (isJpegFile(file.name) && rawFileKeys.has(getRawSidecarKey(file))) {
+      ignoredRawSidecars.push(file);
+    } else {
+      supported.push(file);
+    }
+  }
+  return { supported, unsupported, ignoredRawSidecars };
+}
+
+function getImportFileStem(fileName: string) {
+  const dotIndex = fileName.lastIndexOf('.');
+  return (dotIndex === -1 ? fileName : fileName.slice(0, dotIndex)).toLowerCase();
+}
+
+function getImportFileDirectory(file: File) {
+  const relativePath = 'webkitRelativePath' in file ? file.webkitRelativePath : '';
+  const slashIndex = relativePath.lastIndexOf('/');
+  return slashIndex >= 0 ? relativePath.slice(0, slashIndex).toLowerCase() : '';
+}
+
+function getRawSidecarKey(file: File) {
+  return `${getImportFileDirectory(file)}/${getImportFileStem(file.name)}`;
 }
 
 interface GroupingFrame {

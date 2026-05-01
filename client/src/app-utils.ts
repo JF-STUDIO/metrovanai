@@ -22,6 +22,26 @@ export type AdminConsolePage = 'dashboard' | 'users' | 'works' | 'orders' | 'pla
 
 export const IMPORT_FILE_ACCEPT = '.arw,.cr2,.cr3,.crw,.nef,.nrw,.dng,.raf,.rw2,.rwl,.orf,.srw,.3fr,.fff,.iiq,.pef,.erf,.jpg,.jpeg';
 export const IMPORT_FILE_EXTENSIONS = new Set(IMPORT_FILE_ACCEPT.split(','));
+const RAW_IMPORT_FILE_EXTENSIONS = new Set([
+  '.arw',
+  '.cr2',
+  '.cr3',
+  '.crw',
+  '.nef',
+  '.nrw',
+  '.dng',
+  '.raf',
+  '.rw2',
+  '.rwl',
+  '.orf',
+  '.srw',
+  '.3fr',
+  '.fff',
+  '.iiq',
+  '.pef',
+  '.erf'
+]);
+const JPEG_IMPORT_FILE_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 
 export let localImportModulePromise: Promise<typeof import('./local-import')> | null = null;
 
@@ -31,18 +51,54 @@ export function loadLocalImportModule() {
 }
 
 export function filterSupportedImportFiles(files: File[]) {
-  const supported: File[] = [];
+  const supportedCandidates: File[] = [];
   const unsupported: File[] = [];
   for (const file of files) {
-    const dotIndex = file.name.lastIndexOf('.');
-    const extension = dotIndex >= 0 ? file.name.slice(dotIndex).toLowerCase() : '';
+    const extension = getImportFileExtension(file.name);
     if (IMPORT_FILE_EXTENSIONS.has(extension)) {
-      supported.push(file);
+      supportedCandidates.push(file);
     } else {
       unsupported.push(file);
     }
   }
-  return { supported, unsupported };
+
+  const rawFileKeys = new Set(
+    supportedCandidates
+      .filter((file) => RAW_IMPORT_FILE_EXTENSIONS.has(getImportFileExtension(file.name)))
+      .map(getRawSidecarKey)
+  );
+  const supported: File[] = [];
+  const ignoredRawSidecars: File[] = [];
+  for (const file of supportedCandidates) {
+    const extension = getImportFileExtension(file.name);
+    if (JPEG_IMPORT_FILE_EXTENSIONS.has(extension) && rawFileKeys.has(getRawSidecarKey(file))) {
+      ignoredRawSidecars.push(file);
+    } else {
+      supported.push(file);
+    }
+  }
+
+  return { supported, unsupported, ignoredRawSidecars };
+}
+
+function getImportFileExtension(fileName: string) {
+  const dotIndex = fileName.lastIndexOf('.');
+  return dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : '';
+}
+
+function getImportFileStem(fileName: string) {
+  const dotIndex = fileName.lastIndexOf('.');
+  return (dotIndex >= 0 ? fileName.slice(0, dotIndex) : fileName).toLowerCase();
+}
+
+function getImportFileDirectory(file: File) {
+  const relativePath = 'webkitRelativePath' in file ? file.webkitRelativePath : '';
+  const slashIndex = relativePath.lastIndexOf('/');
+  return slashIndex >= 0 ? relativePath.slice(0, slashIndex).toLowerCase() : '';
+}
+
+function getRawSidecarKey(file: File) {
+  return `${getImportFileDirectory(file)}/${getImportFileStem(file.name)}`;
 }
 
 export function revokeLocalImportDraftUrls(draft: LocalImportDraft | null | undefined) {

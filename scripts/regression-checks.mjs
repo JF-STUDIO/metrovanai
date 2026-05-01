@@ -210,6 +210,24 @@ assertIncludes(
 );
 
 assertIncludes(
+  'client/src/app-utils.ts',
+  'ignoredRawSidecars',
+  'Import filtering must report matching JPG sidecars that were ignored.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  'copy.uploadRawSidecarFiles(ignoredRawSidecars.length)',
+  'Upload UI must tell users when matching JPG sidecars are ignored.'
+);
+
+assertIncludes(
+  'client/src/local-import.ts',
+  'isJpegFile(file.name) && rawFileKeys.has(getRawSidecarKey(file))',
+  'Local import must prefer RAW originals over same-name JPG sidecars before grouping.'
+);
+
+assertIncludes(
   'server/src/csrf.ts',
   'timingSafeEqual',
   'CSRF hash comparison must use a timing-safe comparison.'

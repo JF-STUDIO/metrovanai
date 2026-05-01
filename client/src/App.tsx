@@ -2907,7 +2907,7 @@ function App() {
   function handleCreateDialogFiles(files: FileList | File[] | null) {
     if (!files || files.length === 0) return;
 
-    const { supported, unsupported } = filterSupportedImportFiles(Array.from(files));
+    const { supported, unsupported, ignoredRawSidecars } = filterSupportedImportFiles(Array.from(files));
     if (!supported.length) {
       setMessage(copy.uploadNoSupportedFiles);
       return;
@@ -2924,7 +2924,14 @@ function App() {
       return [...current, ...additions];
     });
     setCreateDialogDragActive(false);
-    setMessage(unsupported.length ? copy.uploadUnsupportedFiles(unsupported.length) : '');
+    setMessage(
+      [
+        unsupported.length ? copy.uploadUnsupportedFiles(unsupported.length) : '',
+        ignoredRawSidecars.length ? copy.uploadRawSidecarFiles(ignoredRawSidecars.length) : ''
+      ]
+        .filter(Boolean)
+        .join(' ')
+    );
   }
 
   async function handleSaveSettings() {
@@ -3034,7 +3041,7 @@ function App() {
   async function handleUploadForProject(targetProject: ProjectRecord, files: FileList | File[] | null) {
     if (!files || files.length === 0) return;
 
-    const { supported, unsupported } = filterSupportedImportFiles(Array.from(files));
+    const { supported, unsupported, ignoredRawSidecars } = filterSupportedImportFiles(Array.from(files));
     if (!supported.length) {
       setMessage(copy.uploadNoSupportedFiles);
       return;
@@ -3072,13 +3079,15 @@ function App() {
         merged.unusedObjectUrls.forEach((url) => URL.revokeObjectURL(url));
         const notices = [
           unsupported.length ? copy.uploadUnsupportedFiles(unsupported.length) : '',
+          ignoredRawSidecars.length ? copy.uploadRawSidecarFiles(ignoredRawSidecars.length) : '',
           merged.duplicateCount ? copy.uploadDuplicateFiles(merged.duplicateCount) : ''
         ].filter(Boolean);
         setMessage(notices.join(' '));
       } else {
         upsertLocalImportDraft(nextDraftWithUploads);
         const notices = [
-          unsupported.length ? copy.uploadUnsupportedFiles(unsupported.length) : ''
+          unsupported.length ? copy.uploadUnsupportedFiles(unsupported.length) : '',
+          ignoredRawSidecars.length ? copy.uploadRawSidecarFiles(ignoredRawSidecars.length) : ''
         ].filter(Boolean);
         setMessage(notices.join(' '));
       }
