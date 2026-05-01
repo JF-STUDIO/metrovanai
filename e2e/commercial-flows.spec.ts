@@ -38,7 +38,7 @@ test('demo billing flow exposes packages without starting real checkout', async 
 
   await page.getByRole('button', { name: /Recharge now/i }).click();
   await expect(page.getByText('Demo mode does not perform real top-ups.')).toBeVisible();
-  await expect(page).toHaveURL(/\/studio\?demo=1/);
+  await expect(page).toHaveURL(/\/billing\?demo=1/);
 });
 
 test('demo project creation flow exposes upload preparation controls', async ({ page }) => {

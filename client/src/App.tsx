@@ -1811,7 +1811,8 @@ function App() {
     }
 
     const nextPath = getPathForRoute(resolvedRoute);
-    const nextUrl = `${nextPath}${window.location.hash}`;
+    const nextSearch = isDemoMode ? '?demo=1' : '';
+    const nextUrl = `${nextPath}${nextSearch}${window.location.hash}`;
     if (window.location.pathname !== nextPath) {
       window.history.pushState({}, '', nextUrl);
     }
