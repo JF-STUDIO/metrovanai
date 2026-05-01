@@ -240,6 +240,8 @@ interface PendingDirectUploadFile {
   index: number;
 }
 
+type PreparedDirectUploadTargets = Map<number, DirectUploadTarget>;
+
 interface MultipartUploadPartUrl {
   partNumber: number;
   url: string;
@@ -493,8 +495,8 @@ export interface AuthProvidersPayload {
 const MAX_UPLOAD_BATCH_BYTES = 40 * 1024 * 1024;
 const MAX_UPLOAD_BATCH_FILES = 16;
 const MAX_UPLOAD_CONCURRENT_BATCHES = 4;
-const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 4;
-const DIRECT_OBJECT_UPLOAD_LARGE_FILE_CONCURRENCY = 3;
+const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 6;
+const DIRECT_OBJECT_UPLOAD_LARGE_FILE_CONCURRENCY = 4;
 const DIRECT_OBJECT_UPLOAD_HUGE_FILE_CONCURRENCY = 2;
 const MAX_UPLOAD_BATCH_RETRIES = 5;
 const UPLOAD_RETRY_BASE_DELAY_MS = 850;
@@ -507,9 +509,9 @@ const HUGE_DIRECT_OBJECT_FILE_BYTES = 350 * 1024 * 1024;
 const MULTIPART_UPLOAD_THRESHOLD_BYTES = 512 * 1024 * 1024;
 const MULTIPART_PART_CONCURRENCY = 3;
 const MULTIPART_PART_RETRIES = 5;
-const DIRECT_OBJECT_GLOBAL_CONNECTION_LIMIT = 8;
+const DIRECT_OBJECT_GLOBAL_CONNECTION_LIMIT = 12;
 const ADAPTIVE_UPLOAD_MIN_CONCURRENCY = 2;
-const ADAPTIVE_UPLOAD_MAX_CONCURRENCY = 8;
+const ADAPTIVE_UPLOAD_MAX_CONCURRENCY = 12;
 const ADAPTIVE_UPLOAD_LOW_BPS = 768 * 1024;
 const ADAPTIVE_UPLOAD_HIGH_BPS = 3 * 1024 * 1024;
 const ADAPTIVE_UPLOAD_SAMPLE_MS = 2000;
@@ -2378,40 +2380,62 @@ async function uploadFilesViaDirectObject(
   const pendingEntries = pendingFiles.map((file, index) => ({ file, index }));
   const targetBatches = splitDirectUploadTargetBatches(pendingEntries, normalizeDirectUploadTargetLimits(targetLimits));
   diagnostics.targetBatches = targetBatches.length;
+  const preparedDirectTargetPromises: Array<Promise<PreparedDirectUploadTargets> | null> = new Array(targetBatches.length).fill(null);
 
-  async function uploadTargetBatch(batch: PendingDirectUploadFile[]) {
+  function getDirectTargetEntries(batch: PendingDirectUploadFile[]) {
+    return batch
+      .map((entry, batchIndex) => ({ entry, batchIndex }))
+      .filter(({ entry }) => !shouldUseMultipartUpload(entry.file));
+  }
+
+  async function prepareDirectUploadTargetsForBatch(batch: PendingDirectUploadFile[]) {
+    throwIfUploadAborted(options.signal);
+    const directTargetEntries = getDirectTargetEntries(batch);
+    diagnostics.directFiles += directTargetEntries.length;
+    diagnostics.multipartFiles += batch.length - directTargetEntries.length;
+    const directTargetsByBatchIndex: PreparedDirectUploadTargets = new Map();
+    if (!directTargetEntries.length) {
+      return directTargetsByBatchIndex;
+    }
+
+    const targetRequestStartedAt = Date.now();
+    const { targets } = await runWithOfflineRetry(
+      () => createDirectUploadTargets(projectId, directTargetEntries.map(({ entry }) => entry.file)),
+      {
+        signal: options.signal,
+        onPause: () => reportProgress({ stage: 'paused', offline: true })
+      }
+    );
+    diagnostics.targetRequestMs += Date.now() - targetRequestStartedAt;
+    if (targets.length !== directTargetEntries.length) {
+      throw new Error('Direct upload target count mismatch.');
+    }
+    directTargetEntries.forEach(({ batchIndex }, targetIndex) => {
+      const target = targets[targetIndex];
+      if (target) {
+        directTargetsByBatchIndex.set(batchIndex, target);
+      }
+    });
+    return directTargetsByBatchIndex;
+  }
+
+  function ensurePreparedDirectTargets(batchIndex: number) {
+    if (batchIndex < 0 || batchIndex >= targetBatches.length) {
+      return null;
+    }
+    preparedDirectTargetPromises[batchIndex] ??= prepareDirectUploadTargetsForBatch(targetBatches[batchIndex] ?? []);
+    return preparedDirectTargetPromises[batchIndex];
+  }
+
+  async function uploadTargetBatch(batch: PendingDirectUploadFile[], batchIndex: number) {
     throwIfUploadAborted(options.signal);
     const preparingStartedAt = Date.now();
     reportProgress({ stage: 'preparing' });
     const batchFiles = batch.map((item) => item.file);
     const adaptiveSampler = new ThroughputSampler(ADAPTIVE_UPLOAD_SAMPLE_MS, 1000);
     const telemetrySampler = new ThroughputSampler(UPLOAD_TELEMETRY_SAMPLE_MS, UPLOAD_TELEMETRY_MIN_SPAN_MS);
-    const directTargetEntries = batch
-      .map((entry, batchIndex) => ({ entry, batchIndex }))
-      .filter(({ entry }) => !shouldUseMultipartUpload(entry.file));
-    diagnostics.directFiles += directTargetEntries.length;
-    diagnostics.multipartFiles += batch.length - directTargetEntries.length;
-    const directTargetsByBatchIndex = new Map<number, DirectUploadTarget>();
-    if (directTargetEntries.length) {
-      const targetRequestStartedAt = Date.now();
-      const { targets } = await runWithOfflineRetry(
-        () => createDirectUploadTargets(projectId, directTargetEntries.map(({ entry }) => entry.file)),
-        {
-          signal: options.signal,
-          onPause: () => reportProgress({ stage: 'paused', offline: true })
-        }
-      );
-      diagnostics.targetRequestMs += Date.now() - targetRequestStartedAt;
-      if (targets.length !== directTargetEntries.length) {
-        throw new Error('Direct upload target count mismatch.');
-      }
-      directTargetEntries.forEach(({ batchIndex }, targetIndex) => {
-        const target = targets[targetIndex];
-        if (target) {
-          directTargetsByBatchIndex.set(batchIndex, target);
-        }
-      });
-    }
+    const directTargetsByBatchIndex = await ensurePreparedDirectTargets(batchIndex) ?? new Map<number, DirectUploadTarget>();
+    void ensurePreparedDirectTargets(batchIndex + 1);
 
     let nextBatchFileIndex = 0;
     const maxWorkerCount = Math.min(ADAPTIVE_UPLOAD_MAX_CONCURRENCY, batch.length);
@@ -2586,8 +2610,8 @@ async function uploadFilesViaDirectObject(
   }
 
   try {
-    for (const batch of targetBatches) {
-      await uploadTargetBatch(batch);
+    for (const [batchIndex, batch] of targetBatches.entries()) {
+      await uploadTargetBatch(batch, batchIndex);
     }
 
     onProgress(96, {

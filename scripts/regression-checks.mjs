@@ -133,8 +133,8 @@ assertMatches(
 
 assertIncludes(
   'client/src/api.ts',
-  'const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 4;',
-  'Direct upload should keep stable browser concurrency for production RAW batches.'
+  'const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 6;',
+  'Direct upload should keep balanced browser concurrency for production RAW batches.'
 );
 
 assertIncludes(
@@ -147,6 +147,12 @@ assertIncludes(
   'client/src/api.ts',
   'const CLIENT_DIRECT_UPLOAD_TARGET_MAX_FILES = 48;',
   'Direct upload should request signed upload targets in smaller browser-stable batches.'
+);
+
+assertIncludes(
+  'client/src/api.ts',
+  'ensurePreparedDirectTargets(batchIndex + 1)',
+  'Direct upload should prefetch the next signed target batch while the current batch uploads.'
 );
 
 assertIncludes(
