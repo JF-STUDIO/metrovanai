@@ -343,6 +343,13 @@ export interface AdminMaintenanceReportSummary {
   failedCount: number;
   totals: { projects?: number; hdrItems?: number; downloadJobs?: number } | null;
   alerts: Array<{ code: string; value: number }>;
+  reviewedProjects: Array<{
+    projectId: string;
+    projectName: string;
+    reviewedAt: string | null;
+    reviewedBy: string | null;
+    note: string | null;
+  }>;
   priorityQueue: Array<{
     projectId: string;
     projectName: string;

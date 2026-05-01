@@ -481,6 +481,7 @@ function buildAdminMaintenanceReportPayload(name: string, fullPath: string) {
       })),
       totals: applicationData?.totals ?? null,
       alerts: Array.isArray(applicationData?.alerts) ? applicationData.alerts.slice(0, 12) : [],
+      reviewedProjects: Array.isArray(applicationData?.reviewedProjects) ? applicationData.reviewedProjects.slice(0, 10) : [],
       priorityQueue: Array.isArray(applicationData?.priorityQueue) ? applicationData.priorityQueue.slice(0, 5) : [],
       alert: maintenanceReport?.alert ?? null
     };
@@ -495,6 +496,7 @@ function buildAdminMaintenanceReportPayload(name: string, fullPath: string) {
       checks: [{ id: 'report_parse', ok: false, status: null, latestStatus: null, alertCount: 0, error: error instanceof Error ? error.message : String(error) }],
       totals: null,
       alerts: [],
+      reviewedProjects: [],
       priorityQueue: [],
       alert: null
     };

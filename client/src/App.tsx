@@ -5952,8 +5952,8 @@ function App() {
               ) : (
                 <div className="admin-health-ok">这份报告没有应用数据异常。</div>
               )}
-              {report.priorityQueue.length ? (
-                <div className="maintenance-priority-list">
+	              {report.priorityQueue.length ? (
+	                <div className="maintenance-priority-list">
                   {report.priorityQueue.map((item, index) => (
                     <div className="maintenance-priority-item" key={`${report.id}-${item.projectId}`}>
                       <span className={item.priority === 'high' ? 'tag tag-red' : item.priority === 'medium' ? 'tag tag-orange' : 'tag tag-gray'}>#{index + 1} {item.priority}</span>
@@ -5962,9 +5962,21 @@ function App() {
                       <em>{item.recommendedActionLabels?.join(' / ') || '后台查看'}</em>
                     </div>
                   ))}
-                </div>
-              ) : null}
-              <div className="maintenance-check-grid">
+	                </div>
+	              ) : null}
+	              {report.reviewedProjects?.length ? (
+	                <div className="maintenance-priority-list">
+	                  {report.reviewedProjects.map((item) => (
+	                    <div className="maintenance-priority-item" key={`${report.id}-reviewed-${item.projectId}`}>
+	                      <span className="tag tag-green">已审核</span>
+	                      <strong>{item.projectName}</strong>
+	                      <small>{item.note || '当前问题无需处理。'}</small>
+	                      <em>{item.reviewedBy || '管理员'} · {item.reviewedAt ? formatAdminShortDate(item.reviewedAt) : '时间未知'}</em>
+	                    </div>
+	                  ))}
+	                </div>
+	              ) : null}
+	              <div className="maintenance-check-grid">
                 {report.checks.map((check) => (
                   <span className={check.ok ? 'tag tag-green' : 'tag tag-red'} key={`${report.id}-${check.id}`}>
                     {check.id}{check.alertCount ? ` · ${check.alertCount}` : ''}

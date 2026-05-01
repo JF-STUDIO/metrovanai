@@ -435,6 +435,17 @@ async function checkApplicationData() {
       }
     }
     const isReviewedProject = (project) => isProjectMaintenanceReviewed(project, latestDownloadByProject.get(project?.id) ?? null);
+    const reviewedProjects = projects
+      .filter((project) => isReviewedProject(project))
+      .map((project) => ({
+        projectId: project.id,
+        projectName: getProjectName(project),
+        reviewedAt: project.maintenanceReview?.reviewedAt ?? null,
+        reviewedBy: project.maintenanceReview?.reviewedBy ?? null,
+        note: project.maintenanceReview?.note ?? null
+      }))
+      .sort((left, right) => Date.parse(right.reviewedAt || '') - Date.parse(left.reviewedAt || ''))
+      .slice(0, 10);
     const failedItems = hdrItems.filter(
       ({ project, item }) => !isReviewedProject(project) && item?.status === 'error' && !isCompletedHdrItem(item)
     );
@@ -506,6 +517,7 @@ async function checkApplicationData() {
         stalledUploadProjectIds: stalledUploadProjects.slice(0, 10).map((project) => project.id),
         failedDownloadJobIds: recentFailedDownloads.slice(0, 10).map((job) => job.jobId)
       },
+      reviewedProjects,
       priorityQueue
     });
   } catch (error) {
