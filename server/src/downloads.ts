@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
-import { Readable, Writable } from 'node:stream';
+import { Writable } from 'node:stream';
 import { createJpegVariantStream, writeJpegVariant } from './images.js';
-import { createObjectDownloadUrl, getObjectStorageMetadata, restoreObjectToFileIfAvailable } from './object-storage.js';
+import { restoreObjectToFileIfAvailable } from './object-storage.js';
 import type { ProjectRecord } from './types.js';
 import { sanitizeSegment } from './utils.js';
 
@@ -213,20 +213,71 @@ export class DownloadIncompleteError extends Error {
 export async function assertProjectDownloadAssetsReady(project: ProjectRecord) {
   const missing: string[] = [];
   for (const asset of project.resultAssets) {
-    if (fs.existsSync(asset.storagePath)) {
+    if (await ensureDownloadAssetFileReady(project, asset)) {
       continue;
     }
-    if (!asset.storageKey) {
-      missing.push(asset.fileName);
-      continue;
-    }
-    const metadata = await getObjectStorageMetadata(asset.storageKey).catch(() => null);
-    if (!metadata) {
-      missing.push(asset.fileName);
-    }
+    missing.push(asset.fileName);
   }
   if (missing.length) {
     throw new DownloadIncompleteError(Array.from(new Set(missing)));
+  }
+}
+
+async function ensureDownloadAssetFileReady(project: ProjectRecord, asset: DownloadAsset) {
+  if (fs.existsSync(asset.storagePath) && isDownloadAssetFileComplete(asset)) {
+    return true;
+  }
+
+  if (fs.existsSync(asset.storagePath)) {
+    console.warn(`[download] result incomplete: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
+    fs.rmSync(asset.storagePath, { force: true });
+  }
+
+  if (!asset.storageKey) {
+    return false;
+  }
+
+  try {
+    await restoreObjectToFileIfAvailable(asset.storageKey, asset.storagePath);
+  } catch (error) {
+    console.warn(
+      `[download] result restore failed: project=${project.id} asset=${asset.id} key=${asset.storageKey ?? 'none'} ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+
+  return fs.existsSync(asset.storagePath) && isDownloadAssetFileComplete(asset);
+}
+
+function isDownloadAssetFileComplete(asset: DownloadAsset) {
+  if (!fs.existsSync(asset.storagePath)) {
+    return false;
+  }
+
+  const stats = fs.statSync(asset.storagePath);
+  if (!stats.isFile() || stats.size <= 0) {
+    return false;
+  }
+
+  const extension = path.extname(asset.fileName || asset.storagePath).toLowerCase();
+  if (extension !== '.jpg' && extension !== '.jpeg') {
+    return true;
+  }
+
+  if (stats.size < 4) {
+    return false;
+  }
+
+  const handle = fs.openSync(asset.storagePath, 'r');
+  try {
+    const start = Buffer.alloc(2);
+    const end = Buffer.alloc(2);
+    fs.readSync(handle, start, 0, 2, 0);
+    fs.readSync(handle, end, 0, 2, stats.size - 2);
+    return start[0] === 0xff && start[1] === 0xd8 && end[0] === 0xff && end[1] === 0xd9;
+  } finally {
+    fs.closeSync(handle);
   }
 }
 
@@ -241,25 +292,13 @@ async function prepareAssetDownloadSource(
   asset: DownloadAsset,
   variant: DownloadVariantOption
 ): Promise<PreparedDownloadSource | null> {
+  if (!(await ensureDownloadAssetFileReady(project, asset))) {
+    console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
+    throw new DownloadIncompleteError([asset.fileName]);
+  }
+
   const resize = resolveVariantResize(variant);
   if (resize) {
-    if (!fs.existsSync(asset.storagePath)) {
-      try {
-        await restoreObjectToFileIfAvailable(asset.storageKey, asset.storagePath);
-      } catch (error) {
-        console.warn(
-          `[download] result restore failed: project=${project.id} asset=${asset.id} key=${asset.storageKey ?? 'none'} ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-
-    if (!fs.existsSync(asset.storagePath)) {
-      console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
-      throw new DownloadIncompleteError([asset.fileName]);
-    }
-
     return {
       stream: createJpegVariantStream(asset.storagePath, 95, resize),
       mtime: fs.statSync(asset.storagePath).mtime
@@ -273,21 +312,8 @@ async function prepareAssetDownloadSource(
     };
   }
 
-  if (!asset.storageKey) {
-    console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
-    throw new DownloadIncompleteError([asset.fileName]);
-  }
-
-  const response = await fetch(createObjectDownloadUrl(asset.storageKey, 60 * 60));
-  if (!response.ok || !response.body) {
-    console.warn(`[download] object fetch failed: project=${project.id} asset=${asset.id} status=${response.status}`);
-    throw new DownloadIncompleteError([asset.fileName]);
-  }
-
-  return {
-    stream: Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-    mtime: new Date(project.updatedAt ?? Date.now())
-  };
+  console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
+  throw new DownloadIncompleteError([asset.fileName]);
 }
 
 async function writeZipStreamEntry(input: {

@@ -210,6 +210,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/downloads.ts',
+  'isDownloadAssetFileComplete',
+  'Project downloads must validate result file integrity before packaging.'
+);
+
+assertIncludes(
+  'server/src/downloads.ts',
+  'end[0] === 0xff && end[1] === 0xd9',
+  'Project downloads must reject truncated JPEG results before packaging.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'
