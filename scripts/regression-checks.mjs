@@ -524,6 +524,12 @@ assertIncludes(
 
 assertIncludes(
   'client/src/App.tsx',
+  'handleMoveAdminFeatureCard',
+  'Admin content operations must allow ordering feature cards.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
   'studioFeatures: adminFeatureDrafts',
   'Admin content saves must preserve the exact edited feature card list.'
 );

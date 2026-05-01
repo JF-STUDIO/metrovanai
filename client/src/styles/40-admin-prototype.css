@@ -3373,10 +3373,16 @@
 
 .admin-prototype .feature-admin-card summary {
   display: grid;
-  grid-template-columns: auto minmax(160px, 0.4fr) minmax(0, 1fr);
+  grid-template-columns: auto minmax(160px, 0.4fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   cursor: pointer;
+}
+
+.admin-prototype .feature-admin-order-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .admin-prototype .feature-admin-form {

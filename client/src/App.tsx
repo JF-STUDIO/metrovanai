@@ -2428,6 +2428,20 @@ function App() {
     setAdminMessage('已移除功能卡片，点击“保存全部”后生效。');
   }
 
+  function handleMoveAdminFeatureCard(featureId: string, direction: -1 | 1) {
+    setAdminFeatureDrafts((current) => {
+      const index = current.findIndex((item) => item.id === featureId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) {
+        return current;
+      }
+      const next = [...current];
+      [next[index], next[nextIndex]] = [next[nextIndex]!, next[index]!];
+      return next;
+    });
+    setAdminMessage('卡片顺序已调整，点击“保存全部”后前台生效。');
+  }
+
   async function handleAdminFeatureImageUpload(featureId: string, field: StudioFeatureImageField, file: File) {
     const hasImageExtension = /\.(jpe?g|png|webp)$/i.test(file.name);
     if (!file.type.startsWith('image/') && !hasImageExtension) {
@@ -5885,6 +5899,14 @@ function App() {
                   <span className={`tag ${planToneClass(index)}`}>{feature.status}</span>
                   <strong>{feature.titleZh}</strong>
                   <small>Workflow: {workflowDisplay.workflowId || '未配置'} · 输入 {workflowDisplay.inputNodeId || '—'} · 输出 {workflowDisplay.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
+                  <div className="feature-admin-order-actions" onClick={(event) => event.preventDefault()}>
+                    <button className="btn btn-ghost btn-xs" type="button" onClick={() => handleMoveAdminFeatureCard(feature.id, -1)} disabled={index === 0}>
+                      上移
+                    </button>
+                    <button className="btn btn-ghost btn-xs" type="button" onClick={() => handleMoveAdminFeatureCard(feature.id, 1)} disabled={index === adminFeatureDrafts.length - 1}>
+                      下移
+                    </button>
+                  </div>
                 </summary>
                 <div className="feature-admin-form">
                   <div className="feature-admin-preview">
