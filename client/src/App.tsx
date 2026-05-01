@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
@@ -428,6 +428,7 @@ function App() {
   });
   const emailVerificationHandledRef = useRef(false);
   const checkoutHandledRef = useRef(false);
+  const navigateToRouteRef = useRef<(nextRoute: AppRoute) => void>(() => undefined);
 
   const demoProjects = useMemo(() => createDemoProjects(), []);
   const visibleProjects = isDemoMode ? demoProjects : projects;
@@ -1201,7 +1202,7 @@ function App() {
     setBillingPackages(payload.packages);
   }
 
-  async function confirmCheckoutSessionWithRetry(sessionId: string) {
+  const confirmCheckoutSessionWithRetry = useCallback(async (sessionId: string) => {
     const maxAttempts = 10;
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1224,7 +1225,7 @@ function App() {
       }
     }
     throw lastError instanceof Error ? lastError : new Error(copy.topUpFailed);
-  }
+  }, [copy.topUpFailed, locale]);
 
   function syncAdminSystemSettings(settings: AdminSystemSettings) {
     setAdminSystemSettings(settings);
@@ -1679,9 +1680,9 @@ function App() {
           setBillingOpen(false);
           if (returnProjectId) {
             setCurrentProjectId(returnProjectId);
-            navigateToRoute('studio');
+            navigateToRouteRef.current('studio');
           } else {
-            navigateToRoute('billing');
+            navigateToRouteRef.current('billing');
           }
           setCustomRechargeAmount('');
           setRechargeActivationCode('');
@@ -1697,7 +1698,7 @@ function App() {
         .catch((error) => {
           setBillingModalMode('billing');
           setBillingOpen(false);
-          navigateToRoute('billing');
+          navigateToRouteRef.current('billing');
           setMessage(
             getUserFacingErrorMessage(
               error,
@@ -1720,6 +1721,7 @@ function App() {
     copy.topUpFailed,
     copy.topUpSuccess,
     copy.stripePaymentSuccessTitle,
+    confirmCheckoutSessionWithRetry,
     isDemoMode,
     locale,
     session,
@@ -1819,6 +1821,7 @@ function App() {
     setActiveRoute(resolvedRoute);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
+  navigateToRouteRef.current = navigateToRoute;
 
   function openAuth(nextMode: AuthMode) {
     setAuthMode(nextMode);
