@@ -4660,12 +4660,7 @@ function App() {
                       </article>
                     ))}
                   </div>
-                ) : (
-                  <div className="empty-state billing-empty-state">
-                    <strong>{locale === 'en' ? 'Credit usage is collapsed' : '积分使用明细已收起'}</strong>
-                    <span>{locale === 'en' ? `${billingSummary?.totalChargedPoints ?? 0} pts used.` : `累计扣点 ${billingSummary?.totalChargedPoints ?? 0} pts。`}</span>
-                  </div>
-                )
+                ) : null
               ) : (
                 <div className="empty-state billing-empty-state">
                   <strong>{locale === 'en' ? 'No credit usage yet' : '暂无积分使用记录'}</strong>
