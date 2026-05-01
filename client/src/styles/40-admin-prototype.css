@@ -3030,6 +3030,70 @@
   margin-top: 10px;
 }
 
+.admin-failure-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.admin-failure-row {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255, 96, 96, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 96, 96, 0.06);
+}
+
+.admin-failure-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.admin-failure-main strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.admin-failure-main small,
+.admin-failure-row p {
+  margin: 0;
+  color: var(--text-mute);
+  font-size: 11px;
+}
+
+.admin-failure-row code {
+  display: block;
+  max-height: 72px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.admin-failure-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-failure-meta span {
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: var(--text-mute);
+  font-size: 11px;
+}
+
 .admin-diagnosis-item {
   display: grid;
   gap: 3px;

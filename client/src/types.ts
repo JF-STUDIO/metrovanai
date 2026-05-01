@@ -125,6 +125,27 @@ export interface ProjectAdminHealth {
     detail: string;
     action?: 'retry-failed-processing' | 'regenerate-download' | 'mark-stalled-failed' | 'acknowledge-maintenance' | 'deep-health' | string;
   }>;
+  failedItemDiagnostics?: Array<{
+    id: string;
+    hdrIndex: number;
+    title: string;
+    fileName: string;
+    status: string;
+    provider: 'runpod' | 'runninghub' | string | null;
+    stage: string | null;
+    runpodJobId: string | null;
+    runpodBatchJobId: string | null;
+    runningHubTaskId: string | null;
+    updatedAt: string | null;
+    errorMessage: string | null;
+    exposureCount: number;
+    missingSourceReferenceCount: number;
+    incomingSourceCount: number;
+    causeCode: string;
+    causeTitle: string;
+    causeDetail: string;
+    recommendedAction: string;
+  }>;
   recommendedActions?: Array<'retry-failed-processing' | 'regenerate-download' | 'mark-stalled-failed' | 'acknowledge-maintenance' | 'deep-health' | string>;
   rawJpegSidecarGroups: string[];
   duplicateSourceGroups: string[];

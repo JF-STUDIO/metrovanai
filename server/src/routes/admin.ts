@@ -541,6 +541,119 @@ function buildMaintenanceReviewSignature(project: ProjectRecord, latestDownloadJ
   });
 }
 
+function normalizeDiagnosticMessage(value: unknown) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function classifyFailedHdrItem(item: ProjectRecord['hdrItems'][number]) {
+  const workflow = item.workflow ?? null;
+  const rawMessage = normalizeDiagnosticMessage(item.errorMessage || workflow?.errorMessage || item.statusText);
+  const lower = rawMessage.toLowerCase();
+  const provider = workflow?.lastTaskProvider ?? (workflow?.runpodJobId || workflow?.runpodBatchJobId ? 'runpod' : workflow?.runningHubTaskId ? 'runninghub' : null);
+  const missingSourceReferenceCount = item.exposures.filter(
+    (exposure) => !exposure.storageKey && !exposure.storagePath && !exposure.storageUrl
+  ).length;
+  const incomingSourceCount = item.exposures.filter((exposure) => String(exposure.storageKey ?? '').startsWith('incoming/')).length;
+
+  if (
+    lower.includes('404') ||
+    lower.includes('not found') ||
+    lower.includes('source file missing') ||
+    lower.includes('源文件缺失') ||
+    missingSourceReferenceCount > 0
+  ) {
+    return {
+      causeCode: 'source-missing',
+      causeTitle: 'R2 原片缺失',
+      causeDetail: missingSourceReferenceCount
+        ? `${missingSourceReferenceCount} 个曝光没有源文件引用；需要重新上传原片后再处理。`
+        : '处理节点下载原片时返回 404/Not Found；旧项目可能仍引用临时 incoming 原片。',
+      recommendedAction: 'deep-health'
+    };
+  }
+
+  if (lower.includes('no output') || lower.includes('没有返回') || lower.includes('empty response') || lower.includes('output')) {
+    return {
+      causeCode: 'result-missing',
+      causeTitle: '处理完成但未返回结果',
+      causeDetail: '云端任务没有给这张照片返回可用结果图，建议重新处理失败照片。',
+      recommendedAction: 'retry-failed-processing'
+    };
+  }
+
+  if (
+    lower.includes('fetch failed') ||
+    lower.includes('socket') ||
+    lower.includes('timeout') ||
+    lower.includes('timed out') ||
+    lower.includes('temporarily') ||
+    lower.includes('network') ||
+    lower.includes('网络')
+  ) {
+    return {
+      causeCode: 'cloud-transfer',
+      causeTitle: '云端传输中断',
+      causeDetail: '上传到处理节点、节点下载原片或回传结果时网络中断；系统已自动重试一次，仍失败则可人工重试。',
+      recommendedAction: 'retry-failed-processing'
+    };
+  }
+
+  if (lower.includes('runpod') || provider === 'runpod') {
+    return {
+      causeCode: 'runpod',
+      causeTitle: 'Runpod 处理失败',
+      causeDetail: '失败发生在 Runpod 阶段，建议先重试失败照片；如果反复失败，再查看 worker 日志。',
+      recommendedAction: 'retry-failed-processing'
+    };
+  }
+
+  if (lower.includes('runninghub') || provider === 'runninghub') {
+    return {
+      causeCode: 'runninghub',
+      causeTitle: 'RunningHub 处理失败',
+      causeDetail: '失败发生在 RunningHub 阶段，建议重试失败照片或恢复 RunningHub 结果。',
+      recommendedAction: 'retry-failed-processing'
+    };
+  }
+
+  return {
+    causeCode: incomingSourceCount ? 'legacy-incoming-source' : 'unknown-processing',
+    causeTitle: incomingSourceCount ? '旧临时原片引用' : '处理失败',
+    causeDetail: incomingSourceCount
+      ? `${incomingSourceCount} 个曝光仍引用 incoming 临时路径；建议深度巡检确认对象是否还在。`
+      : '暂时无法从错误信息判断具体原因，建议先深度巡检，再重试失败照片。',
+    recommendedAction: incomingSourceCount ? 'deep-health' : 'retry-failed-processing'
+  };
+}
+
+function buildFailedItemDiagnostic(item: ProjectRecord['hdrItems'][number]) {
+  const workflow = item.workflow ?? null;
+  const selectedExposure =
+    item.exposures.find((exposure) => exposure.id === item.selectedExposureId) ?? item.exposures[0] ?? null;
+  const classification = classifyFailedHdrItem(item);
+  const provider = workflow?.lastTaskProvider ?? (workflow?.runpodJobId || workflow?.runpodBatchJobId ? 'runpod' : workflow?.runningHubTaskId ? 'runninghub' : null);
+  return {
+    id: item.id,
+    hdrIndex: item.index,
+    title: item.title || `HDR ${item.index}`,
+    fileName: selectedExposure?.originalName || selectedExposure?.fileName || item.resultFileName || `HDR ${item.index}`,
+    status: item.status,
+    provider,
+    stage: workflow?.stage ?? null,
+    runpodJobId: workflow?.runpodJobId ?? null,
+    runpodBatchJobId: workflow?.runpodBatchJobId ?? null,
+    runningHubTaskId: workflow?.runningHubTaskId ?? null,
+    updatedAt: workflow?.updatedAt ?? null,
+    errorMessage: normalizeDiagnosticMessage(item.errorMessage || workflow?.errorMessage || item.statusText).slice(0, 360) || null,
+    exposureCount: item.exposures.length,
+    missingSourceReferenceCount: item.exposures.filter(
+      (exposure) => !exposure.storageKey && !exposure.storagePath && !exposure.storageUrl
+    ).length,
+    incomingSourceCount: item.exposures.filter((exposure) => String(exposure.storageKey ?? '').startsWith('incoming/')).length,
+    ...classification
+  };
+}
+
 function buildAdminProjectHealth(project: ProjectRecord) {
   const downloadJobs = store
     .listProjectDownloadJobs(project.id)
@@ -569,6 +682,9 @@ function buildAdminProjectHealth(project: ProjectRecord) {
   const failedItemsWithoutResult = project.hdrItems.filter(
     (item: any) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl)
   ).length;
+  const failedItemDiagnostics = project.hdrItems
+    .filter((item: any) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl))
+    .map((item) => buildFailedItemDiagnostic(item));
   const stalledMinutes = getPotentiallyStalledMinutes(project);
   const maintenanceSignature = buildMaintenanceReviewSignature(project, latestDownloadJob);
   const reviewed = project.maintenanceReview?.signature === maintenanceSignature;
@@ -693,10 +809,13 @@ function buildAdminProjectHealth(project: ProjectRecord) {
     warnings: visibleWarnings,
     rootCauseSummary: reviewed
       ? `已审核：${project.maintenanceReview?.note || '当前问题无需处理。'}`
+      : failedItemDiagnostics.length
+        ? `${failedItemDiagnostics.length} 张失败照片：${failedItemDiagnostics[0]?.causeTitle ?? '处理失败'}。`
       : issues.length
         ? (issues[0] as any).detail
         : '未发现需要处理的项目健康问题。',
     issues,
+    failedItemDiagnostics: reviewed ? [] : failedItemDiagnostics,
     recommendedActions,
     rawJpegSidecarGroups,
     duplicateSourceGroups,

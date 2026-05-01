@@ -5338,6 +5338,21 @@ function App() {
       if (action === 'deep-health') return '深度巡检';
       return action;
     };
+    const getAdminFailureProviderLabel = (provider: string | null | undefined, stage: string | null | undefined) => {
+      if (provider === 'runpod') return 'Runpod';
+      if (provider === 'runninghub') return 'RunningHub';
+      if (stage === 'runpod') return 'Runpod';
+      if (stage === 'runninghub') return 'RunningHub';
+      if (stage === 'failed') return '处理阶段';
+      return '未定位';
+    };
+    const getAdminFailureTaskLabel = (
+      diagnostic: NonNullable<NonNullable<ProjectRecord['adminHealth']>['failedItemDiagnostics']>[number]
+    ) => {
+      const taskId = diagnostic.runpodJobId || diagnostic.runpodBatchJobId || diagnostic.runningHubTaskId;
+      if (!taskId) return '无任务号';
+      return taskId.length > 18 ? `${taskId.slice(0, 10)}...${taskId.slice(-6)}` : taskId;
+    };
     const getAdminPriorityLabel = (score: number) => {
       if (score >= 100) return '高优先级';
       if (score >= 40) return '中优先级';
@@ -5505,6 +5520,43 @@ function App() {
                       </div>
                     ) : null}
                   </div>
+                  {adminSelectedProject.adminHealth.failedItemDiagnostics?.length ? (
+                    <div className="admin-diagnosis-card admin-failure-diagnostics">
+                      <div className="admin-mini-head">
+                        <strong>失败照片诊断</strong>
+                        <span>{adminSelectedProject.adminHealth.failedItemDiagnostics.length} 张</span>
+                      </div>
+                      <div className="admin-failure-list">
+                        {adminSelectedProject.adminHealth.failedItemDiagnostics.slice(0, 24).map((diagnostic) => (
+                          <article className="admin-failure-row" key={diagnostic.id}>
+                            <div className="admin-failure-main">
+                              <span className="tag tag-red">{diagnostic.causeTitle}</span>
+                              <strong>{diagnostic.fileName}</strong>
+                              <small>
+                                HDR {diagnostic.hdrIndex} · {getAdminFailureProviderLabel(diagnostic.provider, diagnostic.stage)} · {getAdminFailureTaskLabel(diagnostic)}
+                              </small>
+                            </div>
+                            <p>{diagnostic.causeDetail}</p>
+                            {diagnostic.errorMessage ? <code>{diagnostic.errorMessage}</code> : null}
+                            <div className="admin-failure-meta">
+                              <span>曝光 {diagnostic.exposureCount}</span>
+                              {diagnostic.incomingSourceCount ? <span>临时原片 {diagnostic.incomingSourceCount}</span> : null}
+                              {diagnostic.missingSourceReferenceCount ? <span>缺引用 {diagnostic.missingSourceReferenceCount}</span> : null}
+                              {diagnostic.updatedAt ? <span>{formatAdminShortDate(diagnostic.updatedAt)}</span> : null}
+                              <button
+                                className="btn btn-ghost btn-xs"
+                                type="button"
+                                onClick={() => handleAdminRecommendedProjectAction(diagnostic.recommendedAction)}
+                                disabled={Boolean(adminRepairBusy) || (diagnostic.recommendedAction === 'deep-health' && adminDeepHealthBusy)}
+                              >
+                                {getAdminRepairActionLabel(diagnostic.recommendedAction)}
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   {adminSelectedProject.adminHealth.warnings.length ? (
                     <div className="admin-health-warnings">
                       {adminSelectedProject.adminHealth.warnings.slice(0, 6).map((warning) => (
