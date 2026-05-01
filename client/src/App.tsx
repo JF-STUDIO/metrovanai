@@ -227,6 +227,10 @@ import {
 
 const STRIPE_RETURN_PROJECT_STORAGE_KEY = 'metrovanai_stripe_return_project_id';
 
+function isAdminBillingAdjustmentEntry(entry: BillingEntry) {
+  return entry.amountUsd === 0 && !entry.projectId && !entry.projectName && entry.note.startsWith('Admin adjustment:');
+}
+
 function App() {
   const isDemoMode = isDemoModeEnabled();
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => getRouteFromPath());
@@ -272,6 +276,7 @@ function App() {
   const [billingModalMode, setBillingModalMode] = useState<'topup' | 'billing'>('billing');
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingUsageExpanded, setBillingUsageExpanded] = useState(false);
+  const [billingAdjustmentsExpanded, setBillingAdjustmentsExpanded] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
   const [selectedBillingPackageId, setSelectedBillingPackageId] = useState<string | null>(null);
   const [customRechargeAmount, setCustomRechargeAmount] = useState('');
@@ -2188,7 +2193,7 @@ function App() {
         {
           type: adminAdjustment.type,
           points,
-          note: adminAdjustment.note.trim() || 'Manual adjustment'
+          note: adminAdjustment.note.trim() || (adminAdjustment.type === 'credit' ? 'Manual credit' : 'Manual charge')
         }
       );
       mergeAdminUser(response.user);
@@ -4544,7 +4549,8 @@ function App() {
   }
 
   function renderBillingPage() {
-    const usageEntries = billingEntries.filter((entry) => entry.type === 'charge');
+    const usageEntries = billingEntries.filter((entry) => entry.type === 'charge' && !isAdminBillingAdjustmentEntry(entry));
+    const adminAdjustmentEntries = billingEntries.filter(isAdminBillingAdjustmentEntry);
     const paidOrders = billingOrders.filter((order) => order.status === 'paid' || order.status === 'refunded');
     return (
       <>
@@ -4648,6 +4654,66 @@ function App() {
                 <div className="empty-state billing-empty-state">
                   <strong>{locale === 'en' ? 'No credit usage yet' : '暂无积分使用记录'}</strong>
                   <span>{locale === 'en' ? 'Processing charges will appear here.' : '项目处理扣点会显示在这里。'}</span>
+                </div>
+              )}
+            </article>
+
+            <article className="billing-section">
+              <div className="panel-head compact">
+                <div>
+                  <strong>{locale === 'en' ? 'Credit adjustments' : '积分调整记录'}</strong>
+                  <span className="muted">
+                    {adminAdjustmentEntries.length
+                      ? locale === 'en'
+                        ? 'Manual admin changes are separated from project usage.'
+                        : '后台手动加减积分单独显示，不计入项目累计扣点。'
+                      : locale === 'en'
+                        ? 'No manual admin credit changes.'
+                        : '暂无后台手动积分调整。'}
+                  </span>
+                </div>
+                {adminAdjustmentEntries.length ? (
+                  <button
+                    className="ghost-button small"
+                    type="button"
+                    onClick={() => setBillingAdjustmentsExpanded((current) => !current)}
+                  >
+                    {billingAdjustmentsExpanded
+                      ? locale === 'en' ? 'Hide details' : '收起明细'
+                      : locale === 'en' ? 'View details' : '展开明细'}
+                  </button>
+                ) : null}
+              </div>
+              {adminAdjustmentEntries.length ? (
+                billingAdjustmentsExpanded ? (
+                  <div className="billing-entry-list">
+                    {adminAdjustmentEntries.slice(0, 24).map((entry) => (
+                      <article key={entry.id} className="billing-entry-row">
+                        <div>
+                          <strong>{entry.type === 'credit' ? (locale === 'en' ? 'Manual credit' : '后台加分') : (locale === 'en' ? 'Manual deduction' : '后台扣减')}</strong>
+                          <span>{entry.note.replace(/^Admin adjustment:\s*/, '') || entry.note} · {formatDate(entry.createdAt, locale)}</span>
+                        </div>
+                        <div className={`billing-entry-amount ${entry.type}`}>
+                          <strong>{entry.type === 'credit' ? '+' : '-'}{entry.points} pts</strong>
+                          <span>{locale === 'en' ? 'Admin adjustment' : '管理员调整'}</span>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state billing-empty-state">
+                    <strong>{locale === 'en' ? 'Credit adjustments are collapsed' : '积分调整明细已收起'}</strong>
+                    <span>
+                      {locale === 'en'
+                        ? `Manual credits ${billingSummary?.totalAdminAdjustedCreditPoints ?? 0} pts · manual deductions ${billingSummary?.totalAdminAdjustedChargePoints ?? 0} pts.`
+                        : `手动加分 ${billingSummary?.totalAdminAdjustedCreditPoints ?? 0} pts · 手动扣减 ${billingSummary?.totalAdminAdjustedChargePoints ?? 0} pts。`}
+                    </span>
+                  </div>
+                )
+              ) : (
+                <div className="empty-state billing-empty-state">
+                  <strong>{locale === 'en' ? 'No adjustments' : '暂无调整记录'}</strong>
+                  <span>{locale === 'en' ? 'Admin credit changes will appear here.' : '后台手动加减积分会显示在这里。'}</span>
                 </div>
               )}
             </article>
@@ -5139,7 +5205,17 @@ function App() {
                 <div className="admin-inline-form">
                   <select
                     value={adminAdjustment.type}
-                    onChange={(event) => setAdminAdjustment((current) => ({ ...current, type: event.target.value as 'credit' | 'charge' }))}
+                    onChange={(event) => {
+                      const nextType = event.target.value as 'credit' | 'charge';
+                      setAdminAdjustment((current) => {
+                        const shouldUseDefaultNote = !current.note.trim() || current.note === 'Manual credit' || current.note === 'Manual charge';
+                        return {
+                          ...current,
+                          type: nextType,
+                          note: shouldUseDefaultNote ? (nextType === 'credit' ? 'Manual credit' : 'Manual charge') : current.note
+                        };
+                      });
+                    }}
                   >
                     <option value="credit">补积分</option>
                     <option value="charge">扣积分</option>

@@ -414,6 +414,24 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/store.ts',
+  'totalChargedPoints: totalProjectChargedPoints',
+  'Billing summary charged total must exclude manual admin adjustments.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  "entry.type === 'charge' && !isAdminBillingAdjustmentEntry(entry)",
+  'Billing usage list must show project charges instead of manual admin adjustments.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '后台手动加减积分单独显示，不计入项目累计扣点。',
+  'Billing page must explain manual credit adjustments separately from project usage.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'

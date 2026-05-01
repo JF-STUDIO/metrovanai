@@ -202,6 +202,9 @@ export interface BillingSummary {
   totalCreditedPoints: number;
   totalChargedPoints: number;
   totalTopUpUsd: number;
+  totalProjectChargedPoints: number;
+  totalAdminAdjustedCreditPoints: number;
+  totalAdminAdjustedChargePoints: number;
 }
 
 export interface BillingPackage {

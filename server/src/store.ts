@@ -31,6 +31,10 @@ import {
   normalizeHex,
   sanitizeSegment
 } from './utils.js';
+
+function isAdminBillingAdjustment(entry: BillingEntry) {
+  return entry.amountUsd === 0 && !entry.projectId && !entry.projectName && entry.note.startsWith('Admin adjustment:');
+}
 import {
   createStorageProvider,
   type StorageProvider,
@@ -463,18 +467,30 @@ export class LocalStore {
     const totalCreditedPoints = entries
       .filter((entry) => entry.type === 'credit')
       .reduce((sum, entry) => sum + entry.points, 0);
-    const totalChargedPoints = entries
+    const totalRawChargedPoints = entries
       .filter((entry) => entry.type === 'charge')
+      .reduce((sum, entry) => sum + entry.points, 0);
+    const totalProjectChargedPoints = entries
+      .filter((entry) => entry.type === 'charge' && !isAdminBillingAdjustment(entry))
+      .reduce((sum, entry) => sum + entry.points, 0);
+    const totalAdminAdjustedCreditPoints = entries
+      .filter((entry) => entry.type === 'credit' && isAdminBillingAdjustment(entry))
+      .reduce((sum, entry) => sum + entry.points, 0);
+    const totalAdminAdjustedChargePoints = entries
+      .filter((entry) => entry.type === 'charge' && isAdminBillingAdjustment(entry))
       .reduce((sum, entry) => sum + entry.points, 0);
     const totalTopUpUsd = entries
       .filter((entry) => entry.type === 'credit')
       .reduce((sum, entry) => sum + entry.amountUsd, 0);
 
     return {
-      availablePoints: Math.max(0, totalCreditedPoints - totalChargedPoints),
+      availablePoints: Math.max(0, totalCreditedPoints - totalRawChargedPoints),
       totalCreditedPoints,
-      totalChargedPoints,
-      totalTopUpUsd: Number(totalTopUpUsd.toFixed(2))
+      totalChargedPoints: totalProjectChargedPoints,
+      totalTopUpUsd: Number(totalTopUpUsd.toFixed(2)),
+      totalProjectChargedPoints,
+      totalAdminAdjustedCreditPoints,
+      totalAdminAdjustedChargePoints
     };
   }
 

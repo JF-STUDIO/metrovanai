@@ -753,7 +753,10 @@ export const DEMO_BILLING_SUMMARY: BillingSummary = {
   availablePoints: 408,
   totalCreditedPoints: 420,
   totalChargedPoints: 12,
-  totalTopUpUsd: 100
+  totalTopUpUsd: 100,
+  totalProjectChargedPoints: 12,
+  totalAdminAdjustedCreditPoints: 0,
+  totalAdminAdjustedChargePoints: 0
 };
 
 export const DEMO_BILLING_ENTRIES: BillingEntry[] = [
