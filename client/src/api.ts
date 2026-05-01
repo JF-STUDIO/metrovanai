@@ -309,7 +309,11 @@ export interface AdminProjectRecoverySummary {
   failed: number;
 }
 
-export type AdminProjectRepairAction = 'retry-failed-processing' | 'regenerate-download' | 'mark-stalled-failed';
+export type AdminProjectRepairAction =
+  | 'retry-failed-processing'
+  | 'regenerate-download'
+  | 'mark-stalled-failed'
+  | 'acknowledge-maintenance';
 
 export interface AdminProjectRepairPayload {
   action: AdminProjectRepairAction;
@@ -957,10 +961,10 @@ export async function recoverAdminProjectRunningHubResults(projectId: string) {
   );
 }
 
-export async function repairAdminProject(projectId: string, action: AdminProjectRepairAction) {
+export async function repairAdminProject(projectId: string, action: AdminProjectRepairAction, options: { note?: string } = {}) {
   return await jsonRequest<AdminProjectRepairPayload>(`/api/admin/projects/${encodeURIComponent(projectId)}/repair`, {
     method: 'POST',
-    body: JSON.stringify({ action })
+    body: JSON.stringify({ action, note: options.note })
   });
 }
 

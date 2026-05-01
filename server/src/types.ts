@@ -402,6 +402,12 @@ export interface ProjectRecord {
   groups: ProjectGroup[];
   resultAssets: ResultAsset[];
   job: ProjectJobState | null;
+  maintenanceReview?: {
+    signature: string;
+    reviewedAt: string;
+    reviewedBy: string;
+    note: string | null;
+  } | null;
 }
 
 export interface WorkflowNodeMapping {

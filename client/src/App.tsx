@@ -701,6 +701,9 @@ function App() {
       adminProjects
         .map((project) => {
           const health = project.adminHealth;
+          if (health?.reviewed) {
+            return { project, score: 0, errorCount: 0, warningCount: 0 };
+          }
           const errorCount = health?.issues?.filter((issue) => issue.severity === 'error').length ?? 0;
           const warningCount = health?.issues?.filter((issue) => issue.severity !== 'error').length ?? 0;
           const failedDownload = health?.latestDownloadJob?.status === 'failed' ? 1 : 0;
@@ -2089,11 +2092,21 @@ function App() {
     ) {
       return;
     }
+    const acknowledgeNote =
+      action === 'acknowledge-maintenance'
+        ? window.prompt(
+            `确认将项目 "${adminSelectedProject.name}" 的当前维护提示标记为已审核？之后同一批问题不会再进入优先处理。`,
+            '当前照片无需重新处理，已人工审核。'
+          )
+        : null;
+    if (action === 'acknowledge-maintenance' && acknowledgeNote === null) {
+      return;
+    }
 
     setAdminRepairBusy(action);
     setAdminMessage('');
     try {
-      const response = await repairAdminProject(adminSelectedProject.id, action);
+      const response = await repairAdminProject(adminSelectedProject.id, action, { note: acknowledgeNote ?? undefined });
       setAdminProjects((current) => current.map((project) => (project.id === response.project.id ? response.project : project)));
       setAdminDetailProjects((current) => {
         const exists = current.some((project) => project.id === response.project.id);
@@ -2114,7 +2127,12 @@ function App() {
       void handleAdminRunDeepHealth();
       return;
     }
-    if (action === 'retry-failed-processing' || action === 'regenerate-download' || action === 'mark-stalled-failed') {
+    if (
+      action === 'retry-failed-processing' ||
+      action === 'regenerate-download' ||
+      action === 'mark-stalled-failed' ||
+      action === 'acknowledge-maintenance'
+    ) {
       void handleAdminRepairSelectedProject(action);
     }
   }
@@ -5144,6 +5162,7 @@ function App() {
       if (action === 'retry-failed-processing') return '重试失败照片';
       if (action === 'regenerate-download') return '重新生成下载包';
       if (action === 'mark-stalled-failed') return '标记卡住失败';
+      if (action === 'acknowledge-maintenance') return '标记已审核';
       if (action === 'deep-health') return '深度巡检';
       return action;
     };
@@ -5269,7 +5288,7 @@ function App() {
                   <div className="admin-diagnosis-card">
                     <div className="admin-mini-head">
                       <strong>诊断建议</strong>
-                      <span>{adminSelectedProject.adminHealth.issues?.length ? `${adminSelectedProject.adminHealth.issues.length} 个原因` : '正常'}</span>
+                      <span>{adminSelectedProject.adminHealth.reviewed ? '已审核' : adminSelectedProject.adminHealth.issues?.length ? `${adminSelectedProject.adminHealth.issues.length} 个原因` : '正常'}</span>
                     </div>
                     <p>{adminSelectedProject.adminHealth.rootCauseSummary ?? '未发现需要处理的项目健康问题。'}</p>
                     {adminSelectedProject.adminHealth.issues?.length ? (
@@ -5308,6 +5327,14 @@ function App() {
                     <div className="admin-health-ok">未发现 RAW/JPG 混组、重复源文件或截断结果图风险。</div>
                   )}
                   <div className="admin-repair-actions">
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      type="button"
+                      onClick={() => void handleAdminRepairSelectedProject('acknowledge-maintenance')}
+                      disabled={adminSelectedProject.adminHealth?.reviewed || Boolean(adminRepairBusy)}
+                    >
+                      {adminRepairBusy === 'acknowledge-maintenance' ? '标记中...' : '标记已审核'}
+                    </button>
                     <button
                       className="btn btn-ghost btn-xs"
                       type="button"

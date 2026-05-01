@@ -406,6 +406,48 @@ app.post('/api/admin/projects/:id/repair', async (req, res) => {
     return;
   }
 
+  if (action === 'acknowledge-maintenance') {
+    const latestDownloadJob = store
+      .listProjectDownloadJobs(project.id)
+      .sort((left: ProjectDownloadJobRecord, right: ProjectDownloadJobRecord) => right.createdAt - left.createdAt)[0] ?? null;
+    const now = new Date().toISOString();
+    const note = typeof req.body?.note === 'string' && req.body.note.trim()
+      ? req.body.note.trim().slice(0, 240)
+      : '当前问题已人工审核，无需重新处理。';
+    const signature = buildMaintenanceReviewSignature(project, latestDownloadJob);
+    const nextProject = store.updateProject(project.id, (current) => ({
+      ...current,
+      maintenanceReview: {
+        signature,
+        reviewedAt: now,
+        reviewedBy: actor.actorEmail,
+        note
+      },
+      updatedAt: now
+    }));
+    writeAdminAuditLog(req, actor, {
+      action: 'project.repair.acknowledge_maintenance',
+      targetProjectId: project.id,
+      details: {
+        signature,
+        note,
+        failedItems: project.hdrItems.filter(
+          (item: any) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl)
+        ).length
+      }
+    });
+
+    res.json({
+      action,
+      summary: {
+        status: 'done',
+        message: '已标记为已审核；当前这批维护提示会从优先处理和巡检告警中清除。'
+      },
+      project: buildAdminProjectPayload(nextProject ?? project)
+    });
+    return;
+  }
+
   res.status(400).json({ error: 'Unsupported repair action.' });
 });
 
@@ -459,6 +501,38 @@ function buildAdminMaintenanceReportPayload(name: string, fullPath: string) {
   }
 }
 
+function buildMaintenanceReviewSignature(project: ProjectRecord, latestDownloadJob?: ProjectDownloadJobRecord | null) {
+  const failedItems = project.hdrItems
+    .filter((item: any) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl))
+    .map((item) => item.id)
+    .sort();
+  const rawJpegSidecars = project.hdrItems
+    .filter((item) => hasRawJpegSidecarMix(item.exposures.map((exposure) => exposure.originalName || exposure.fileName)))
+    .map((item) => item.id)
+    .sort();
+  const duplicateSources = project.hdrItems
+    .filter((item) => hasDuplicateSources(item.exposures.map((exposure) => exposure.originalName || exposure.fileName)))
+    .map((item) => item.id)
+    .sort();
+  const missingSourceCount = project.hdrItems.reduce(
+    (sum, item) =>
+      sum +
+      item.exposures.filter((exposure) => !exposure.storageKey && !exposure.storagePath && !exposure.storageUrl).length,
+    0
+  );
+  return JSON.stringify({
+    projectId: project.id,
+    status: project.status,
+    jobStatus: project.job?.status ?? null,
+    failedItems,
+    rawJpegSidecars,
+    duplicateSources,
+    missingSourceCount,
+    failedDownloadJobId: latestDownloadJob?.status === 'failed' ? latestDownloadJob.jobId : null,
+    stalled: getPotentiallyStalledMinutes(project) > 0
+  });
+}
+
 function buildAdminProjectHealth(project: ProjectRecord) {
   const downloadJobs = store
     .listProjectDownloadJobs(project.id)
@@ -488,6 +562,8 @@ function buildAdminProjectHealth(project: ProjectRecord) {
     (item: any) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl)
   ).length;
   const stalledMinutes = getPotentiallyStalledMinutes(project);
+  const maintenanceSignature = buildMaintenanceReviewSignature(project, latestDownloadJob);
+  const reviewed = project.maintenanceReview?.signature === maintenanceSignature;
   const warnings = [
     missingSourceCount ? `${missingSourceCount} 个曝光缺少源文件引用` : '',
     rawJpegSidecarGroups.length ? `${rawJpegSidecarGroups.length} 组混入同名 JPG 副本` : '',
@@ -501,7 +577,7 @@ function buildAdminProjectHealth(project: ProjectRecord) {
     (sum, status) => sum + (hdrStatusCounts[status] ?? 0),
     0
   );
-  const issues = [
+  const detectedIssues = [
     failedItemsWithoutResult
       ? {
           code: 'failed-processing-items',
@@ -566,11 +642,20 @@ function buildAdminProjectHealth(project: ProjectRecord) {
         }
       : null
   ].filter(Boolean);
+  const issues = reviewed ? [] : detectedIssues;
+  const visibleWarnings = reviewed ? [] : warnings;
   const recommendedActions = Array.from(
     new Set(issues.map((issue: any) => issue.action).filter(Boolean))
   ).slice(0, 4);
+  if (!reviewed && (detectedIssues.length || warnings.length) && !recommendedActions.includes('acknowledge-maintenance')) {
+    recommendedActions.push('acknowledge-maintenance');
+  }
   const status =
-    issues.some((issue: any) => issue.severity === 'error') || warnings.length || failedCount
+    reviewed
+      ? project.status === 'completed'
+        ? 'healthy'
+        : 'idle'
+      : issues.some((issue: any) => issue.severity === 'error') || visibleWarnings.length || failedCount
       ? 'attention'
       : project.status === 'completed' && project.resultAssets.length === project.hdrItems.length
         ? 'healthy'
@@ -595,8 +680,14 @@ function buildAdminProjectHealth(project: ProjectRecord) {
           error: latestDownloadJob.error
         }
       : null,
-    warnings,
-    rootCauseSummary: issues.length ? (issues[0] as any).detail : '未发现需要处理的项目健康问题。',
+    reviewed,
+    maintenanceReview: project.maintenanceReview ?? null,
+    warnings: visibleWarnings,
+    rootCauseSummary: reviewed
+      ? `已审核：${project.maintenanceReview?.note || '当前问题无需处理。'}`
+      : issues.length
+        ? (issues[0] as any).detail
+        : '未发现需要处理的项目健康问题。',
     issues,
     recommendedActions,
     rawJpegSidecarGroups,

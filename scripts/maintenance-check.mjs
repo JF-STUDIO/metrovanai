@@ -201,6 +201,63 @@ function hasRawJpegSidecarMix(exposures) {
   return Array.from(jpegStems).some((stem) => rawStems.has(stem));
 }
 
+function hasDuplicateSources(exposures) {
+  const seen = new Set();
+  for (const exposure of exposures ?? []) {
+    const name = path.basename(String(exposure?.originalName || exposure?.fileName || '').replace(/\\/g, '/')).toLowerCase();
+    if (!name) continue;
+    if (seen.has(name)) return true;
+    seen.add(name);
+  }
+  return false;
+}
+
+function isPotentiallyStalledProject(project) {
+  const updatedAt = Date.parse(project?.updatedAt);
+  return (
+    (project?.status === 'processing' || project?.status === 'uploading' || project?.job?.status === 'running') &&
+    Number.isFinite(updatedAt) &&
+    Date.now() - updatedAt > 45 * 60 * 1000
+  );
+}
+
+function buildMaintenanceReviewSignature(project, latestDownloadJob = null) {
+  const hdrItems = Array.isArray(project?.hdrItems) ? project.hdrItems : [];
+  const failedItems = hdrItems
+    .filter((item) => item?.status === 'error' && !isCompletedHdrItem(item))
+    .map((item) => item.id)
+    .sort();
+  const rawJpegSidecars = hdrItems
+    .filter((item) => hasRawJpegSidecarMix(item?.exposures))
+    .map((item) => item.id)
+    .sort();
+  const duplicateSources = hdrItems
+    .filter((item) => hasDuplicateSources(item?.exposures))
+    .map((item) => item.id)
+    .sort();
+  const missingSourceCount = hdrItems.reduce(
+    (sum, item) =>
+      sum +
+      (item?.exposures ?? []).filter((exposure) => !exposure.storageKey && !exposure.storagePath && !exposure.storageUrl).length,
+    0
+  );
+  return JSON.stringify({
+    projectId: project?.id ?? null,
+    status: project?.status ?? null,
+    jobStatus: project?.job?.status ?? null,
+    failedItems,
+    rawJpegSidecars,
+    duplicateSources,
+    missingSourceCount,
+    failedDownloadJobId: latestDownloadJob?.status === 'failed' ? latestDownloadJob.jobId : null,
+    stalled: isPotentiallyStalledProject(project)
+  });
+}
+
+function isProjectMaintenanceReviewed(project, latestDownloadJob = null) {
+  return project?.maintenanceReview?.signature === buildMaintenanceReviewSignature(project, latestDownloadJob);
+}
+
 function getProjectName(project) {
   return String(project?.name || project?.address || project?.id || 'Untitled project');
 }
@@ -368,13 +425,26 @@ async function checkApplicationData() {
     const hdrItems = projects.flatMap((project) =>
       Array.isArray(project.hdrItems) ? project.hdrItems.map((item) => ({ project, item })) : []
     );
-    const failedItems = hdrItems.filter(({ item }) => item?.status === 'error' && !isCompletedHdrItem(item));
+    const latestDownloadByProject = new Map();
+    for (const job of downloadJobs) {
+      const projectId = String(job?.projectId || '');
+      if (!projectId) continue;
+      const current = latestDownloadByProject.get(projectId);
+      if (!current || Number(job.completedAt || job.createdAt || 0) > Number(current.completedAt || current.createdAt || 0)) {
+        latestDownloadByProject.set(projectId, job);
+      }
+    }
+    const isReviewedProject = (project) => isProjectMaintenanceReviewed(project, latestDownloadByProject.get(project?.id) ?? null);
+    const failedItems = hdrItems.filter(
+      ({ project, item }) => !isReviewedProject(project) && item?.status === 'error' && !isCompletedHdrItem(item)
+    );
     const blockingFailedItems = failedItems.filter(({ project }) => project?.status !== 'completed');
     const completedProjectFailedItems = failedItems.filter(({ project }) => project?.status === 'completed');
-    const sidecarGroups = hdrItems.filter(({ item }) => hasRawJpegSidecarMix(item?.exposures));
+    const sidecarGroups = hdrItems.filter(({ project, item }) => !isReviewedProject(project) && hasRawJpegSidecarMix(item?.exposures));
     const stalledProjects = projects.filter((project) => {
       const updatedAt = Date.parse(project.updatedAt);
       return (
+        !isReviewedProject(project) &&
         (project.status === 'processing' || project.job?.status === 'running') &&
         Number.isFinite(updatedAt) &&
         Date.now() - updatedAt > 45 * 60 * 1000
@@ -382,13 +452,20 @@ async function checkApplicationData() {
     });
     const stalledUploadProjects = projects.filter((project) => {
       const updatedAt = Date.parse(project.updatedAt);
-      return project.status === 'uploading' && Number.isFinite(updatedAt) && Date.now() - updatedAt > 45 * 60 * 1000;
+      return (
+        !isReviewedProject(project) &&
+        project.status === 'uploading' &&
+        Number.isFinite(updatedAt) &&
+        Date.now() - updatedAt > 45 * 60 * 1000
+      );
     });
     const recentFailedDownloads = downloadJobs.filter((job) => {
       const completedAt = Number(job.completedAt || job.createdAt || 0);
-      return job.status === 'failed' && completedAt && Date.now() - completedAt < 24 * 60 * 60 * 1000;
+      const project = projects.find((item) => item.id === job.projectId);
+      return !isReviewedProject(project) && job.status === 'failed' && completedAt && Date.now() - completedAt < 24 * 60 * 60 * 1000;
     });
     const creditMismatchProjects = projects.filter((project) => {
+      if (isReviewedProject(project)) return false;
       const completedCount = (project.hdrItems ?? []).filter(isCompletedHdrItem).length;
       return Number(project.pointsSpent ?? 0) !== completedCount;
     });
