@@ -156,6 +156,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'client/src/components/ProcessingStatusPanel.tsx',
+  'Choose files to resume',
+  'Upload recovery UI must let users reselect files after a browser refresh.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  'collectUploadedObjectReferencesFromProject',
+  'Upload recovery must preserve already uploaded R2 objects when local draft state is rebuilt.'
+);
+
+assertIncludes(
   'client/src/api.ts',
   'const MULTIPART_UPLOAD_THRESHOLD_BYTES = 64 * 1024 * 1024;',
   'Large photo uploads should switch to multipart before 100MB.'

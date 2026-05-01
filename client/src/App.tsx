@@ -620,6 +620,7 @@ function App() {
   const showProcessingStepContent = currentWorkspaceStep === 3;
   const showProcessingUploadProgress = showProcessingStepContent && uploadActive && uploadMode === 'originals';
   const showResumeUploadAction = Boolean(activeLocalDraft && !uploadActive && currentProject?.status === 'uploading');
+  const showRecoverUploadAction = Boolean(!activeLocalDraft && !uploadActive && currentProject?.status === 'uploading');
   const hasActiveProcessingItems = workspaceHdrItems.some((item) => isHdrItemProcessing(item.status));
   const jobActivelyProcessing = isProjectJobActivelyProcessing(currentProject?.job);
   const jobFailedWhileItemsActive = Boolean(currentProject?.job?.status === 'failed' && (hasActiveProcessingItems || jobActivelyProcessing));
@@ -1206,6 +1207,32 @@ function App() {
     return files
       .map((file) => byIdentity.get(getUploadReferenceIdentity({ originalName: file.name, size: file.size })))
       .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
+  }
+
+  function collectUploadedObjectReferencesFromProject(project: ProjectRecord) {
+    const uploads: UploadedObjectReference[] = [];
+    const seen = new Set<string>();
+    for (const hdrItem of project.hdrItems) {
+      for (const exposure of hdrItem.exposures) {
+        const storageKey = (exposure as typeof exposure & { storageKey?: string | null }).storageKey;
+        if (!storageKey) {
+          continue;
+        }
+        const uploaded = {
+          originalName: exposure.originalName || exposure.fileName,
+          mimeType: exposure.mimeType || 'application/octet-stream',
+          size: exposure.size,
+          storageKey
+        };
+        const identity = getUploadReferenceIdentity(uploaded);
+        if (seen.has(identity)) {
+          continue;
+        }
+        seen.add(identity);
+        uploads.push(uploaded);
+      }
+    }
+    return uploads;
   }
 
   async function refreshBilling() {
@@ -3014,7 +3041,10 @@ function App() {
     }
 
     const existingDraft = localImportDrafts[targetProject.id] ?? null;
-    const uploadedObjects = [...(existingDraft?.uploadedObjects ?? [])];
+    const uploadedObjects = mergeUploadedObjectReferences(
+      existingDraft?.uploadedObjects,
+      collectUploadedObjectReferencesFromProject(targetProject)
+    );
     setBusy(true);
     setUploadActive(true);
     setUploadMode('local');
@@ -5521,6 +5551,7 @@ function App() {
                     processingPanelTitle={processingPanelTitle}
                     project={currentProject}
                     showProcessingUploadProgress={showProcessingUploadProgress}
+                    showRecoverUploadAction={showRecoverUploadAction}
                     showResumeUploadAction={showResumeUploadAction}
                     showRetryProcessingAction={showRetryProcessingAction}
                     uploadPaused={uploadPaused}
@@ -5528,6 +5559,7 @@ function App() {
                     workspacePointsEstimate={workspacePointsEstimate}
                     onCancelUpload={handleCancelUpload}
                     onPauseUpload={handlePauseUpload}
+                    onRecoverUploadFiles={triggerFilePicker}
                     onResumeProcessingUpload={() => void handleStartProcessing()}
                     onResumeUpload={handleResumeUpload}
                     onRetryProcessing={() => void handleStartProcessing({ retryFailed: true })}

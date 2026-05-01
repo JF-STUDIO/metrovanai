@@ -15,6 +15,7 @@ interface ProcessingStatusPanelProps {
   processingPanelTitle: string;
   project: ProjectRecord;
   showProcessingUploadProgress: boolean;
+  showRecoverUploadAction: boolean;
   showResumeUploadAction: boolean;
   showRetryProcessingAction: boolean;
   uploadPaused: boolean;
@@ -22,6 +23,7 @@ interface ProcessingStatusPanelProps {
   workspacePointsEstimate: number;
   onCancelUpload: () => void;
   onPauseUpload: () => void;
+  onRecoverUploadFiles: () => void;
   onResumeUpload: () => void;
   onRetryProcessing: () => void;
   onResumeProcessingUpload: () => void;
@@ -35,6 +37,7 @@ export function ProcessingStatusPanel({
   processingPanelTitle,
   project,
   showProcessingUploadProgress,
+  showRecoverUploadAction,
   showResumeUploadAction,
   showRetryProcessingAction,
   uploadPaused,
@@ -42,6 +45,7 @@ export function ProcessingStatusPanel({
   workspacePointsEstimate,
   onCancelUpload,
   onPauseUpload,
+  onRecoverUploadFiles,
   onResumeProcessingUpload,
   onResumeUpload,
   onRetryProcessing
@@ -74,7 +78,12 @@ export function ProcessingStatusPanel({
         )}
         {showResumeUploadAction && (
           <button className="solid-button small" type="button" onClick={onResumeProcessingUpload} disabled={busy}>
-            {locale === 'en' ? 'Resume upload' : '继续上传'}
+            {locale === 'en' ? 'Resume remaining files' : '继续补传剩余文件'}
+          </button>
+        )}
+        {showRecoverUploadAction && (
+          <button className="solid-button small" type="button" onClick={onRecoverUploadFiles} disabled={busy}>
+            {locale === 'en' ? 'Choose files to resume' : '重新选择文件继续上传'}
           </button>
         )}
       </div>
