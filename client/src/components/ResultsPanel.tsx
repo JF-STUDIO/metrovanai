@@ -16,6 +16,9 @@ interface ResultsPanelCopy {
   colorDropper: string;
   colorDropperCompact: string;
   hdrItemFailed: string;
+  missingResults: string;
+  missingResultsHint: string;
+  missingResultStatus: string;
   noPreview: string;
   noResults: string;
   noResultsHint: string;
@@ -37,6 +40,7 @@ interface ResultsPanelProps {
   dragOverResultHdrItemId: string | null;
   draggedResultHdrItemId: string | null;
   failedResultHdrItems: HdrItem[];
+  missingResultHdrItems: HdrItem[];
   isDemoMode: boolean;
   locale: UiLocale;
   projectFreeRegenerationsRemaining: number;
@@ -68,6 +72,7 @@ export function ResultsPanel({
   dragOverResultHdrItemId,
   draggedResultHdrItemId,
   failedResultHdrItems,
+  missingResultHdrItems,
   isDemoMode,
   locale,
   projectFreeRegenerationsRemaining,
@@ -249,18 +254,19 @@ export function ResultsPanel({
           <span>{copy.noResultsHint}</span>
         </div>
       )}
-      {failedResultHdrItems.length > 0 && (
+      {missingResultHdrItems.length > 0 && (
         <div className="failed-results-block">
           <div className="panel-head compact">
             <div>
-              <strong>{copy.hdrItemFailed}</strong>
-              <span className="muted">{copy.retryProcessing}</span>
+              <strong>{failedResultHdrItems.length ? copy.hdrItemFailed : copy.missingResults}</strong>
+              <span className="muted">{copy.missingResultsHint}</span>
             </div>
           </div>
           <div className="result-grid failed-result-grid">
-            {failedResultHdrItems.map((hdrItem) => {
+            {missingResultHdrItems.map((hdrItem) => {
               const previewUrl = getHdrPreviewUrl(hdrItem);
               const selectedExposure = getSelectedExposure(hdrItem);
+              const hasExplicitFailure = hdrItem.status === 'error';
               return (
                 <article key={hdrItem.id} className="result-card failed-result-card">
                   <div className="result-frame">
@@ -272,7 +278,7 @@ export function ResultsPanel({
                   </div>
                   <div className="result-body">
                     <strong>{selectedExposure?.originalName ?? hdrItem.title}</strong>
-                    <span>{getHdrItemStatusLabel(hdrItem, locale)}</span>
+                    <span>{hasExplicitFailure ? getHdrItemStatusLabel(hdrItem, locale) : copy.missingResultStatus}</span>
                   </div>
                 </article>
               );

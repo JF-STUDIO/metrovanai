@@ -616,10 +616,11 @@ function App() {
   );
   const hasReviewContent = workspaceHdrItems.length > 0;
   const hasResultContent = displayResultAssets.length > 0;
-  const failedResultHdrItems = workspaceHdrItems.filter(
-    (item) => item.status === 'error' && !displayResultAssets.some((asset) => asset.hdrItemId === item.id)
-  );
+  const resultHdrItemIds = new Set(displayResultAssets.map((asset) => asset.hdrItemId));
+  const missingResultHdrItems = workspaceHdrItems.filter((item) => !resultHdrItemIds.has(item.id));
+  const failedResultHdrItems = missingResultHdrItems.filter((item) => item.status === 'error');
   const hasFailedResultHdrItems = failedResultHdrItems.length > 0;
+  const hasMissingResultHdrItems = missingResultHdrItems.length > 0;
   const showUploadStepContent = currentWorkspaceStep === 1 && !activeLocalDraft;
   const showUploadProgress = showUploadStepContent && uploadActive;
   const uploadProgressLabel = formatUploadProgressLabel(uploadSnapshot, uploadPercent, copy);
@@ -658,7 +659,7 @@ function App() {
     : jobFailedWhileItemsActive
       ? copy.processingGroupsHint
     : currentProject?.job?.detail || copy.waitingProcessingHint;
-  const showResultsStepContent = currentWorkspaceStep === 4 && (hasResultContent || hasFailedResultHdrItems);
+  const showResultsStepContent = currentWorkspaceStep === 4 && (hasResultContent || hasMissingResultHdrItems);
   const adminTotals = useMemo(
     () => ({
       users: adminTotalUsers || adminUsers.length,
@@ -673,6 +674,12 @@ function App() {
     [adminDetailProjects, adminSelectedProjectId]
   );
   const adminSelectedProjectResults = adminSelectedProject?.resultAssets ?? [];
+  const adminSelectedProjectMissingItems = adminSelectedProject
+    ? (() => {
+        const resultHdrItemIds = new Set(adminSelectedProject.resultAssets.map((asset) => asset.hdrItemId));
+        return adminSelectedProject.hdrItems.filter((item) => !resultHdrItemIds.has(item.id));
+      })()
+    : [];
   const adminSelectedProjectFailedItems =
     adminSelectedProject?.hdrItems.filter((item) => item.status === 'error') ?? [];
   const adminSelectedProjectProcessingItems =
@@ -5450,6 +5457,7 @@ function App() {
               <div className="admin-live-stats">
                 <span>失败 {adminSelectedProjectFailedItems.length}</span>
                 <span>处理中 {adminSelectedProjectProcessingItems.length}</span>
+                <span>缺结果 {adminSelectedProjectMissingItems.length}</span>
                 <span>结果 {adminSelectedProjectResults.length}</span>
               </div>
               {adminSelectedProject.adminHealth ? (
@@ -5506,6 +5514,25 @@ function App() {
                   ) : (
                     <div className="admin-health-ok">未发现 RAW/JPG 混组、重复源文件或截断结果图风险。</div>
                   )}
+                  {adminSelectedProjectMissingItems.length ? (
+                    <div className="admin-diagnosis-card">
+                      <div className="admin-mini-head">
+                        <strong>缺失结果</strong>
+                        <span>{adminSelectedProjectMissingItems.length} 组没有结果图</span>
+                      </div>
+                      <div className="admin-diagnosis-list">
+                        {adminSelectedProjectMissingItems.slice(0, 12).map((item) => {
+                          const selectedExposure = getSelectedExposure(item);
+                          return (
+                            <div className={item.status === 'error' ? 'admin-diagnosis-item error' : 'admin-diagnosis-item warning'} key={item.id}>
+                              <strong>{selectedExposure?.originalName ?? item.title}</strong>
+                              <span>{getHdrItemStatusLabel(item, locale)} · HDR {item.index}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="admin-repair-actions">
                     <button
                       className="btn btn-ghost btn-xs"
@@ -6840,6 +6867,7 @@ function App() {
                     dragOverResultHdrItemId={dragOverResultHdrItemId}
                     draggedResultHdrItemId={draggedResultHdrItemId}
                     failedResultHdrItems={failedResultHdrItems}
+                    missingResultHdrItems={missingResultHdrItems}
                     isDemoMode={isDemoMode}
                     locale={locale}
                     projectFreeRegenerationsRemaining={projectFreeRegenerationsRemaining}
