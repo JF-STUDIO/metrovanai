@@ -271,6 +271,7 @@ function App() {
   const [billingOpen, setBillingOpen] = useState(false);
   const [billingModalMode, setBillingModalMode] = useState<'topup' | 'billing'>('billing');
   const [billingBusy, setBillingBusy] = useState(false);
+  const [billingUsageExpanded, setBillingUsageExpanded] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
   const [selectedBillingPackageId, setSelectedBillingPackageId] = useState<string | null>(null);
   const [customRechargeAmount, setCustomRechargeAmount] = useState('');
@@ -4595,24 +4596,54 @@ function App() {
               <div className="panel-head compact">
                 <div>
                   <strong>{locale === 'en' ? 'Credit usage' : '积分使用情况'}</strong>
-                  <span className="muted">{locale === 'en' ? 'Project processing charges only.' : '只显示项目处理扣点记录。'}</span>
+                  <span className="muted">
+                    {usageEntries.length
+                      ? locale === 'en'
+                        ? `${usageEntries.length} charge records. Details are hidden until opened.`
+                        : `${usageEntries.length} 条扣点记录，默认收起，打开后查看明细。`
+                      : locale === 'en'
+                        ? 'Project processing charges only.'
+                        : '只显示项目处理扣点记录。'}
+                  </span>
                 </div>
+                {usageEntries.length ? (
+                  <button
+                    className="ghost-button small"
+                    type="button"
+                    onClick={() => setBillingUsageExpanded((current) => !current)}
+                  >
+                    {billingUsageExpanded
+                      ? locale === 'en' ? 'Hide details' : '收起明细'
+                      : locale === 'en' ? 'View details' : '展开明细'}
+                  </button>
+                ) : null}
               </div>
               {usageEntries.length ? (
-                <div className="billing-entry-list">
-                  {usageEntries.slice(0, 24).map((entry) => (
-                    <article key={entry.id} className="billing-entry-row">
-                      <div>
-                        <strong>{entry.projectName || entry.note}</strong>
-                        <span>{entry.note} · {formatDate(entry.createdAt, locale)}</span>
-                      </div>
-                      <div className="billing-entry-amount charge">
-                        <strong>-{entry.points} pts</strong>
-                        <span>{formatUsd(entry.amountUsd, locale)}</span>
-                      </div>
-                    </article>
-                  ))}
-                </div>
+                billingUsageExpanded ? (
+                  <div className="billing-entry-list">
+                    {usageEntries.slice(0, 24).map((entry) => (
+                      <article key={entry.id} className="billing-entry-row">
+                        <div>
+                          <strong>{entry.projectName || entry.note}</strong>
+                          <span>{entry.note} · {formatDate(entry.createdAt, locale)}</span>
+                        </div>
+                        <div className="billing-entry-amount charge">
+                          <strong>-{entry.points} pts</strong>
+                          <span>{formatUsd(entry.amountUsd, locale)}</span>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state billing-empty-state">
+                    <strong>{locale === 'en' ? 'Credit usage is collapsed' : '积分使用明细已收起'}</strong>
+                    <span>
+                      {locale === 'en'
+                        ? `${billingSummary?.totalChargedPoints ?? 0} pts charged. Open details to review each project charge.`
+                        : `累计扣点 ${billingSummary?.totalChargedPoints ?? 0} pts，展开后查看每个项目扣点。`}
+                    </span>
+                  </div>
+                )
               ) : (
                 <div className="empty-state billing-empty-state">
                   <strong>{locale === 'en' ? 'No credit usage yet' : '暂无积分使用记录'}</strong>
