@@ -270,6 +270,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'scripts/maintenance-check.mjs',
+  'checkApplicationData',
+  'Maintenance automation must inspect production application data.'
+);
+
+assertIncludes(
+  'scripts/maintenance-check.mjs',
+  'sendMaintenanceAlert',
+  'Maintenance automation must notify when checks fail.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'

@@ -11,9 +11,10 @@ const secretFile =
   process.env.METROVAN_SECRET_FILE ||
   path.join(workspaceRoot, 'PRIVATE_METROVAN_AI_SECRETS_REAL_DO_NOT_SHARE.env.local');
 const frontendUrl = process.env.METROVAN_CHECK_FRONTEND_URL || 'https://metrovanai.com/';
-const apiRoot = (process.env.METROVAN_CHECK_API_ROOT || 'https://api.metrovanai.com').replace(/\/+$/, '');
+const apiRoot = (process.env.METROVAN_CHECK_API_ROOT || 'https://metrovanai.com').replace(/\/+$/, '');
 const serverRequire = createRequire(path.join(repoRoot, 'server', 'package.json'));
 const results = [];
+const reportStartedAt = new Date();
 const monitoredEnvNames = [
   'METROVAN_RENDER_PRODUCTION_SERVICE_ID',
   'RENDER_API_KEY',
@@ -152,6 +153,125 @@ async function checkDatabase() {
   }
 }
 
+function getMetadataTableName() {
+  const table = process.env.METROVAN_METADATA_TABLE || 'metrovan_metadata';
+  if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(table)) {
+    throw new Error(`Invalid metadata table name: ${table}`);
+  }
+  return table
+    .split('.')
+    .map((part) => `"${part.replace(/"/g, '""')}"`)
+    .join('.');
+}
+
+function isCompletedHdrItem(item) {
+  return Boolean(item?.resultUrl && item?.resultFileName && (item?.resultKey || item?.resultPath));
+}
+
+function hasRawJpegSidecarMix(exposures) {
+  const rawExtensions = new Set([
+    '.arw',
+    '.cr2',
+    '.cr3',
+    '.crw',
+    '.nef',
+    '.nrw',
+    '.dng',
+    '.raf',
+    '.rw2',
+    '.rwl',
+    '.orf',
+    '.srw',
+    '.3fr',
+    '.fff',
+    '.iiq',
+    '.pef',
+    '.erf'
+  ]);
+  const jpegExtensions = new Set(['.jpg', '.jpeg']);
+  const rawStems = new Set();
+  const jpegStems = new Set();
+  for (const exposure of exposures ?? []) {
+    const name = path.basename(String(exposure?.originalName || exposure?.fileName || '').replace(/\\/g, '/')).toLowerCase();
+    const extension = path.extname(name);
+    const stem = extension ? name.slice(0, -extension.length) : name;
+    if (rawExtensions.has(extension)) rawStems.add(stem);
+    if (jpegExtensions.has(extension)) jpegStems.add(stem);
+  }
+  return Array.from(jpegStems).some((stem) => rawStems.has(stem));
+}
+
+async function checkApplicationData() {
+  const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (!connectionString) {
+    record('application_data', true, { skipped: true, reason: 'Database URL not loaded.' });
+    return;
+  }
+
+  const pg = serverRequire('pg');
+  const client = new pg.Client({
+    connectionString,
+    ssl: process.env.METROVAN_POSTGRES_SSL === 'false' ? false : { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10_000
+  });
+
+  try {
+    await client.connect();
+    const tableName = getMetadataTableName();
+    const documentId = process.env.METROVAN_METADATA_DOCUMENT_ID || 'default';
+    const response = await client.query(`select data from ${tableName} where id = $1 limit 1`, [documentId]);
+    const data = response.rows[0]?.data ?? {};
+    const projects = Array.isArray(data.projects) ? data.projects : [];
+    const downloadJobs = Array.isArray(data.downloadJobs) ? data.downloadJobs : [];
+    const hdrItems = projects.flatMap((project) =>
+      Array.isArray(project.hdrItems) ? project.hdrItems.map((item) => ({ project, item })) : []
+    );
+    const failedItems = hdrItems.filter(({ item }) => item?.status === 'error' && !isCompletedHdrItem(item));
+    const sidecarGroups = hdrItems.filter(({ item }) => hasRawJpegSidecarMix(item?.exposures));
+    const stalledProjects = projects.filter((project) => {
+      const updatedAt = Date.parse(project.updatedAt);
+      return (
+        (project.status === 'processing' || project.status === 'uploading' || project.job?.status === 'running') &&
+        Number.isFinite(updatedAt) &&
+        Date.now() - updatedAt > 45 * 60 * 1000
+      );
+    });
+    const recentFailedDownloads = downloadJobs.filter((job) => {
+      const completedAt = Number(job.completedAt || job.createdAt || 0);
+      return job.status === 'failed' && completedAt && Date.now() - completedAt < 24 * 60 * 60 * 1000;
+    });
+    const creditMismatchProjects = projects.filter((project) => {
+      const completedCount = (project.hdrItems ?? []).filter(isCompletedHdrItem).length;
+      return Number(project.pointsSpent ?? 0) !== completedCount;
+    });
+    const alerts = [
+      failedItems.length ? { code: 'failed-items', value: failedItems.length } : null,
+      sidecarGroups.length ? { code: 'raw-jpeg-sidecar-groups', value: sidecarGroups.length } : null,
+      stalledProjects.length ? { code: 'stalled-projects', value: stalledProjects.length } : null,
+      recentFailedDownloads.length ? { code: 'recent-failed-downloads', value: recentFailedDownloads.length } : null,
+      creditMismatchProjects.length ? { code: 'credit-mismatch-projects', value: creditMismatchProjects.length } : null
+    ].filter(Boolean);
+
+    record('application_data', alerts.length === 0, {
+      totals: {
+        projects: projects.length,
+        hdrItems: hdrItems.length,
+        downloadJobs: downloadJobs.length
+      },
+      alerts,
+      samples: {
+        failedProjectIds: Array.from(new Set(failedItems.map(({ project }) => project.id))).slice(0, 10),
+        stalledProjectIds: stalledProjects.slice(0, 10).map((project) => project.id),
+        failedDownloadJobIds: recentFailedDownloads.slice(0, 10).map((job) => job.jobId)
+      }
+    });
+  } catch (error) {
+    record('application_data', false, { error: redactError(error) });
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
 function hmac(key, value) {
   return crypto.createHmac('sha256', key).update(value, 'utf8').digest();
 }
@@ -254,6 +374,72 @@ async function checkR2() {
   record('r2_storage', probes.every((probe) => probe.ok), { probes });
 }
 
+function ensureReportsDir() {
+  const reportsDir = process.env.METROVAN_MAINTENANCE_REPORT_DIR || path.join(repoRoot, 'reports', 'maintenance');
+  fs.mkdirSync(reportsDir, { recursive: true });
+  return reportsDir;
+}
+
+function writeReport() {
+  const failed = results.filter((item) => !item.ok);
+  const report = {
+    startedAt: reportStartedAt.toISOString(),
+    completedAt: new Date().toISOString(),
+    ok: failed.length === 0,
+    failedCount: failed.length,
+    results
+  };
+  const reportsDir = ensureReportsDir();
+  const stamp = report.completedAt.replace(/[:-]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const target = path.join(reportsDir, `maintenance-${stamp}.json`);
+  fs.writeFileSync(target, JSON.stringify(report, null, 2));
+  return { report, target };
+}
+
+function getAlertRecipients() {
+  return String(process.env.METROVAN_MAINTENANCE_ALERT_EMAILS || process.env.METROVAN_ADMIN_EMAILS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+async function sendMaintenanceAlert(report, reportPath) {
+  if (report.ok) {
+    return { sent: false, reason: 'no_alerts' };
+  }
+
+  const host = process.env.SMTP_HOST?.trim();
+  const from = process.env.SMTP_FROM?.trim();
+  const recipients = getAlertRecipients();
+  if (!host || !from || !recipients.length) {
+    return { sent: false, reason: 'smtp_not_configured' };
+  }
+
+  const nodemailer = serverRequire('nodemailer');
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secureValue = String(process.env.SMTP_SECURE || '').toLowerCase();
+  const secure = secureValue ? ['true', '1', 'yes'].includes(secureValue) : port === 465;
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: user && pass ? { user, pass } : undefined
+  });
+  const failedLines = report.results
+    .filter((item) => !item.ok)
+    .map((item) => `- ${item.id}: ${JSON.stringify(item).slice(0, 800)}`)
+    .join('\n');
+  await transporter.sendMail({
+    from,
+    to: recipients,
+    subject: `[Metrovan AI] Maintenance alert (${report.failedCount})`,
+    text: `Metrovan AI automated maintenance found ${report.failedCount} failing check(s).\n\n${failedLines}\n\nReport: ${reportPath}\nCompleted: ${report.completedAt}`
+  });
+  return { sent: true, recipients: recipients.length };
+}
+
 async function main() {
   const loadedSecrets = loadEnvFile(secretFile);
   normalizeMonitoredEnv();
@@ -268,7 +454,14 @@ async function main() {
   await checkRender();
   await checkDatabase();
   await checkR2();
+  await checkApplicationData();
 
+  const { report, target } = writeReport();
+  const alert = await sendMaintenanceAlert(report, target).catch((error) => ({
+    sent: false,
+    error: redactError(error)
+  }));
+  record('maintenance_report', true, { path: target, alert });
   const failed = results.filter((item) => !item.ok);
   console.log(JSON.stringify({ done: true, failed: failed.length }));
   if (failed.length) {

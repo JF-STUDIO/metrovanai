@@ -8,6 +8,7 @@ server-runtime/
 tmp/
 test-results/
 playwright-report/
+reports/
 coverage/
 __pycache__/
 codex-backups/
