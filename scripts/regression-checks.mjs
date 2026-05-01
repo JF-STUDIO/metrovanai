@@ -338,8 +338,14 @@ assertIncludes(
 
 assertIncludes(
   'server/src/processor.ts',
-  '云端处理网络请求失败，系统已自动重试仍未成功',
-  'Final processing errors should explain when automatic retries were exhausted.'
+  'METROVAN_WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS ?? 2',
+  'Processing should run once, automatically retry once on failure, then mark the item failed.'
+);
+
+assertIncludes(
+  'server/src/processor.ts',
+  '自动重试后仍失败',
+  'Final processing errors should explain when automatic retry was exhausted.'
 );
 
 assertIncludes(

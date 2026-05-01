@@ -24,7 +24,7 @@ const WORKFLOW_BATCH_FILL_WAIT_MS = Math.max(
 );
 const WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS = Math.max(
   1,
-  Math.min(5, Number(process.env.METROVAN_WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS ?? 3))
+  Math.min(3, Number(process.env.METROVAN_WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS ?? 2))
 );
 const WORKFLOW_ITEM_AUTO_RETRY_BASE_DELAY_MS = Math.max(
   500,
@@ -177,19 +177,24 @@ function isTransientProcessingError(message: string) {
 }
 
 function toUserFacingProcessingError(message: string) {
-  if (message.startsWith('云端处理网络请求失败') || message.startsWith('源文件缺失') || message.startsWith('云端处理完成但没有返回')) {
+  if (
+    message.startsWith('自动重试后仍失败') ||
+    message.startsWith('云端处理网络请求失败') ||
+    message.startsWith('源文件缺失') ||
+    message.startsWith('云端处理完成但没有返回')
+  ) {
     return message;
   }
   if (isTransientProcessingError(message)) {
-    return `云端处理网络请求失败，系统已自动重试仍未成功。原始错误：${message}`;
+    return `自动重试后仍失败：云端处理网络请求失败。原始错误：${message}`;
   }
   if (message.toLowerCase().includes('source file is missing') || message.includes('原图不存在')) {
-    return `源文件缺失，无法重新处理。原始错误：${message}`;
+    return `自动重试后仍失败：源文件缺失，无法重新处理。原始错误：${message}`;
   }
   if (message.toLowerCase().includes('batch result is missing')) {
-    return `云端处理完成但没有返回这张结果图，系统已尝试恢复。原始错误：${message}`;
+    return `自动重试后仍失败：云端处理完成但没有返回这张结果图。原始错误：${message}`;
   }
-  return message;
+  return `自动重试后仍失败。原始错误：${message}`;
 }
 
 export class ProjectProcessor {
@@ -1453,7 +1458,7 @@ export class ProjectProcessor {
           return { hdrItemId: executionItem.hdrItem.id, artifact };
         } catch (error) {
           lastError = getErrorMessage(error);
-          if (!isTransientProcessingError(lastError) || attempt >= WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS) {
+          if (attempt >= WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS) {
             return {
               hdrItemId: executionItem.hdrItem.id,
               errorMessage: toUserFacingProcessingError(lastError)
@@ -1474,9 +1479,6 @@ export class ProjectProcessor {
         batchResults = await taskExecution.executeWorkflowBatch(project, executionItems, onProgress);
       } catch (error) {
         const message = getErrorMessage(error);
-        if (!isTransientProcessingError(message)) {
-          throw error;
-        }
         return await Promise.all(
           executionItems.map(async (executionItem) => await executeSingleWithRetry(executionItem, message))
         );
@@ -1484,7 +1486,7 @@ export class ProjectProcessor {
       const itemsById = new Map(executionItems.map((executionItem) => [executionItem.hdrItem.id, executionItem]));
       return await Promise.all(
         batchResults.map(async (result) => {
-          if (result.artifact || !result.errorMessage || !isTransientProcessingError(result.errorMessage)) {
+          if (result.artifact || !result.errorMessage) {
             return result.artifact
               ? result
               : { ...result, errorMessage: toUserFacingProcessingError(result.errorMessage ?? '') };
