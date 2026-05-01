@@ -140,7 +140,7 @@ const RESULT_THUMBNAIL_LONG_EDGE = 320;
 const RESULT_THUMBNAIL_URL_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
-const DIRECT_UPLOAD_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
+const DIRECT_UPLOAD_MULTIPART_PART_SIZE = 16 * 1024 * 1024;
 const RESULT_RECOVERY_INTERVAL_MS = Math.max(
   60_000,
   Number(process.env.METROVAN_RESULT_RECOVERY_INTERVAL_MS ?? 5 * 60_000)
@@ -1847,11 +1847,11 @@ function collectDirectUploadManifestEntriesByName(stagingRoot: string) {
 }
 
 function parseDirectUploadCompleteConcurrency() {
-  const raw = Number(process.env.METROVAN_DIRECT_UPLOAD_COMPLETE_CONCURRENCY ?? 4);
+  const raw = Number(process.env.METROVAN_DIRECT_UPLOAD_COMPLETE_CONCURRENCY ?? 12);
   if (!Number.isFinite(raw) || raw <= 0) {
-    return 4;
+    return 12;
   }
-  return Math.max(1, Math.min(8, Math.round(raw)));
+  return Math.max(1, Math.min(24, Math.round(raw)));
 }
 
 function shouldStageDirectUploadObjectsLocally() {

@@ -132,6 +132,24 @@ assertMatches(
 );
 
 assertIncludes(
+  'client/src/api.ts',
+  'const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 8;',
+  'Direct upload should keep enough browser concurrency for production photo batches.'
+);
+
+assertIncludes(
+  'client/src/api.ts',
+  'const MULTIPART_UPLOAD_THRESHOLD_BYTES = 64 * 1024 * 1024;',
+  'Large photo uploads should switch to multipart before 100MB.'
+);
+
+assertIncludes(
+  'server/src/index.ts',
+  'METROVAN_DIRECT_UPLOAD_COMPLETE_CONCURRENCY ?? 12',
+  'Direct upload completion should verify R2 objects with practical concurrency.'
+);
+
+assertIncludes(
   'server/src/csrf.ts',
   'timingSafeEqual',
   'CSRF hash comparison must use a timing-safe comparison.'
