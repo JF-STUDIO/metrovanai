@@ -71,6 +71,42 @@ assertIncludes(
   'Admin destructive user actions must include the target user id.'
 );
 
+assertIncludes(
+  'server/src/routes/admin.ts',
+  'normalizeEmail(parsed.data.confirmEmail) !== normalizeEmail(user.email)',
+  'Admin user deletion must match the confirmed email to the target user.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  'adminBillingAdjustmentSchema.safeParse',
+  'Admin billing adjustments must validate a confirmation payload.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  'parsed.data.confirmUserId !== user.id',
+  'Admin billing adjustments must match the confirmed target user id.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  'adminConfirmSchema.safeParse',
+  'Admin force logout must validate a confirmation payload.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  "action: 'admin.billing.adjust'",
+  'Admin billing adjustments must be audited.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  "action: 'admin.user.logout'",
+  'Admin force logout must be audited.'
+);
+
 for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',

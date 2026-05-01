@@ -62,6 +62,35 @@ test('production protected APIs reject anonymous access', async ({ request }) =>
   expect([401, 403]).toContain(checkoutCreate.status());
 });
 
+test('production dangerous admin mutations reject anonymous access', async ({ request }) => {
+  const mutationProbes = [
+    {
+      url: `${apiRoot}/api/admin/orders/order-probe/refund`,
+      data: { confirm: true, confirmOrderId: 'order-probe', confirmEmail: 'probe@example.com' }
+    },
+    {
+      url: `${apiRoot}/api/admin/users/user-probe/billing-adjustments`,
+      data: { confirm: true, confirmUserId: 'user-probe', type: 'credit', points: 1, note: 'anonymous probe' }
+    },
+    {
+      url: `${apiRoot}/api/admin/users/user-probe/logout`,
+      data: { confirm: true }
+    }
+  ];
+
+  for (const probe of mutationProbes) {
+    const response = await request.post(probe.url, { data: probe.data });
+    expect(response.ok()).toBeFalsy();
+    expect([401, 403]).toContain(response.status());
+  }
+
+  const deleteUser = await request.delete(`${apiRoot}/api/admin/users/user-probe`, {
+    data: { confirm: true, confirmUserId: 'user-probe', confirmEmail: 'probe@example.com' }
+  });
+  expect(deleteUser.ok()).toBeFalsy();
+  expect([401, 403]).toContain(deleteUser.status());
+});
+
 test('production admin readiness has no action-required checks', async ({ request }) => {
   test.skip(!adminKey, 'Set METROVAN_CHECK_ADMIN_KEY to include admin readiness in E2E.');
 
