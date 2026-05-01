@@ -16,6 +16,13 @@ function assertIncludes(relativePath, needle, message) {
   }
 }
 
+function assertNotIncludes(relativePath, needle, message) {
+  const source = readRepoFile(relativePath);
+  if (source.includes(needle)) {
+    throw new Error(`${message} (${relativePath})`);
+  }
+}
+
 function assertMatches(relativePath, pattern, message) {
   const source = readRepoFile(relativePath);
   if (!pattern.test(source)) {
@@ -501,6 +508,24 @@ assertIncludes(
   'client/src/pages/LandingPage.tsx',
   "scrollToHomeSection('examples')",
   'Landing page must keep a low-friction examples CTA.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  'handleDeleteAdminFeatureCard',
+  'Admin content operations must allow removing feature cards.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  'studioFeatures: adminFeatureDrafts',
+  'Admin content saves must preserve the exact edited feature card list.'
+);
+
+assertNotIncludes(
+  'server/src/studio-features.ts',
+  'normalized.push(normalizeStudioFeature(feature, feature))',
+  'Deleted studio feature cards must not be silently restored by defaults.'
 );
 
 assertIncludes(

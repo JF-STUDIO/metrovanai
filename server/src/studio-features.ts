@@ -119,12 +119,6 @@ export function normalizeStudioFeatures(input: unknown) {
     })
     .filter((feature, index, items) => items.findIndex((candidate) => candidate.id === feature.id) === index);
 
-  for (const feature of DEFAULT_STUDIO_FEATURES) {
-    if (!normalized.some((item) => item.id === feature.id)) {
-      normalized.push(normalizeStudioFeature(feature, feature));
-    }
-  }
-
   return normalized;
 }
 

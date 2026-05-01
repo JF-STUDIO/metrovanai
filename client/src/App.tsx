@@ -2389,8 +2389,8 @@ function App() {
     const id = `custom-${Date.now().toString(36)}`;
     const draft: StudioFeatureConfig = {
       id,
-      enabled: false,
-      category: 'interior',
+      enabled: true,
+      category: 'new',
       status: 'beta',
       titleZh: `新功能 ${sequence}`,
       titleEn: `New Feature ${sequence}`,
@@ -2411,6 +2411,21 @@ function App() {
     setAdminFeatureDrafts((current) => [...current, draft]);
     setAdminExpandedFeatureIds((current) => ({ ...current, [id]: true }));
     setAdminMessage('已添加新功能卡片，配置工作流、节点、图片和积分后保存。');
+  }
+
+  function handleDeleteAdminFeatureCard(featureId: string) {
+    const feature = adminFeatureDrafts.find((item) => item.id === featureId);
+    const featureName = feature?.titleZh || feature?.titleEn || featureId;
+    if (!window.confirm(`确认删除功能卡片“${featureName}”？保存后前台将不再显示。`)) {
+      return;
+    }
+    setAdminFeatureDrafts((current) => current.filter((item) => item.id !== featureId));
+    setAdminExpandedFeatureIds((current) => {
+      const next = { ...current };
+      delete next[featureId];
+      return next;
+    });
+    setAdminMessage('已移除功能卡片，点击“保存全部”后生效。');
   }
 
   async function handleAdminFeatureImageUpload(featureId: string, field: StudioFeatureImageField, file: File) {
@@ -2478,12 +2493,13 @@ function App() {
         runpodHdrBatchSize: Math.round(runpodHdrBatchSize),
         runningHubMaxInFlight: Math.round(runningHubMaxInFlight),
         billingPackages: adminSystemSettings?.billingPackages ?? adminActivationPackages,
-        studioFeatures: adminFeatureDrafts.length ? adminFeatureDrafts : adminSystemSettings?.studioFeatures ?? []
+        studioFeatures: adminFeatureDrafts
       });
       syncAdminSystemSettings(response.settings);
       const cards = response.settings.studioFeatures.map(studioFeatureConfigToDefinition).filter((feature) => feature.status !== 'locked');
+      setStudioFeatureCards(cards);
       if (cards.length) {
-        setStudioFeatureCards(cards);
+        setSelectedFeatureId((current) => (cards.some((feature) => feature.id === current) ? current : cards[0]!.id));
       }
       setAdminSystemLoaded(true);
       setAdminWorkflowSummary((current) =>
@@ -5846,7 +5862,7 @@ function App() {
         <div className="card">
           <div className="card-header">
             <h3>功能卡片配置</h3>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminFeatureDrafts.length}>保存全部</button>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy}>保存全部</button>
           </div>
           <div className="card-body feature-admin-grid">
             {adminFeatureDrafts.map((feature, index) => {
@@ -5871,6 +5887,12 @@ function App() {
                   <small>Workflow: {workflowDisplay.workflowId || '未配置'} · 输入 {workflowDisplay.inputNodeId || '—'} · 输出 {workflowDisplay.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
                 </summary>
                 <div className="feature-admin-form">
+                  <div className="feature-admin-actions">
+                    <button className="btn btn-danger" type="button" onClick={() => handleDeleteAdminFeatureCard(feature.id)}>
+                      删除卡片
+                    </button>
+                    <small>删除后需要点击保存全部才会同步到前台。</small>
+                  </div>
                   <label className="admin-check-field">
                     <input
                       type="checkbox"
@@ -5879,6 +5901,7 @@ function App() {
                     />
                     <span>前台启用</span>
                   </label>
+                  <input value={feature.id} onChange={(event) => updateAdminFeatureDraft(feature.id, { id: event.target.value })} placeholder="功能 ID（英文 / 数字）" />
                   <select value={feature.category} onChange={(event) => updateAdminFeatureDraft(feature.id, { category: event.target.value as StudioFeatureConfig['category'] })}>
                     {ADMIN_FEATURE_CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
@@ -5890,7 +5913,12 @@ function App() {
                   </select>
                   <input value={feature.titleZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { titleZh: event.target.value })} placeholder="中文功能名称" />
                   <input value={feature.titleEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { titleEn: event.target.value })} placeholder="英文功能名称" />
+                  <input value={feature.tagZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { tagZh: event.target.value })} placeholder="中文标签" />
+                  <input value={feature.tagEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { tagEn: event.target.value })} placeholder="英文标签" />
                   <textarea value={feature.descriptionZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionZh: event.target.value })} placeholder="中文描述" />
+                  <textarea value={feature.descriptionEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionEn: event.target.value })} placeholder="英文描述" />
+                  <textarea value={feature.detailZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { detailZh: event.target.value })} placeholder="中文详情" />
+                  <textarea value={feature.detailEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { detailEn: event.target.value })} placeholder="英文详情" />
                   <input value={feature.workflowId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })} placeholder="Workflow ID" />
                   <input value={feature.inputNodeId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { inputNodeId: event.target.value })} placeholder="输入节点" />
                   <input value={feature.outputNodeId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { outputNodeId: event.target.value })} placeholder="输出节点" />

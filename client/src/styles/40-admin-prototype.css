@@ -2117,6 +2117,12 @@
   color: var(--text);
 }
 
+.admin-prototype .btn-danger {
+  border: 1px solid rgba(255, 105, 105, 0.28);
+  background: rgba(225, 52, 52, 0.14);
+  color: #ff9a9a;
+}
+
 .admin-prototype .btn-xs {
   min-height: 30px;
   padding: 6px 10px;
@@ -3380,6 +3386,22 @@
   margin-top: 14px;
   border-top: 1px solid var(--line);
   padding-top: 14px;
+}
+
+.admin-prototype .feature-admin-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid rgba(255, 105, 105, 0.14);
+  border-radius: 10px;
+  background: rgba(225, 52, 52, 0.05);
+}
+
+.admin-prototype .feature-admin-actions small {
+  color: var(--text-dim);
 }
 
 .admin-prototype .feature-admin-form textarea {
