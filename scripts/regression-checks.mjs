@@ -457,8 +457,8 @@ assertIncludes(
 
 assertIncludes(
   'client/src/App.tsx',
-  '后台手动加减积分单独显示，不计入项目累计扣点。',
-  'Billing page must explain manual credit adjustments separately from project usage.'
+  '每次充值金额和 Invoice。',
+  'Billing page must keep recharge records concise with Stripe invoice links.'
 );
 
 assertIncludes(
