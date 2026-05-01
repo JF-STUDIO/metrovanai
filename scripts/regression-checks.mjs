@@ -125,6 +125,12 @@ assertIncludes(
   'Stripe webhook must remain excluded from JSON CSRF middleware.'
 );
 
+assertMatches(
+  'server/src/index.ts',
+  /function shouldTrustStripeWebhookEventSession\(\) \{[\s\S]*isProductionRuntime\(\)[\s\S]*return false;/,
+  'Stripe webhook event-session trust mode must stay disabled in production.'
+);
+
 assertIncludes(
   'server/src/csrf.ts',
   'timingSafeEqual',

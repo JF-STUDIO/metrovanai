@@ -842,6 +842,14 @@ function settlePaidStripeCheckoutSession(
   return { ok: true as const, order: fulfilled.order, entry: fulfilled.entry, created: fulfilled.created };
 }
 
+function shouldTrustStripeWebhookEventSession() {
+  if (isProductionRuntime()) {
+    return false;
+  }
+  const value = String(process.env.METROVAN_STRIPE_WEBHOOK_TRUST_EVENT_SESSION ?? '').trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
 interface AdminAccessContext {
   actorUser: UserRecord;
   actorType: 'admin-user';
@@ -2552,7 +2560,9 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
   try {
     if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
       const session = event.data.object as Stripe.Checkout.Session;
-      const expandedSession = await retrieveStripeCheckoutSessionWithDocuments(session.id);
+      const expandedSession = shouldTrustStripeWebhookEventSession()
+        ? session
+        : await retrieveStripeCheckoutSessionWithDocuments(session.id);
       const result = settlePaidStripeCheckoutSession(req, expandedSession, 'webhook');
       if (!result.ok && result.status !== 402) {
         res.status(result.status).json({ error: result.error });
