@@ -223,6 +223,8 @@ import {
   type WindowWithEyeDropper
 } from './app-utils';
 
+const STRIPE_RETURN_PROJECT_STORAGE_KEY = 'metrovanai_stripe_return_project_id';
+
 function App() {
   const isDemoMode = isDemoModeEnabled();
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => getRouteFromPath());
@@ -1356,11 +1358,60 @@ function App() {
 
   async function refreshBilling() {
     if (isDemoMode || !session) {
-      return;
+      return null;
     }
 
     const response = await fetchBilling();
     syncBilling(response);
+    return response;
+  }
+
+  function getProcessingCreditRequirement() {
+    if (!currentProject) {
+      return 0;
+    }
+    const estimate = activeLocalDraft ? workspacePointsEstimate : currentProject.pointsEstimate;
+    return Math.max(0, Math.round(estimate));
+  }
+
+  function rememberStripeReturnProject(projectId: string | null | undefined = currentProjectId) {
+    if (!projectId) {
+      return;
+    }
+    window.sessionStorage.setItem(STRIPE_RETURN_PROJECT_STORAGE_KEY, projectId);
+  }
+
+  function readStripeReturnProject() {
+    const projectId = window.sessionStorage.getItem(STRIPE_RETURN_PROJECT_STORAGE_KEY);
+    window.sessionStorage.removeItem(STRIPE_RETURN_PROJECT_STORAGE_KEY);
+    return projectId?.trim() || null;
+  }
+
+  function selectRecommendedRechargePackage(shortfall: number) {
+    if (!shortfall || !billingPackages.length) {
+      return;
+    }
+    const sorted = [...billingPackages].sort((left, right) => left.points - right.points);
+    const recommended = sorted.find((item) => item.points >= shortfall) ?? sorted[sorted.length - 1] ?? null;
+    if (recommended) {
+      setSelectedBillingPackageId(recommended.id);
+      setCustomRechargeAmount('');
+    }
+  }
+
+  function openRechargeForInsufficientCredits(requiredPoints: number, availablePoints: number) {
+    const shortfall = Math.max(0, requiredPoints - availablePoints);
+    rememberStripeReturnProject();
+    setBillingModalMode('topup');
+    setBillingOpen(false);
+    openRecharge();
+    selectRecommendedRechargePackage(shortfall);
+    const message =
+      locale === 'en'
+        ? `Insufficient credits: this project needs ${requiredPoints} pts, and your balance is ${availablePoints} pts. Please recharge to continue.`
+        : `积分不足：这个项目需要 ${requiredPoints} 积分，当前余额 ${availablePoints} 积分。请先充值后继续。`;
+    setRechargeMessage(message);
+    setMessage(message);
   }
 
   useEffect(() => {
@@ -1624,15 +1675,25 @@ function App() {
       setMessage(copy.paymentConfirming);
       void confirmCheckoutSessionWithRetry(stripeSessionId)
         .then((response) => {
+          const returnProjectId = readStripeReturnProject();
           syncBilling(response.billing);
           setRecentStripeOrder(response.order);
           setRechargeOpen(false);
           setBillingModalMode('billing');
-          setBillingOpen(true);
+          setBillingOpen(!returnProjectId);
+          if (returnProjectId) {
+            setCurrentProjectId(returnProjectId);
+          }
           setCustomRechargeAmount('');
           setRechargeActivationCode('');
           setRechargeMessage('');
-          setMessage(`${copy.topUpSuccess} ${copy.stripePaymentSuccessTitle}`);
+          setMessage(
+            returnProjectId
+              ? locale === 'en'
+                ? 'Credits updated. You can continue this project.'
+                : '余额已更新，可以继续处理当前项目。'
+              : `${copy.topUpSuccess} ${copy.stripePaymentSuccessTitle}`
+          );
         })
         .catch((error) => {
           setBillingModalMode('billing');
@@ -3057,6 +3118,7 @@ function App() {
     setBillingBusy(true);
     setRechargeMessage('');
     try {
+      rememberStripeReturnProject();
       const response = await createCheckoutSession(
         customAmountUsd
           ? { customAmountUsd, activationCode: rechargeActivationCode }
@@ -3700,6 +3762,17 @@ function App() {
 
     setBusy(true);
     try {
+      if (!options.retryFailed) {
+        const requiredPoints = getProcessingCreditRequirement();
+        let availablePoints = billingSummary?.availablePoints ?? null;
+        const refreshedBilling = await refreshBilling().catch(() => null);
+        availablePoints = refreshedBilling?.summary.availablePoints ?? availablePoints;
+        if (availablePoints !== null && requiredPoints > availablePoints) {
+          openRechargeForInsufficientCredits(requiredPoints, availablePoints);
+          return;
+        }
+      }
+
       if (activeLocalDraft) {
         const projectId = currentProject.id;
         const retryUploadFileIdentity = options.retryUploadFileIdentity;
@@ -3937,9 +4010,7 @@ function App() {
         }));
       }
       if (isInsufficientCreditsError(error)) {
-        setBillingModalMode('topup');
-        setBillingOpen(false);
-        openRecharge();
+        openRechargeForInsufficientCredits(getProcessingCreditRequirement(), billingSummary?.availablePoints ?? 0);
       }
       setMessage(getUserFacingErrorMessage(error, copy.startProcessingFailed, locale));
     } finally {

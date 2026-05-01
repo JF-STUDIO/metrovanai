@@ -384,6 +384,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'client/src/App.tsx',
+  'openRechargeForInsufficientCredits',
+  'Project processing must open recharge before upload when credits are insufficient.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  'STRIPE_RETURN_PROJECT_STORAGE_KEY',
+  'Stripe checkout return flow must preserve the active project context.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'
