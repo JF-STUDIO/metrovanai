@@ -187,8 +187,8 @@ assertIncludes(
 
 assertIncludes(
   'client/src/api.ts',
-  'const MULTIPART_UPLOAD_THRESHOLD_BYTES = 64 * 1024 * 1024;',
-  'Large photo uploads should switch to multipart before 100MB.'
+  'const MULTIPART_UPLOAD_THRESHOLD_BYTES = 512 * 1024 * 1024;',
+  'Typical RAW photo uploads should stay on stable single-object PUT uploads.'
 );
 
 assertIncludes(
