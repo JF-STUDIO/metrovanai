@@ -11,6 +11,11 @@ const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metrovan-auth-session
 const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
 const email = `metrovan-smoke-${stamp}@example.test`;
 const password = `Metrovan${stamp}!`;
+const smokeFileName = `smoke-${stamp}.jpg`;
+const smokeJpeg = Buffer.from(
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAHsP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8BP//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8BP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEABj8Cf//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAT8hf//aAAwDAQACAAMAAAAQ8P/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8QP//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8QP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAT8QP//Z',
+  'base64'
+);
 const results = [];
 let serverOutput = '';
 
@@ -97,11 +102,12 @@ class ApiClient {
   }
 
   async request(method, requestPath, body, options = {}) {
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
     const headers = {
       Accept: 'application/json',
       ...options.headers
     };
-    if (body !== undefined) {
+    if (body !== undefined && !isFormData) {
       headers['Content-Type'] = 'application/json';
     }
     const cookie = this.cookieHeader();
@@ -115,7 +121,7 @@ class ApiClient {
     const response = await fetch(`${apiRoot}${requestPath}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
       redirect: 'manual'
     });
     this.captureCookies(response);
@@ -272,6 +278,60 @@ async function main() {
       const ids = (response.payload?.items ?? []).map((item) => item.id);
       assert(ids.includes(projectId), 'Project list did not include created project.');
       return { projectCount: ids.length };
+    });
+
+    await withStep('local_proxy_upload_accepts_jpeg', async () => {
+      const formData = new FormData();
+      formData.append('files', new Blob([smokeJpeg], { type: 'image/jpeg' }), smokeFileName);
+      const response = await client.request('POST', `/api/projects/${projectId}/files`, formData);
+      assert(response.status === 200, `Expected upload 200, got ${response.status}: ${JSON.stringify(response.payload)}`);
+      assert(response.payload?.project?.id === projectId, 'Upload response project mismatch.');
+      assert(response.payload?.project?.status === 'uploading', `Expected uploading status, got ${response.payload?.project?.status}`);
+      return { fileName: smokeFileName, size: smokeJpeg.length };
+    });
+
+    await withStep('hdr_layout_accepts_uploaded_file', async () => {
+      const response = await client.request('POST', `/api/projects/${projectId}/hdr-layout`, {
+        mode: 'replace',
+        inputComplete: true,
+        hdrItems: [
+          {
+            exposureOriginalNames: [smokeFileName],
+            selectedOriginalName: smokeFileName,
+            exposures: [
+              {
+                originalName: smokeFileName,
+                fileName: smokeFileName,
+                extension: '.jpg',
+                mimeType: 'image/jpeg',
+                size: smokeJpeg.length,
+                isRaw: false
+              }
+            ]
+          }
+        ]
+      });
+      assert(response.status === 200, `Expected HDR layout 200, got ${response.status}: ${JSON.stringify(response.payload)}`);
+      assert(response.payload?.project?.hdrItems?.length === 1, 'HDR layout did not create one HDR item.');
+      assert(response.payload?.project?.uploadCompletedAt, 'HDR layout did not mark upload completed.');
+      return {
+        hdrItems: response.payload.project.hdrItems.length,
+        pointsEstimate: response.payload.project.pointsEstimate
+      };
+    });
+
+    await withStep('project_start_without_points_rejected_after_upload', async () => {
+      const before = await client.request('GET', '/api/billing');
+      assert(before.status === 200, `Expected billing 200 before start, got ${before.status}`);
+      const response = await client.request('POST', `/api/projects/${projectId}/start`, {});
+      assert(response.status === 402, `Expected start 402 without points, got ${response.status}: ${JSON.stringify(response.payload)}`);
+      const after = await client.request('GET', '/api/billing');
+      assert(after.status === 200, `Expected billing 200 after start, got ${after.status}`);
+      assert(
+        after.payload?.summary?.availablePoints === before.payload?.summary?.availablePoints,
+        'Billing points changed after rejected start.'
+      );
+      return { status: response.status, availablePoints: after.payload.summary.availablePoints };
     });
 
     await withStep('logout_clears_session', async () => {
