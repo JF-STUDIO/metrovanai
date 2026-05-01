@@ -4596,6 +4596,31 @@ function App() {
             <article className="billing-section">
               <div className="panel-head compact">
                 <div>
+                  <strong>{locale === 'en' ? 'Balance check' : '余额核对'}</strong>
+                  <span className="muted">
+                    {locale === 'en' ? 'Credits in - credits used = balance.' : '入账积分 - 扣点积分 = 当前余额。'}
+                  </span>
+                </div>
+              </div>
+              <div className="billing-summary-grid">
+                <article className="billing-stat-card">
+                  <span>{locale === 'en' ? 'Credits in' : '入账积分'}</span>
+                  <strong>{billingSummary?.totalCreditedPoints ?? 0} pts</strong>
+                </article>
+                <article className="billing-stat-card">
+                  <span>{locale === 'en' ? 'Credits used' : '扣点积分'}</span>
+                  <strong>{billingSummary?.totalChargedPoints ?? 0} pts</strong>
+                </article>
+                <article className="billing-stat-card">
+                  <span>{copy.billingCurrentBalance}</span>
+                  <strong>{billingSummary?.availablePoints ?? 0} pts</strong>
+                </article>
+              </div>
+            </article>
+
+            <article className="billing-section">
+              <div className="panel-head compact">
+                <div>
                   <strong>{locale === 'en' ? 'Credit usage' : '积分使用情况'}</strong>
                   <span className="muted">
                     {usageEntries.length
