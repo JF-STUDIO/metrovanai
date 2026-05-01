@@ -3080,7 +3080,9 @@ function App() {
     setUserMenuOpen(false);
     setHistoryMenuOpen(false);
     if (mode === 'topup') {
-      navigateToRoute('billing');
+      if (activeRoute === 'billing') {
+        navigateToRoute('billing');
+      }
       setBillingOpen(false);
       openRecharge();
       if (isDemoMode || !session) {
