@@ -4,6 +4,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { Writable } from 'node:stream';
 import { createJpegVariantStream, writeJpegVariant } from './images.js';
+import { runProcess, toolPaths } from './native-tools.js';
 import { restoreObjectToFileIfAvailable } from './object-storage.js';
 import type { ProjectRecord } from './types.js';
 import { sanitizeSegment } from './utils.js';
@@ -224,7 +225,7 @@ export async function assertProjectDownloadAssetsReady(project: ProjectRecord) {
 }
 
 async function ensureDownloadAssetFileReady(project: ProjectRecord, asset: DownloadAsset) {
-  if (fs.existsSync(asset.storagePath) && isDownloadAssetFileComplete(asset)) {
+  if (fs.existsSync(asset.storagePath) && (await isDownloadAssetFileComplete(asset))) {
     return true;
   }
 
@@ -247,10 +248,10 @@ async function ensureDownloadAssetFileReady(project: ProjectRecord, asset: Downl
     );
   }
 
-  return fs.existsSync(asset.storagePath) && isDownloadAssetFileComplete(asset);
+  return fs.existsSync(asset.storagePath) && (await isDownloadAssetFileComplete(asset));
 }
 
-function isDownloadAssetFileComplete(asset: DownloadAsset) {
+async function isDownloadAssetFileComplete(asset: DownloadAsset) {
   if (!fs.existsSync(asset.storagePath)) {
     return false;
   }
@@ -275,10 +276,23 @@ function isDownloadAssetFileComplete(asset: DownloadAsset) {
     const end = Buffer.alloc(2);
     fs.readSync(handle, start, 0, 2, 0);
     fs.readSync(handle, end, 0, 2, stats.size - 2);
-    return start[0] === 0xff && start[1] === 0xd8 && end[0] === 0xff && end[1] === 0xd9;
+    if (!(start[0] === 0xff && start[1] === 0xd8 && end[0] === 0xff && end[1] === 0xd9)) {
+      return false;
+    }
   } finally {
     fs.closeSync(handle);
   }
+
+  if (!toolPaths.magick) {
+    return true;
+  }
+
+  const result = await runProcess(toolPaths.magick, [asset.storagePath, '-strip', 'null:'], {
+    cwd: path.dirname(asset.storagePath),
+    timeoutSeconds: 60
+  });
+  const diagnostic = `${result.stderr}\n${result.stdout}`.toLowerCase();
+  return result.exitCode === 0 && !diagnostic.includes('premature') && !diagnostic.includes('corrupt');
 }
 
 type PreparedDownloadSource = {

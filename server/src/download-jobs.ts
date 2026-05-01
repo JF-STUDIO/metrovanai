@@ -57,8 +57,16 @@ export function recoverInterruptedDownloadJobsAfterRestart() {
   return jobStore?.markInterruptedDownloadJobsFailed('Server restarted before download completion.') ?? 0;
 }
 
-function getRequestKey(projectId: string, options: ProjectDownloadOptions) {
-  return `${projectId}:${JSON.stringify(options)}`;
+function getProjectDownloadFingerprint(project: ProjectRecord) {
+  const resultSignature = [...project.resultAssets]
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((asset) => [asset.id, asset.fileName, asset.storageKey ?? '', asset.storageUrl, asset.sortOrder].join(':'))
+    .join('|');
+  return `${project.updatedAt}:${project.resultAssets.length}:${resultSignature}`;
+}
+
+function getRequestKey(project: ProjectRecord, options: ProjectDownloadOptions) {
+  return `${project.id}:${getProjectDownloadFingerprint(project)}:${JSON.stringify(options)}`;
 }
 
 function getReusableJob(requestKey: string) {
@@ -196,7 +204,7 @@ export function enqueueDownloadJob(input: {
   userKey: string;
   options: ProjectDownloadOptions;
 }) {
-  const requestKey = getRequestKey(input.project.id, input.options);
+  const requestKey = getRequestKey(input.project, input.options);
   const reused = getReusableJob(requestKey);
   if (reused) {
     logJobEvent('reused', reused);

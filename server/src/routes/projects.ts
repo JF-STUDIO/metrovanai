@@ -1,7 +1,7 @@
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ProjectRecord } from '../types.js';
+import type { HdrItem, ProjectRecord } from '../types.js';
 import type { RouteContext } from './context.js';
 import { createProjectDownloadsRouter } from './project-downloads.js';
 import { createProjectResultsRouter } from './project-results.js';
@@ -332,10 +332,17 @@ app.post('/api/projects/:id/hdr-layout', async (req, res) => {
     const hdrItems = parsed.data.hdrItems.length
       ? await buildHdrItemsFromFrontendLayout(project, store, stagedFiles, parsed.data.hdrItems)
       : [];
+    const finalHdrItems = projectHdrItemsAfterLayout(project, hdrItems, parsed.data.mode);
     if (parsed.data.inputComplete) {
-      const missingSourceNames = collectMissingExposureSourceNames(
-        projectHdrItemsAfterLayout(project, hdrItems, parsed.data.mode)
-      );
+      const layoutErrors = validateHdrLayoutForProcessing(finalHdrItems);
+      if (layoutErrors.length) {
+        res.status(400).json({
+          error: `HDR 分组需要先修正：${layoutErrors.slice(0, 5).join('；')}${layoutErrors.length > 5 ? `；+${layoutErrors.length - 5} more` : ''}`
+        });
+        return;
+      }
+
+      const missingSourceNames = collectMissingExposureSourceNames(finalHdrItems);
       if (missingSourceNames.length) {
         res.status(409).json({
           error: `Upload is not complete yet. Retry the unfinished files before processing: ${missingSourceNames
@@ -733,4 +740,98 @@ app.post('/api/projects/:id/retry-failed', async (req, res) => {
 });
 
   return app;
+}
+
+function validateHdrLayoutForProcessing(hdrItems: HdrItem[]) {
+  const errors: string[] = [];
+  const seenSources = new Map<string, string>();
+
+  for (const item of hdrItems) {
+    if (!item.exposures.length) {
+      errors.push(`${item.title || `HDR ${item.index}`} 没有照片`);
+      continue;
+    }
+
+    const seenInGroup = new Set<string>();
+    const rawStems = new Set<string>();
+    const jpegStems = new Set<string>();
+
+    for (const exposure of item.exposures) {
+      const sourceName = exposure.originalName || exposure.fileName;
+      const sourceKey = normalizeLayoutFileIdentity(sourceName);
+      if (!sourceKey) {
+        errors.push(`${item.title || `HDR ${item.index}`} 有无效文件名`);
+        continue;
+      }
+
+      if (seenInGroup.has(sourceKey)) {
+        errors.push(`${item.title || `HDR ${item.index}`} 重复包含 ${sourceName}`);
+      }
+      seenInGroup.add(sourceKey);
+
+      const previousGroup = seenSources.get(sourceKey);
+      if (previousGroup && previousGroup !== item.id) {
+        errors.push(`${sourceName} 被放进了多个 HDR 分组`);
+      }
+      seenSources.set(sourceKey, item.id);
+
+      const stem = normalizeLayoutFileStem(sourceName);
+      if (isRawLayoutFile(sourceName)) {
+        rawStems.add(stem);
+      } else if (isJpegLayoutFile(sourceName)) {
+        jpegStems.add(stem);
+      }
+    }
+
+    for (const stem of jpegStems) {
+      if (rawStems.has(stem)) {
+        errors.push(`${item.title || `HDR ${item.index}`} 同时包含 RAW 和同名 JPG 副本，请保留 RAW`);
+      }
+    }
+
+    if (item.selectedExposureId && !item.exposures.some((exposure) => exposure.id === item.selectedExposureId)) {
+      errors.push(`${item.title || `HDR ${item.index}`} 默认曝光不存在`);
+    }
+  }
+
+  return Array.from(new Set(errors));
+}
+
+const RAW_LAYOUT_EXTENSIONS = new Set([
+  '.arw',
+  '.cr2',
+  '.cr3',
+  '.crw',
+  '.nef',
+  '.nrw',
+  '.dng',
+  '.raf',
+  '.rw2',
+  '.rwl',
+  '.orf',
+  '.srw',
+  '.3fr',
+  '.fff',
+  '.iiq',
+  '.pef',
+  '.erf'
+]);
+const JPEG_LAYOUT_EXTENSIONS = new Set(['.jpg', '.jpeg']);
+
+function normalizeLayoutFileIdentity(fileName: string) {
+  return path.basename(String(fileName ?? '').replace(/\\/g, '/')).trim().toLowerCase();
+}
+
+function normalizeLayoutFileStem(fileName: string) {
+  const normalized = normalizeLayoutFileIdentity(fileName);
+  const extension = path.extname(normalized);
+  return extension ? normalized.slice(0, -extension.length) : normalized;
+}
+
+function isRawLayoutFile(fileName: string) {
+  return RAW_LAYOUT_EXTENSIONS.has(path.extname(normalizeLayoutFileIdentity(fileName)));
+}
+
+function isJpegLayoutFile(fileName: string) {
+  return JPEG_LAYOUT_EXTENSIONS.has(path.extname(normalizeLayoutFileIdentity(fileName)));
 }

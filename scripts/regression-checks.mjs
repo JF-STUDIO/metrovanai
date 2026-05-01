@@ -222,6 +222,30 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/downloads.ts',
+  "diagnostic.includes('premature')",
+  'Project downloads must decode-check JPEGs for premature/corrupt image data.'
+);
+
+assertIncludes(
+  'server/src/download-jobs.ts',
+  'getProjectDownloadFingerprint',
+  'Download job reuse must include a project result fingerprint.'
+);
+
+assertIncludes(
+  'server/src/routes/projects.ts',
+  'validateHdrLayoutForProcessing',
+  'Backend HDR layout submission must validate groups before processing.'
+);
+
+assertIncludes(
+  'server/src/routes/projects.ts',
+  '同时包含 RAW 和同名 JPG 副本',
+  'Backend HDR validation must reject RAW/JPG sidecar duplicates.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'
