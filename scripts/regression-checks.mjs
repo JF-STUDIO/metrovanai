@@ -409,8 +409,8 @@ assertIncludes(
 
 assertIncludes(
   'client/src/App.tsx',
-  '充值记录',
-  'Billing page must expose recharge records with Stripe document links.'
+  'renderStripeInvoiceLink(order)',
+  'Billing page must expose recharge records with a single Stripe invoice link.'
 );
 
 assertIncludes(

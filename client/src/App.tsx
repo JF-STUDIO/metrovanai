@@ -4487,32 +4487,25 @@ function App() {
       .toUpperCase();
   }
 
-  function getStripeDocumentLinks(order: PaymentOrderRecord | null | undefined) {
+  function getStripeInvoiceLink(order: PaymentOrderRecord | null | undefined) {
     if (!order) {
-      return [];
+      return null;
     }
 
-    return [
-      { key: 'invoice-pdf', label: copy.stripeInvoicePdfLink, url: order.stripeInvoicePdfUrl },
-      { key: 'invoice', label: copy.stripeInvoiceLink, url: order.stripeInvoiceUrl },
-      { key: 'receipt', label: copy.stripeReceiptLink, url: order.stripeReceiptUrl }
-    ].filter((link): link is { key: string; label: string; url: string } => Boolean(link.url));
+    const url = order.stripeInvoicePdfUrl || order.stripeInvoiceUrl;
+    return url ? { label: copy.stripeInvoiceLink, url } : null;
   }
 
-  function renderStripeDocumentLinks(order: PaymentOrderRecord | null | undefined, compact = false) {
-    const links = getStripeDocumentLinks(order);
-    if (!links.length) {
+  function renderStripeInvoiceLink(order: PaymentOrderRecord | null | undefined) {
+    const link = getStripeInvoiceLink(order);
+    if (!link) {
       return <span className="stripe-doc-pending">{copy.stripeDocumentsPending}</span>;
     }
 
     return (
-      <div className={compact ? 'stripe-document-actions compact' : 'stripe-document-actions'}>
-        {links.map((link) => (
-          <a key={link.key} className="ghost-button small stripe-doc-link" href={link.url} target="_blank" rel="noreferrer">
-            {link.label}
-          </a>
-        ))}
-      </div>
+      <a className="ghost-button small stripe-doc-link" href={link.url} target="_blank" rel="noreferrer">
+        {link.label}
+      </a>
     );
   }
 
@@ -4722,7 +4715,7 @@ function App() {
               <div className="panel-head compact">
                 <div>
                   <strong>{locale === 'en' ? 'Recharge records' : '充值记录'}</strong>
-                  <span className="muted">{locale === 'en' ? 'Stripe payments, receipts, and invoice PDF links.' : '显示每次充值金额，收据和 PDF 跳转到 Stripe。'}</span>
+                  <span className="muted">{locale === 'en' ? 'Stripe payments with invoice links.' : '显示每次充值金额，Invoice 跳转到 Stripe。'}</span>
                 </div>
               </div>
               {paidOrders.length ? (
@@ -4735,11 +4728,11 @@ function App() {
                           {formatUsd(order.amountUsd, locale)} · {order.points} pts · {formatPaymentOrderStatus(order.status)} ·{' '}
                           {formatDate(order.paidAt ?? order.createdAt, locale)}
                         </span>
-                        {renderStripeDocumentLinks(order, true)}
                       </div>
                       <div className="billing-entry-amount credit">
                         <strong>+{order.points} pts</strong>
                         <span>{formatUsd(order.amountUsd, locale)}</span>
+                        {renderStripeInvoiceLink(order)}
                       </div>
                     </article>
                   ))}
