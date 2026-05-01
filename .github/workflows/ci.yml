@@ -41,6 +41,9 @@ jobs:
       - name: Critical flow checks
         run: pnpm test:critical
 
+      - name: Auth session smoke
+        run: pnpm smoke:auth-session
+
       - name: Client lint
         run: pnpm --filter metrovan-ai-client lint
 

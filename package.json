@@ -13,6 +13,7 @@
     "test:critical": "pnpm test:regression && node ./scripts/critical-flow-contracts.mjs",
     "test:e2e": "playwright test",
     "smoke:runpod-worker": "node ./scripts/smoke-runpod-worker.mjs",
+    "smoke:auth-session": "node ./scripts/smoke-auth-session.mjs",
     "smoke:auth-billing": "node ./scripts/smoke-auth-billing.mjs",
     "check:commercial": "node ./scripts/check-commercial-readiness.mjs"
   },

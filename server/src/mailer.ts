@@ -34,6 +34,14 @@ function shouldLogResetLinks() {
   return process.env.NODE_ENV !== 'production';
 }
 
+function shouldUseLocalLogDelivery() {
+  if (process.env.NODE_ENV === 'production') {
+    return false;
+  }
+  const explicit = readEnv('AUTH_EMAIL_LOG_DELIVERY').toLowerCase();
+  return explicit === 'true' || explicit === '1' || explicit === 'yes';
+}
+
 function buildResetEmailHtml(input: PasswordResetEmailInput) {
   const expiresAt = new Date(input.expiresAt).toLocaleString('en-US', {
     dateStyle: 'medium',
@@ -90,6 +98,11 @@ function escapeHtml(value: string) {
 }
 
 export async function sendPasswordResetEmail(input: PasswordResetEmailInput): Promise<MailDeliveryResult> {
+  if (shouldUseLocalLogDelivery()) {
+    console.warn(`[password-reset] Reset link for ${input.to}: ${input.resetUrl}`);
+    return { sent: true, reason: 'local_log_delivery' };
+  }
+
   const host = readEnv('SMTP_HOST');
   const from = readEnv('SMTP_FROM');
   if (!host || !from) {
@@ -134,6 +147,11 @@ export async function sendPasswordResetEmail(input: PasswordResetEmailInput): Pr
 }
 
 export async function sendEmailVerificationEmail(input: EmailVerificationEmailInput): Promise<MailDeliveryResult> {
+  if (shouldUseLocalLogDelivery()) {
+    console.warn(`[email-verification] Verification link for ${input.to}: ${input.verificationUrl}`);
+    return { sent: true, reason: 'local_log_delivery' };
+  }
+
   const host = readEnv('SMTP_HOST');
   const from = readEnv('SMTP_FROM');
   if (!host || !from) {
