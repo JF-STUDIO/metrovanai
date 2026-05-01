@@ -294,6 +294,24 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/routes/admin.ts',
+  'rootCauseSummary',
+  'Admin project health must include a root-cause summary.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  'recommendedActions',
+  'Admin project health must include recommended repair actions.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '诊断建议',
+  'Admin project detail must surface root-cause diagnosis recommendations.'
+);
+
+assertIncludes(
   'scripts/maintenance-check.mjs',
   'checkApplicationData',
   'Maintenance automation must inspect production application data.'

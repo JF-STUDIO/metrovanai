@@ -410,20 +410,93 @@ function buildAdminProjectHealth(project: ProjectRecord) {
   const suspiciousResultFiles = project.resultAssets
     .filter((asset) => isSuspiciousLocalJpeg(asset.storagePath))
     .map((asset) => asset.fileName);
+  const failedItemsWithoutResult = project.hdrItems.filter(
+    (item: any) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl)
+  ).length;
+  const stalledMinutes = getPotentiallyStalledMinutes(project);
   const warnings = [
     missingSourceCount ? `${missingSourceCount} 个曝光缺少源文件引用` : '',
     rawJpegSidecarGroups.length ? `${rawJpegSidecarGroups.length} 组混入同名 JPG 副本` : '',
     duplicateSourceGroups.length ? `${duplicateSourceGroups.length} 组有重复文件` : '',
     suspiciousResultFiles.length ? `${suspiciousResultFiles.length} 张结果图本地文件可疑` : '',
-    latestDownloadJob?.status === 'failed' ? `最近下载失败：${latestDownloadJob.error ?? 'unknown'}` : ''
+    latestDownloadJob?.status === 'failed' ? `最近下载失败：${latestDownloadJob.error ?? 'unknown'}` : '',
+    stalledMinutes ? `项目可能已卡住 ${stalledMinutes} 分钟` : ''
   ].filter(Boolean);
   const failedCount = hdrStatusCounts.error ?? 0;
   const processingCount = ['hdr-processing', 'workflow-upload', 'workflow-running'].reduce(
     (sum, status) => sum + (hdrStatusCounts[status] ?? 0),
     0
   );
+  const issues = [
+    failedItemsWithoutResult
+      ? {
+          code: 'failed-processing-items',
+          severity: 'error',
+          title: '照片处理失败',
+          detail: `${failedItemsWithoutResult} 张失败照片没有结果图，可直接重新排队处理。`,
+          action: 'retry-failed-processing'
+        }
+      : null,
+    latestDownloadJob?.status === 'failed'
+      ? {
+          code: 'download-job-failed',
+          severity: 'warning',
+          title: '最近下载包生成失败',
+          detail: latestDownloadJob.error ? `下载任务失败：${latestDownloadJob.error}` : '最近一次下载任务失败，建议重新生成下载包。',
+          action: 'regenerate-download'
+        }
+      : null,
+    suspiciousResultFiles.length
+      ? {
+          code: 'suspicious-result-files',
+          severity: 'error',
+          title: '结果图文件可疑',
+          detail: `${suspiciousResultFiles.length} 张本地结果图可能截断或不完整，建议先深度巡检，再重新生成下载包。`,
+          action: 'deep-health'
+        }
+      : null,
+    missingSourceCount
+      ? {
+          code: 'missing-source-references',
+          severity: 'error',
+          title: '源文件引用缺失',
+          detail: `${missingSourceCount} 个曝光缺少 R2/local 源文件引用，建议深度巡检确认对象状态。`,
+          action: 'deep-health'
+        }
+      : null,
+    rawJpegSidecarGroups.length
+      ? {
+          code: 'raw-jpeg-sidecars',
+          severity: 'warning',
+          title: 'RAW/JPG 混组',
+          detail: `${rawJpegSidecarGroups.length} 个 HDR 组混入同名 JPG 副本，后续同类上传应优先使用 RAW。`,
+          action: 'deep-health'
+        }
+      : null,
+    duplicateSourceGroups.length
+      ? {
+          code: 'duplicate-source-files',
+          severity: 'warning',
+          title: '重复源文件',
+          detail: `${duplicateSourceGroups.length} 个 HDR 组包含重复文件，建议检查分组。`,
+          action: 'deep-health'
+        }
+      : null,
+    stalledMinutes
+      ? {
+          code: 'stalled-project',
+          severity: 'error',
+          title: '项目疑似卡住',
+          detail: `项目已超过 ${stalledMinutes} 分钟没有更新，可标记为失败后重新处理。`,
+          action: 'mark-stalled-failed'
+        }
+      : null
+  ].filter(Boolean);
+  const recommendedActions = Array.from(
+    new Set(issues.map((issue: any) => issue.action).filter(Boolean))
+  ).slice(0, 4);
   const status =
-    warnings.length || failedCount
+    issues.some((issue: any) => issue.severity === 'error') || warnings.length || failedCount
       ? 'attention'
       : project.status === 'completed' && project.resultAssets.length === project.hdrItems.length
         ? 'healthy'
@@ -449,10 +522,27 @@ function buildAdminProjectHealth(project: ProjectRecord) {
         }
       : null,
     warnings,
+    rootCauseSummary: issues.length ? (issues[0] as any).detail : '未发现需要处理的项目健康问题。',
+    issues,
+    recommendedActions,
     rawJpegSidecarGroups,
     duplicateSourceGroups,
     suspiciousResultFiles
   };
+}
+
+function getPotentiallyStalledMinutes(project: ProjectRecord) {
+  const activeProject = project.status === 'uploading' || project.status === 'processing';
+  const activeJob = project.job?.status === 'queued' || project.job?.status === 'running';
+  if (!activeProject && !activeJob) {
+    return 0;
+  }
+  const updatedAt = Date.parse(project.updatedAt);
+  if (!Number.isFinite(updatedAt)) {
+    return 0;
+  }
+  const minutes = Math.floor((Date.now() - updatedAt) / 60000);
+  return minutes >= 45 ? minutes : 0;
 }
 
 async function buildAdminProjectDeepHealth(project: ProjectRecord) {

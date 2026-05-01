@@ -115,6 +115,15 @@ export interface ProjectAdminHealth {
     error: string | null;
   } | null;
   warnings: string[];
+  rootCauseSummary?: string;
+  issues?: Array<{
+    code: string;
+    severity: 'warning' | 'error' | string;
+    title: string;
+    detail: string;
+    action?: 'retry-failed-processing' | 'regenerate-download' | 'mark-stalled-failed' | 'deep-health' | string;
+  }>;
+  recommendedActions?: Array<'retry-failed-processing' | 'regenerate-download' | 'mark-stalled-failed' | 'deep-health' | string>;
   rawJpegSidecarGroups: string[];
   duplicateSourceGroups: string[];
   suspiciousResultFiles: string[];

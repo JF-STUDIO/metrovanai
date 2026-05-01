@@ -1951,6 +1951,16 @@ function App() {
     }
   }
 
+  function handleAdminRecommendedProjectAction(action: string) {
+    if (action === 'deep-health') {
+      void handleAdminRunDeepHealth();
+      return;
+    }
+    if (action === 'retry-failed-processing' || action === 'regenerate-download' || action === 'mark-stalled-failed') {
+      void handleAdminRepairSelectedProject(action);
+    }
+  }
+
   function mergeAdminUser(nextUser: AdminUserSummary) {
     setAdminUsers((current) => current.map((user) => (user.id === nextUser.id ? nextUser : user)));
     setAdminSelectedUser((current) => (current?.id === nextUser.id ? nextUser : current));
@@ -4789,6 +4799,13 @@ function App() {
       if (status === 'processing') return 'tag tag-orange';
       return 'tag tag-gray';
     };
+    const getAdminRepairActionLabel = (action: string) => {
+      if (action === 'retry-failed-processing') return '重试失败照片';
+      if (action === 'regenerate-download') return '重新生成下载包';
+      if (action === 'mark-stalled-failed') return '标记卡住失败';
+      if (action === 'deep-health') return '深度巡检';
+      return action;
+    };
 
     const renderWorksPage = () => (
       <div className="page-content active">
@@ -4880,6 +4897,38 @@ function App() {
                     <div><strong>{adminSelectedProject.adminHealth.hdrCount}</strong><span>HDR 分组</span></div>
                     <div><strong>{adminSelectedProject.adminHealth.resultCount}</strong><span>结果图</span></div>
                     <div><strong>{adminSelectedProject.adminHealth.missingSourceCount}</strong><span>缺源文件</span></div>
+                  </div>
+                  <div className="admin-diagnosis-card">
+                    <div className="admin-mini-head">
+                      <strong>诊断建议</strong>
+                      <span>{adminSelectedProject.adminHealth.issues?.length ? `${adminSelectedProject.adminHealth.issues.length} 个原因` : '正常'}</span>
+                    </div>
+                    <p>{adminSelectedProject.adminHealth.rootCauseSummary ?? '未发现需要处理的项目健康问题。'}</p>
+                    {adminSelectedProject.adminHealth.issues?.length ? (
+                      <div className="admin-diagnosis-list">
+                        {adminSelectedProject.adminHealth.issues.slice(0, 5).map((issue) => (
+                          <div className={`admin-diagnosis-item ${issue.severity === 'error' ? 'error' : 'warning'}`} key={issue.code}>
+                            <strong>{issue.title}</strong>
+                            <span>{issue.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {adminSelectedProject.adminHealth.recommendedActions?.length ? (
+                      <div className="admin-recommended-actions">
+                        {adminSelectedProject.adminHealth.recommendedActions.map((action) => (
+                          <button
+                            className={`btn btn-ghost btn-xs ${action === 'mark-stalled-failed' ? 'danger' : ''}`}
+                            type="button"
+                            key={action}
+                            onClick={() => handleAdminRecommendedProjectAction(action)}
+                            disabled={Boolean(adminRepairBusy) || (action === 'deep-health' && adminDeepHealthBusy)}
+                          >
+                            {getAdminRepairActionLabel(action)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   {adminSelectedProject.adminHealth.warnings.length ? (
                     <div className="admin-health-warnings">
