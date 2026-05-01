@@ -39,6 +39,7 @@ test('production protected APIs reject anonymous access', async ({ request }) =>
   const protectedReads = [
     `${apiRoot}/api/billing`,
     `${apiRoot}/api/projects`,
+    `${apiRoot}/api/projects/anonymous-probe/download`,
     `${apiRoot}/api/admin/users`
   ];
 

@@ -128,6 +128,8 @@ export function ResultEditorDialog({
     cropFrame.style.height = frameStyle.height;
   }, [settings]);
 
+  const editorImageUrl = resolveMediaUrl(asset.storageUrl);
+
   return (
     <div className="viewer-backdrop result-editor-backdrop" onClick={onClose}>
       <div className="result-editor-shell" onClick={(event) => event.stopPropagation()}>
@@ -142,13 +144,13 @@ export function ResultEditorDialog({
             <button className="result-editor-deliver" type="button" onClick={onClose}>
               Deliver
             </button>
-            <button className="result-editor-icon-button" type="button" onClick={() => onDownload(asset)}>
+            <button className="result-editor-icon-button" type="button" onClick={() => onDownload(asset)} aria-label="Download result">
               ↓
             </button>
-            <button className="result-editor-icon-button" type="button" onClick={() => onReset(asset.id)}>
+            <button className="result-editor-icon-button" type="button" onClick={() => onReset(asset.id)} aria-label="Reset result editor">
               ↺
             </button>
-            <button className="result-editor-icon-button" type="button" onClick={onClose}>
+            <button className="result-editor-icon-button" type="button" onClick={onClose} aria-label="Close result editor">
               ×
             </button>
           </div>
@@ -170,13 +172,17 @@ export function ResultEditorDialog({
               onPointerCancel={onStagePointerUp}
               onWheel={onStageWheel}
             >
-              <img
-                ref={editorImageRef}
-                src={resolveMediaUrl(asset.storageUrl)}
-                alt={asset.fileName}
-                decoding="async"
-                draggable={false}
-              />
+              {editorImageUrl ? (
+                <img
+                  ref={editorImageRef}
+                  src={editorImageUrl}
+                  alt={asset.fileName}
+                  decoding="async"
+                  draggable={false}
+                />
+              ) : (
+                <div className="asset-empty demo-asset-empty demo-result-empty" aria-label={asset.fileName} />
+              )}
               <div
                 ref={cropFrameRef}
                 className="result-editor-crop-frame"

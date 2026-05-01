@@ -523,7 +523,8 @@ export function createDemoExposure(id: string, originalName: string, previewUrl:
 }
 
 export function createDemoProjects(): ProjectRecord[] {
-  const demoPreviewUrl = '';
+  const demoPreviewUrl =
+    'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800"%3E%3Cdefs%3E%3ClinearGradient id="g" x1="0" y1="0" x2="1" y2="1"%3E%3Cstop offset="0" stop-color="%23f4eee6"/%3E%3Cstop offset="1" stop-color="%2398a8b8"/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width="1200" height="800" fill="url(%23g)"/%3E%3Cpath d="M120 600h960V250L700 120 120 310z" fill="%23ffffff" opacity=".42"/%3E%3Cpath d="M210 550h330V335H210zM630 550h360V315H630z" fill="%23293542" opacity=".22"/%3E%3Cpath d="M240 510h260V365H240zM665 510h285V350H665z" fill="%23ffffff" opacity=".56"/%3E%3Ctext x="600" y="705" text-anchor="middle" font-family="Arial" font-size="44" fill="%23293542" opacity=".65"%3EMetrovan AI Demo Result%3C/text%3E%3C/svg%3E';
   const heroExposures = [
     createDemoExposure('exp-1n', '157951.JPG', demoPreviewUrl, 0),
     createDemoExposure('exp-1u', '157951+1.JPG', demoPreviewUrl, 1),
@@ -565,6 +566,14 @@ export function createDemoProjects(): ProjectRecord[] {
     { id: 'result-4', hdrItemId: 'hdr-5', fileName: 'Processed_living-02.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 3 },
     { id: 'result-5', hdrItemId: 'hdr-1', fileName: 'Processed_kitchen-01.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 4 },
     { id: 'result-6', hdrItemId: 'hdr-2', fileName: 'Processed_kitchen-02.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 5 }
+  ];
+  const completedResultAssets: ResultAsset[] = [
+    { id: 'north-result-1', hdrItemId: 'north-hdr-1', fileName: 'NorthVan_Living_01.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 0 },
+    { id: 'north-result-2', hdrItemId: 'north-hdr-2', fileName: 'NorthVan_Kitchen_01.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 1 },
+    { id: 'north-result-3', hdrItemId: 'north-hdr-3', fileName: 'NorthVan_Primary_01.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 2 },
+    { id: 'north-result-4', hdrItemId: 'north-hdr-4', fileName: 'NorthVan_Bath_01.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 3 },
+    { id: 'north-result-5', hdrItemId: 'north-hdr-5', fileName: 'NorthVan_Exterior_01.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 4 },
+    { id: 'north-result-6', hdrItemId: 'north-hdr-6', fileName: 'NorthVan_Detail_01.JPG', storageUrl: demoPreviewUrl, previewUrl: demoPreviewUrl, sortOrder: 5 }
   ];
 
   return [
@@ -644,7 +653,7 @@ export function createDemoProjects(): ProjectRecord[] {
       updatedAt: '2026-04-18T00:00:00Z',
       hdrItems: [],
       groups: [],
-      resultAssets: [],
+      resultAssets: completedResultAssets,
       job: null
     }
   ];

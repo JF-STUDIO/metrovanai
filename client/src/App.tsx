@@ -2470,6 +2470,12 @@ function App() {
       return;
     }
 
+    if (isDemoMode) {
+      closeDownloadDialog(true);
+      setMessage(copy.downloadDemo);
+      return;
+    }
+
     setDownloadBusy(true);
     setDownloadStageText('');
     try {
@@ -2507,7 +2513,7 @@ function App() {
   }
 
   function handleDownloadProject(project: ProjectRecord) {
-    if (!project.downloadReady || isDemoMode) {
+    if (!project.downloadReady) {
       return;
     }
     setDownloadDialogProjectId(project.id);
