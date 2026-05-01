@@ -120,6 +120,22 @@ export interface ProjectAdminHealth {
   suspiciousResultFiles: string[];
 }
 
+export interface ProjectAdminDeepHealth {
+  status: 'passed' | 'warning' | 'failed' | string;
+  startedAt: string;
+  completedAt: string;
+  checkedObjects: number;
+  missingObjects: number;
+  sizeMismatchObjects: number;
+  issueCount: number;
+  issues: Array<{
+    severity: 'warning' | 'error' | string;
+    scope: string;
+    name: string;
+    message: string;
+  }>;
+}
+
 export interface ProjectJobState {
   id: string;
   status: 'idle' | 'pending' | 'processing' | 'completed' | 'failed';
@@ -272,4 +288,5 @@ export interface ProjectRecord {
   resultAssets: ResultAsset[];
   job: ProjectJobState | null;
   adminHealth?: ProjectAdminHealth;
+  adminDeepHealth?: ProjectAdminDeepHealth;
 }

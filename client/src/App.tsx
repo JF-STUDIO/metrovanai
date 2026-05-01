@@ -81,6 +81,7 @@ import {
   regenerateResult,
   recoverAdminProjectRunningHubResults,
   retryFailedProcessing,
+  runAdminProjectDeepHealth,
   selectExposure,
   startProcessing,
   updateAccountSettings,
@@ -116,6 +117,7 @@ import type {
   PaymentOrderRecord,
   PaymentOrderRefundPreview,
   ProjectGroup,
+  ProjectAdminDeepHealth,
   ProjectRecord,
   ResultAsset,
   SceneType
@@ -308,6 +310,8 @@ function App() {
   const [adminAuditLogs, setAdminAuditLogs] = useState<AdminAuditLogEntry[]>([]);
   const [adminDetailBusy, setAdminDetailBusy] = useState(false);
   const [adminActionBusy, setAdminActionBusy] = useState(false);
+  const [adminDeepHealthBusy, setAdminDeepHealthBusy] = useState(false);
+  const [adminDeepHealthByProject, setAdminDeepHealthByProject] = useState<Record<string, ProjectAdminDeepHealth>>({});
   const [adminAdjustment, setAdminAdjustment] = useState({ type: 'credit' as 'credit' | 'charge', points: '100', note: 'Manual credit' });
   const [adminActivationCodes, setAdminActivationCodes] = useState<AdminActivationCode[]>([]);
   const [adminActivationPackages, setAdminActivationPackages] = useState<BillingPackage[]>([]);
@@ -656,6 +660,9 @@ function App() {
     adminSelectedProject?.hdrItems.filter((item) => item.status === 'error') ?? [];
   const adminSelectedProjectProcessingItems =
     adminSelectedProject?.hdrItems.filter((item) => isHdrItemProcessing(item.status)) ?? [];
+  const adminSelectedProjectDeepHealth = adminSelectedProject
+    ? adminDeepHealthByProject[adminSelectedProject.id] ?? adminSelectedProject.adminDeepHealth ?? null
+    : null;
   const adminProjectHealthCounts = useMemo(
     () =>
       adminProjects.reduce(
@@ -1866,6 +1873,38 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, 'RunningHub 结果恢复失败。', locale));
     } finally {
       setAdminActionBusy(false);
+    }
+  }
+
+  async function handleAdminRunDeepHealth() {
+    if (!adminSelectedProject) {
+      return;
+    }
+
+    setAdminDeepHealthBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await runAdminProjectDeepHealth(adminSelectedProject.id);
+      setAdminDeepHealthByProject((current) => ({
+        ...current,
+        [adminSelectedProject.id]: response.deepHealth
+      }));
+      setAdminProjects((current) => current.map((project) => (project.id === response.project.id ? response.project : project)));
+      setAdminDetailProjects((current) => {
+        const exists = current.some((project) => project.id === response.project.id);
+        return exists
+          ? current.map((project) => (project.id === response.project.id ? response.project : project))
+          : [response.project, ...current];
+      });
+      setAdminMessage(
+        response.deepHealth.status === 'passed'
+          ? `深度巡检通过：检查了 ${response.deepHealth.checkedObjects} 个 R2 对象。`
+          : `深度巡检发现 ${response.deepHealth.issueCount} 个问题。`
+      );
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '深度巡检失败。', locale));
+    } finally {
+      setAdminDeepHealthBusy(false);
     }
   }
 
@@ -4775,6 +4814,9 @@ function App() {
                 <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminRecoverSelectedProject()} disabled={adminActionBusy}>
                   {adminActionBusy ? '恢复中...' : '恢复 RunningHub 结果'}
                 </button>
+                <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminRunDeepHealth()} disabled={adminDeepHealthBusy}>
+                  {adminDeepHealthBusy ? '巡检中...' : '深度巡检'}
+                </button>
               </div>
             </div>
             <div className="admin-project-live">
@@ -4805,6 +4847,31 @@ function App() {
                   ) : (
                     <div className="admin-health-ok">未发现 RAW/JPG 混组、重复源文件或截断结果图风险。</div>
                   )}
+                  {adminSelectedProjectDeepHealth ? (
+                    <div className="admin-deep-health">
+                      <div className="admin-mini-head">
+                        <strong>深度巡检</strong>
+                        <span>{adminSelectedProjectDeepHealth.status === 'passed' ? '通过' : `${adminSelectedProjectDeepHealth.issueCount} 个问题`}</span>
+                      </div>
+                      <div className="admin-health-grid compact">
+                        <div><strong>{adminSelectedProjectDeepHealth.checkedObjects}</strong><span>R2 对象</span></div>
+                        <div><strong>{adminSelectedProjectDeepHealth.missingObjects}</strong><span>缺失</span></div>
+                        <div><strong>{adminSelectedProjectDeepHealth.sizeMismatchObjects}</strong><span>大小不符</span></div>
+                        <div><strong>{formatAdminShortDate(adminSelectedProjectDeepHealth.completedAt)}</strong><span>完成时间</span></div>
+                      </div>
+                      {adminSelectedProjectDeepHealth.issues.length ? (
+                        <div className="admin-health-warnings">
+                          {adminSelectedProjectDeepHealth.issues.slice(0, 8).map((issue) => (
+                            <span key={`${issue.scope}-${issue.name}-${issue.message}`}>
+                              {issue.scope} · {issue.name}：{issue.message}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="admin-health-ok">R2 原片、结果图和最近下载包检查通过。</div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {adminSelectedProjectResults.length ? (

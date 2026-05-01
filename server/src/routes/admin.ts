@@ -5,6 +5,7 @@ import path from 'node:path';
 import { extractPreviewOrConvertToJpeg } from '../images.js';
 import {
   createPersistentObjectKey,
+  getObjectStorageMetadata,
   isObjectStorageConfigured,
   uploadFileToObjectStorage
 } from '../object-storage.js';
@@ -197,6 +198,36 @@ app.post('/api/admin/projects/:id/recover-runninghub-results', async (req, res) 
   });
 });
 
+app.post('/api/admin/projects/:id/deep-health', async (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  const projectId = String(req.params.id ?? '').trim();
+  const project = projectId ? store.getProject(projectId) : null;
+  if (!project) {
+    res.status(404).json({ error: '找不到该项目。' });
+    return;
+  }
+
+  const deepHealth = await buildAdminProjectDeepHealth(project);
+  writeAdminAuditLog(req, actor, {
+    action: 'project.deep_health_check',
+    targetProjectId: project.id,
+    details: {
+      status: deepHealth.status,
+      checkedObjects: deepHealth.checkedObjects,
+      issueCount: deepHealth.issues.length
+    }
+  });
+
+  res.json({
+    project: buildAdminProjectPayload(project),
+    deepHealth
+  });
+});
+
 function buildAdminProjectPayload(project: ProjectRecord) {
   return {
     ...buildPublicProject(project),
@@ -272,6 +303,128 @@ function buildAdminProjectHealth(project: ProjectRecord) {
     duplicateSourceGroups,
     suspiciousResultFiles
   };
+}
+
+async function buildAdminProjectDeepHealth(project: ProjectRecord) {
+  const startedAt = new Date().toISOString();
+  const issues: Array<{ severity: 'warning' | 'error'; scope: string; name: string; message: string }> = [];
+  let checkedObjects = 0;
+  let missingObjects = 0;
+  let sizeMismatchObjects = 0;
+
+  const checkObject = async (input: {
+    scope: string;
+    name: string;
+    storageKey?: string | null;
+    expectedSize?: number | null;
+    required?: boolean;
+  }) => {
+    if (!input.storageKey) {
+      if (input.required) {
+        issues.push({ severity: 'error', scope: input.scope, name: input.name, message: '缺少 R2 storage key' });
+      }
+      return;
+    }
+
+    checkedObjects += 1;
+    const metadata = await getObjectStorageMetadata(input.storageKey).catch((error) => {
+      issues.push({
+        severity: 'error',
+        scope: input.scope,
+        name: input.name,
+        message: `R2 元数据读取失败：${error instanceof Error ? error.message : String(error)}`
+      });
+      return null;
+    });
+    if (!metadata) {
+      missingObjects += 1;
+      issues.push({ severity: 'error', scope: input.scope, name: input.name, message: 'R2 对象不存在' });
+      return;
+    }
+    if (typeof input.expectedSize === 'number' && metadata.size !== null && metadata.size !== input.expectedSize) {
+      sizeMismatchObjects += 1;
+      issues.push({
+        severity: 'error',
+        scope: input.scope,
+        name: input.name,
+        message: `大小不一致：记录 ${input.expectedSize} bytes，R2 ${metadata.size} bytes`
+      });
+    }
+  };
+
+  const objectChecks: Array<() => Promise<void>> = [];
+  for (const hdrItem of project.hdrItems) {
+    for (const exposure of hdrItem.exposures) {
+      objectChecks.push(() => checkObject({
+        scope: hdrItem.title || `HDR ${hdrItem.index}`,
+        name: exposure.originalName || exposure.fileName,
+        storageKey: exposure.storageKey,
+        expectedSize: exposure.size,
+        required: true
+      }));
+    }
+  }
+
+  for (const asset of project.resultAssets) {
+    objectChecks.push(() => checkObject({
+      scope: 'result',
+      name: asset.fileName,
+      storageKey: asset.storageKey,
+      required: true
+    }));
+    if (isSuspiciousLocalJpeg(asset.storagePath)) {
+      issues.push({ severity: 'error', scope: 'result', name: asset.fileName, message: '本地结果 JPG 文件可疑或截断' });
+    }
+  }
+
+  const latestDownloadJob = store
+    .listProjectDownloadJobs(project.id)
+    .sort((left: ProjectDownloadJobRecord, right: ProjectDownloadJobRecord) => right.createdAt - left.createdAt)[0] ?? null;
+  if (latestDownloadJob?.downloadKey) {
+    objectChecks.push(() => checkObject({
+      scope: 'download',
+      name: latestDownloadJob.jobId,
+      storageKey: latestDownloadJob.downloadKey,
+      required: latestDownloadJob.status === 'ready'
+    }));
+  } else if (latestDownloadJob?.status === 'ready') {
+    issues.push({ severity: 'error', scope: 'download', name: latestDownloadJob.jobId, message: '下载任务 ready 但缺少 downloadKey' });
+  }
+  if (latestDownloadJob?.status === 'failed') {
+    issues.push({
+      severity: 'warning',
+      scope: 'download',
+      name: latestDownloadJob.jobId,
+      message: latestDownloadJob.error ?? '最近下载任务失败'
+    });
+  }
+
+  await runAdminDeepHealthChecks(objectChecks, 12);
+
+  const completedAt = new Date().toISOString();
+  const errorCount = issues.filter((issue) => issue.severity === 'error').length;
+  return {
+    status: errorCount ? 'failed' : issues.length ? 'warning' : 'passed',
+    startedAt,
+    completedAt,
+    checkedObjects,
+    missingObjects,
+    sizeMismatchObjects,
+    issueCount: issues.length,
+    issues: issues.slice(0, 100)
+  };
+}
+
+async function runAdminDeepHealthChecks(checks: Array<() => Promise<void>>, concurrency: number) {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, checks.length) }, async () => {
+    while (cursor < checks.length) {
+      const index = cursor;
+      cursor += 1;
+      await checks[index]!();
+    }
+  });
+  await Promise.all(workers);
 }
 
 const ADMIN_RAW_EXTENSIONS = new Set([

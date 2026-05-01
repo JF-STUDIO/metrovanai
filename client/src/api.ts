@@ -887,6 +887,13 @@ export async function fetchAdminProjectDetail(projectId: string) {
   return await jsonRequest<{ project: ProjectRecord }>(`/api/admin/projects/${encodeURIComponent(projectId)}`);
 }
 
+export async function runAdminProjectDeepHealth(projectId: string) {
+  return await jsonRequest<{ project: ProjectRecord; deepHealth: NonNullable<ProjectRecord['adminDeepHealth']> }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/deep-health`,
+    { method: 'POST' }
+  );
+}
+
 export async function recoverAdminProjectRunningHubResults(projectId: string) {
   return await jsonRequest<{ summary: AdminProjectRecoverySummary; project: ProjectRecord | null }>(
     `/api/admin/projects/${encodeURIComponent(projectId)}/recover-runninghub-results`,

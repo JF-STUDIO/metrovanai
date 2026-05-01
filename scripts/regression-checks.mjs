@@ -258,6 +258,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/routes/admin.ts',
+  '/api/admin/projects/:id/deep-health',
+  'Admin must provide an on-demand project deep health check endpoint.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '深度巡检',
+  'Admin project detail must expose an on-demand deep health check button.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'
