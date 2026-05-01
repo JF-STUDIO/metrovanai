@@ -3575,12 +3575,6 @@ function App() {
 
         updateLocalImportDraft(projectId, (draft) => ({ ...draft, uploadStatus: 'uploading' }));
 
-        const initialLayoutResponse = await applyHdrLayout(projectId, buildHdrLayoutPayload(activeLocalDraft, uploadedObjects), {
-          mode: 'replace',
-          inputComplete: false
-        });
-        upsertProject(initialLayoutResponse.project);
-
         if (uploadFilesForRun.length) {
           const existingUploadsForRun = getUploadedObjectsForFiles(uploadedObjects, uploadFilesForRun);
           try {
@@ -3640,18 +3634,9 @@ function App() {
         }
 
         updateAggregateUploadProgress(failedUploadBuffer.length ? 'uploading' : 'finalizing', {}, failedUploadBuffer.length ? undefined : 96);
-        const uploadedLayoutResponse = await applyHdrLayout(projectId, buildHdrLayoutPayload(activeLocalDraft, uploadedObjects), {
-          mode: 'replace',
-          inputComplete: false
-        });
-        upsertProject(uploadedLayoutResponse.project);
 
         if (failedUploadBuffer.length) {
           updateLocalImportDraft(projectId, (draft) => ({ ...draft, uploadStatus: 'paused', uploadedObjects }));
-          const reviewStep = await patchProject(projectId, { currentStep: 2, status: 'review' }).catch(() => null);
-          if (reviewStep?.project) {
-            upsertProject(reviewStep.project);
-          }
           setUploadActive(false);
           setUploadMode(null);
           setUploadSnapshot(null);
@@ -3663,7 +3648,10 @@ function App() {
           return;
         }
 
-        const completedLayoutResponse = await applyHdrLayout(projectId, [], { mode: 'merge', inputComplete: true });
+        const completedLayoutResponse = await applyHdrLayout(projectId, buildHdrLayoutPayload(activeLocalDraft, uploadedObjects), {
+          mode: 'replace',
+          inputComplete: true
+        });
         const syncedProject = completedLayoutResponse.project;
         setUploadPercent(100);
         setUploadSnapshot({

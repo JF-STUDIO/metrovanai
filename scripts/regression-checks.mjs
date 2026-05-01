@@ -150,6 +150,24 @@ assertIncludes(
 );
 
 assertIncludes(
+  'client/src/api.ts',
+  'completeDirectObjectUploadReferencesInBatches',
+  'Direct upload completion must verify large RAW projects in bounded batches.'
+);
+
+assertIncludes(
+  'client/src/api.ts',
+  "return {\n        directUploadFiles: completedObjects\n      };",
+  'Partial upload failures must preserve local completed-object checkpoints without finalizing.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  "inputComplete: true",
+  'Local upload flow must finalize layout only after all originals are uploaded.'
+);
+
+assertIncludes(
   'client/src/components/ReviewUploadStatus.tsx',
   'Retry all failed files',
   'Upload retry UI must support batch retry instead of one-file-only recovery.'

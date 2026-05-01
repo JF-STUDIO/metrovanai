@@ -1419,7 +1419,7 @@ async function completeDirectObjectUploadReferencesReliably(
   options: { signal?: AbortSignal; onOfflinePause?: () => void } = {}
 ) {
   try {
-    return await runWithOfflineRetry(() => completeDirectObjectUploadReferences(projectId, files), {
+    return await runWithOfflineRetry(() => completeDirectObjectUploadReferencesInBatches(projectId, files), {
       signal: options.signal,
       onPause: options.onOfflinePause
     });
@@ -1667,6 +1667,21 @@ async function completeDirectObjectUploadReferences(projectId: string, files: Up
       files
     })
   });
+}
+
+async function completeDirectObjectUploadReferencesInBatches(projectId: string, files: UploadedObjectReference[]) {
+  let response: { project: ProjectRecord } | null = null;
+  for (let index = 0; index < files.length; index += CLIENT_DIRECT_UPLOAD_TARGET_MAX_FILES) {
+    const batch = files.slice(index, index + CLIENT_DIRECT_UPLOAD_TARGET_MAX_FILES);
+    if (!batch.length) {
+      continue;
+    }
+    response = await completeDirectObjectUploadReferences(projectId, batch);
+  }
+  if (!response) {
+    throw new Error('No uploaded files to complete.');
+  }
+  return response;
 }
 
 async function initMultipartUpload(projectId: string, file: File, fileIdentity: string) {
@@ -2588,6 +2603,13 @@ async function uploadFilesViaDirectObject(
       emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
       throw new Error('No files uploaded.');
     }
+    if (failedFiles.length) {
+      emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
+      emitUploadPerformanceEvent({ projectId, status: 'failed', files, uploadedFiles, failedFiles, diagnostics });
+      return {
+        directUploadFiles: completedObjects
+      };
+    }
     const finalizingStartedAt = Date.now();
     const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
       signal: options.signal,
@@ -2602,9 +2624,6 @@ async function uploadFilesViaDirectObject(
     });
     diagnostics.finalizingMs += Date.now() - finalizingStartedAt;
     await clearPersistedProject(projectId);
-    if (failedFiles.length) {
-      emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
-    }
     emitUploadBatchEvent('upload.batch-completed', { projectId, files, uploadedFiles, failedFiles });
     emitUploadPerformanceEvent({ projectId, status: 'completed', files, uploadedFiles: files.length, failedFiles, diagnostics });
     onProgress(100, {
