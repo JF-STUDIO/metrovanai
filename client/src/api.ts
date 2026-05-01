@@ -309,6 +309,27 @@ export interface AdminProjectRecoverySummary {
   failed: number;
 }
 
+export type AdminProjectRepairAction = 'retry-failed-processing' | 'regenerate-download' | 'mark-stalled-failed';
+
+export interface AdminProjectRepairPayload {
+  action: AdminProjectRepairAction;
+  summary: {
+    status: string;
+    message: string;
+    failedItems?: number;
+    jobId?: string;
+    jobStatus?: string;
+    reused?: boolean;
+  };
+  project: ProjectRecord;
+  job?: {
+    jobId: string;
+    status: string;
+    progress: number;
+    error?: string | null;
+  };
+}
+
 export interface AdminOrdersPayload {
   total: number;
   items: PaymentOrderRecord[];
@@ -899,6 +920,13 @@ export async function recoverAdminProjectRunningHubResults(projectId: string) {
     `/api/admin/projects/${encodeURIComponent(projectId)}/recover-runninghub-results`,
     { method: 'POST' }
   );
+}
+
+export async function repairAdminProject(projectId: string, action: AdminProjectRepairAction) {
+  return await jsonRequest<AdminProjectRepairPayload>(`/api/admin/projects/${encodeURIComponent(projectId)}/repair`, {
+    method: 'POST',
+    body: JSON.stringify({ action })
+  });
 }
 
 export async function fetchAdminOrders(limit = 120) {

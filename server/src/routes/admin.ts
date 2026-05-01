@@ -34,7 +34,9 @@ export function createAdminRouter(ctx: RouteContext) {
     buildPublicProject,
     checkRateLimit,
     deleteProjectObjectStorage,
+    enqueueDownloadJob,
     featureImageUpload,
+    getDefaultDownloadOptions,
     getEnabledStudioFeatures,
     getEffectiveUserRole,
     getFeatureImagePreviewPath,
@@ -226,6 +228,154 @@ app.post('/api/admin/projects/:id/deep-health', async (req, res) => {
     project: buildAdminProjectPayload(project),
     deepHealth
   });
+});
+
+app.post('/api/admin/projects/:id/repair', async (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  const projectId = String(req.params.id ?? '').trim();
+  const action = String(req.body?.action ?? '').trim();
+  const project = projectId ? store.getProject(projectId) : null;
+  if (!project) {
+    res.status(404).json({ error: '找不到该项目。' });
+    return;
+  }
+
+  if (action === 'retry-failed-processing') {
+    const failedItems = project.hdrItems.filter(
+      (item: any) => item.status === 'error' && !(item.resultKey || item.resultPath || item.resultUrl)
+    );
+    if (!failedItems.length) {
+      res.json({
+        action,
+        summary: {
+          status: 'idle',
+          message: '这个项目没有可重试的失败照片。',
+          failedItems: 0
+        },
+        project: buildAdminProjectPayload(project)
+      });
+      return;
+    }
+
+    const nextProject = await processor.start(project.id, { retryFailed: true });
+    writeAdminAuditLog(req, actor, {
+      action: 'project.repair.retry_failed_processing',
+      targetProjectId: project.id,
+      details: {
+        failedItems: failedItems.length
+      }
+    });
+
+    res.json({
+      action,
+      summary: {
+        status: 'started',
+        message: `已重新排队 ${failedItems.length} 张失败照片。`,
+        failedItems: failedItems.length
+      },
+      project: nextProject ? buildAdminProjectPayload(nextProject) : buildAdminProjectPayload(project)
+    });
+    return;
+  }
+
+  if (action === 'regenerate-download') {
+    const { job, reused } = enqueueDownloadJob({
+      project,
+      userKey: project.userKey,
+      options: getDefaultDownloadOptions()
+    });
+    writeAdminAuditLog(req, actor, {
+      action: 'project.repair.regenerate_download',
+      targetProjectId: project.id,
+      details: {
+        jobId: job.jobId,
+        jobStatus: job.status,
+        reused
+      }
+    });
+
+    res.json({
+      action,
+      summary: {
+        status: reused ? 'reused' : 'started',
+        message: reused ? '已有可复用下载包，已返回现有下载任务。' : '已开始重新生成下载包。',
+        jobId: job.jobId,
+        jobStatus: job.status,
+        reused
+      },
+      job,
+      project: buildAdminProjectPayload(store.getProject(project.id) ?? project)
+    });
+    return;
+  }
+
+  if (action === 'mark-stalled-failed') {
+    const now = new Date().toISOString();
+    const nextProject = store.updateProject(project.id, (current) => ({
+      ...current,
+      status: 'failed',
+      job: {
+        ...(current.job ?? {
+          id: nanoid(10),
+          status: 'failed',
+          phase: 'failed',
+          percent: 100,
+          label: '',
+          detail: '',
+          currentHdrItemId: null,
+          startedAt: null,
+          completedAt: null,
+          workflowRealtime: {
+            total: 0,
+            entered: 0,
+            returned: 0,
+            active: 0,
+            failed: 0,
+            succeeded: 0,
+            currentNodeName: '',
+            currentNodeId: '',
+            currentNodePercent: 0,
+            monitorState: '',
+            transport: '',
+            detail: '',
+            queuePosition: 0,
+            remoteProgress: 0
+          }
+        }),
+        status: 'failed',
+        phase: 'failed',
+        percent: 100,
+        label: '处理失败',
+        detail: '管理员已将卡住项目标记为失败。',
+        completedAt: now
+      }
+    }));
+    writeAdminAuditLog(req, actor, {
+      action: 'project.repair.mark_stalled_failed',
+      targetProjectId: project.id,
+      details: {
+        previousStatus: project.status,
+        previousJobStatus: project.job?.status ?? null,
+        previousJobPhase: project.job?.phase ?? null
+      }
+    });
+
+    res.json({
+      action,
+      summary: {
+        status: 'done',
+        message: '已将项目标记为失败，用户可重新处理或联系管理员。'
+      },
+      project: buildAdminProjectPayload(nextProject ?? project)
+    });
+    return;
+  }
+
+  res.status(400).json({ error: 'Unsupported repair action.' });
 });
 
 function buildAdminProjectPayload(project: ProjectRecord) {

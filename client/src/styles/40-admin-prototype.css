@@ -2873,6 +2873,18 @@
   color: #9af0c3;
 }
 
+.admin-repair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.admin-repair-actions .btn.danger {
+  border-color: rgba(255, 96, 96, 0.3);
+  color: #ffb0b0;
+}
+
 .admin-deep-health {
   margin-top: 14px;
   padding-top: 12px;

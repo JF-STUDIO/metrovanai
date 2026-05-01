@@ -80,6 +80,7 @@ import {
   requestPasswordReset,
   regenerateResult,
   recoverAdminProjectRunningHubResults,
+  repairAdminProject,
   retryFailedProcessing,
   runAdminProjectDeepHealth,
   selectExposure,
@@ -98,6 +99,7 @@ import type {
   AdminActivationCode,
   AdminAuditLogEntry,
   AdminOpsHealthPayload,
+  AdminProjectRepairAction,
   AdminSystemSettings,
   AdminUserListQuery,
   AdminUserSummary,
@@ -311,6 +313,7 @@ function App() {
   const [adminDetailBusy, setAdminDetailBusy] = useState(false);
   const [adminActionBusy, setAdminActionBusy] = useState(false);
   const [adminDeepHealthBusy, setAdminDeepHealthBusy] = useState(false);
+  const [adminRepairBusy, setAdminRepairBusy] = useState<AdminProjectRepairAction | null>(null);
   const [adminDeepHealthByProject, setAdminDeepHealthByProject] = useState<Record<string, ProjectAdminDeepHealth>>({});
   const [adminAdjustment, setAdminAdjustment] = useState({ type: 'credit' as 'credit' | 'charge', points: '100', note: 'Manual credit' });
   const [adminActivationCodes, setAdminActivationCodes] = useState<AdminActivationCode[]>([]);
@@ -663,6 +666,16 @@ function App() {
   const adminSelectedProjectDeepHealth = adminSelectedProject
     ? adminDeepHealthByProject[adminSelectedProject.id] ?? adminSelectedProject.adminDeepHealth ?? null
     : null;
+  const adminSelectedProjectCanRetryFailed = adminSelectedProjectFailedItems.some(
+    (item) => !item.resultUrl
+  );
+  const adminSelectedProjectCanMarkStalled = Boolean(
+    adminSelectedProject &&
+      (adminSelectedProject.status === 'uploading' ||
+        adminSelectedProject.status === 'processing' ||
+        adminSelectedProject.job?.status === 'pending' ||
+        adminSelectedProject.job?.status === 'processing')
+  );
   const adminProjectHealthCounts = useMemo(
     () =>
       adminProjects.reduce(
@@ -1905,6 +1918,36 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '深度巡检失败。', locale));
     } finally {
       setAdminDeepHealthBusy(false);
+    }
+  }
+
+  async function handleAdminRepairSelectedProject(action: AdminProjectRepairAction) {
+    if (!adminSelectedProject) {
+      return;
+    }
+    if (
+      action === 'mark-stalled-failed' &&
+      !window.confirm(`确认将项目 "${adminSelectedProject.name}" 标记为失败？这个动作会写入后台审计日志。`)
+    ) {
+      return;
+    }
+
+    setAdminRepairBusy(action);
+    setAdminMessage('');
+    try {
+      const response = await repairAdminProject(adminSelectedProject.id, action);
+      setAdminProjects((current) => current.map((project) => (project.id === response.project.id ? response.project : project)));
+      setAdminDetailProjects((current) => {
+        const exists = current.some((project) => project.id === response.project.id);
+        return exists
+          ? current.map((project) => (project.id === response.project.id ? response.project : project))
+          : [response.project, ...current];
+      });
+      setAdminMessage(response.summary.message || '修复动作已提交。');
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '项目修复失败。', locale));
+    } finally {
+      setAdminRepairBusy(null);
     }
   }
 
@@ -4847,6 +4890,32 @@ function App() {
                   ) : (
                     <div className="admin-health-ok">未发现 RAW/JPG 混组、重复源文件或截断结果图风险。</div>
                   )}
+                  <div className="admin-repair-actions">
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      type="button"
+                      onClick={() => void handleAdminRepairSelectedProject('retry-failed-processing')}
+                      disabled={!adminSelectedProjectCanRetryFailed || Boolean(adminRepairBusy)}
+                    >
+                      {adminRepairBusy === 'retry-failed-processing' ? '重试中...' : '重试失败照片'}
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-xs"
+                      type="button"
+                      onClick={() => void handleAdminRepairSelectedProject('regenerate-download')}
+                      disabled={!adminSelectedProjectResults.length || Boolean(adminRepairBusy)}
+                    >
+                      {adminRepairBusy === 'regenerate-download' ? '生成中...' : '重新生成下载包'}
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-xs danger"
+                      type="button"
+                      onClick={() => void handleAdminRepairSelectedProject('mark-stalled-failed')}
+                      disabled={!adminSelectedProjectCanMarkStalled || Boolean(adminRepairBusy)}
+                    >
+                      {adminRepairBusy === 'mark-stalled-failed' ? '标记中...' : '标记卡住失败'}
+                    </button>
+                  </div>
                   {adminSelectedProjectDeepHealth ? (
                     <div className="admin-deep-health">
                       <div className="admin-mini-head">

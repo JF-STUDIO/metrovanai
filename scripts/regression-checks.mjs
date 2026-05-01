@@ -270,6 +270,30 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/routes/admin.ts',
+  '/api/admin/projects/:id/repair',
+  'Admin must provide a project repair endpoint for diagnosed issues.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  "action: 'project.repair.retry_failed_processing'",
+  'Admin repair retries must be audited.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  "action: 'project.repair.regenerate_download'",
+  'Admin download regeneration repairs must be audited.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '重新生成下载包',
+  'Admin project detail must expose a download regeneration repair action.'
+);
+
+assertIncludes(
   'scripts/maintenance-check.mjs',
   'checkApplicationData',
   'Maintenance automation must inspect production application data.'
