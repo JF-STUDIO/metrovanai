@@ -1084,52 +1084,52 @@
 
 /* ── Delete confirm dialog ─────────────────────────────────────────── */
 .delete-confirm-card {
-  width: min(400px, 88vw);
+  width: min(420px, 92vw);
   background:
-    linear-gradient(160deg, #1c1a2a 0%, #110f1d 100%),
-    radial-gradient(60% 50% at 50% -5%, rgba(220, 50, 50, 0.12), transparent 70%);
-  border: 1px solid rgba(220, 60, 60, 0.28);
-  border-radius: 18px;
-  padding: 2rem 1.75rem 1.625rem;
+    linear-gradient(180deg, rgba(18, 18, 20, 0.98), rgba(8, 8, 10, 0.96)),
+    radial-gradient(circle at top center, rgba(var(--accent-rgb), 0.1), transparent 46%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 1.35rem;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 0.65rem;
+  gap: 0.72rem;
   box-shadow:
-    0 24px 64px -20px rgba(0, 0, 0, 0.75),
+    0 24px 70px rgba(0, 0, 0, 0.62),
     0 0 0 1px rgba(255, 255, 255, 0.04) inset;
 }
 
 .delete-confirm-icon {
-  width: 54px;
-  height: 54px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
-  background: rgba(210, 40, 40, 0.14);
-  border: 1px solid rgba(220, 60, 60, 0.32);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ff5c5c;
-  margin-bottom: 0.2rem;
+  color: rgba(255, 103, 103, 0.95);
+  margin-bottom: 0.1rem;
   flex-shrink: 0;
 }
 
 .delete-confirm-title {
   font-family: var(--hp-display, var(--display, sans-serif));
-  font-size: 1.2rem;
+  font-size: 1.08rem;
   font-weight: 700;
   color: #fff;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   line-height: 1.2;
 }
 
 .delete-confirm-desc {
-  font-size: 0.875rem;
-  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.86rem;
+  color: rgba(255, 255, 255, 0.58);
   line-height: 1.55;
   margin: 0;
-  max-width: 28ch;
+  max-width: 34ch;
 }
 
 .delete-confirm-actions {
@@ -1146,14 +1146,14 @@
 
 .delete-confirm-btn {
   flex: 1;
-  background: linear-gradient(135deg, #d93a3a 0%, #b42020 100%);
-  border: none;
+  background: rgba(214, 48, 48, 0.92);
+  border: 1px solid rgba(255, 105, 105, 0.18);
   color: #fff;
-  font-family: var(--hp-mono, var(--mono, monospace));
-  font-size: 0.8rem;
+  font-family: inherit;
+  font-size: 0.9rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   padding: 0.625rem 1.25rem;
   border-radius: 9px;
   cursor: pointer;

@@ -18,7 +18,11 @@ export function StudioFeatureLaunchPanel({
     <section className="feature-launch-panel">
       <div className="feature-launch-head">
         <div>
-          <p>选择最贴合您拍摄场景的修图功能。每张功能卡片对应一条经过调校的处理流程，所需积分实时显示。</p>
+          <p>
+            {locale === 'en'
+              ? 'Choose the retouching workflow that best matches the shoot. Each card uses a tuned processing flow and shows credits in real time.'
+              : '选择最贴合您拍摄场景的修图功能。每张功能卡片对应一条经过调校的处理流程，所需积分实时显示。'}
+          </p>
         </div>
       </div>
       <div className="feature-card-grid">
@@ -43,7 +47,7 @@ export function StudioFeatureLaunchPanel({
                   <span className="studio-feature-gradient" aria-hidden="true" />
                 )}
                 <span className="studio-feature-tag">{feature.tag[locale]}</span>
-                {locked && <span className="studio-feature-lock">建设中</span>}
+                {locked && <span className="studio-feature-lock">{locale === 'en' ? 'Coming soon' : '建设中'}</span>}
               </div>
               <div className="studio-feature-body">
                 <strong>{feature.title[locale]}</strong>
@@ -59,7 +63,7 @@ export function StudioFeatureLaunchPanel({
       </div>
       <div className="feature-launch-note">
         <strong>{availableFeatureCount}</strong>
-        <span>个功能可用，更多功能正在接入。</span>
+        <span>{locale === 'en' ? ' workflows available. More are being connected.' : '个功能可用，更多功能正在接入。'}</span>
       </div>
     </section>
   );

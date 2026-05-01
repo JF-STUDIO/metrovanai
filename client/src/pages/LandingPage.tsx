@@ -3,7 +3,6 @@ import logoFull from '../assets/metrovan-logo-full.webp';
 import jinSignatureAvatar from '../assets/jin-signature-avatar.webp';
 import showcaseInteriorAfter from '../assets/showcase-interior-after.webp';
 import showcaseInteriorBefore from '../assets/showcase-interior-before.webp';
-import landingVideoPoster from '../assets/landing-video-poster.webp';
 import type { PlansPageCopy } from './PlansPage';
 
 const LANDING_VIDEO_URL =
@@ -267,7 +266,7 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
           muted
           playsInline
           preload="none"
-          poster={landingVideoPoster}
+          poster={showcaseInteriorAfter}
           disablePictureInPicture
           onCanPlay={() => attemptLandingVideoPlayback(landingVideoRef.current)}
         />
@@ -294,15 +293,6 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
             onClick={() => onNavigate('plans')}
           >
             {copy.plansNav}
-          </button>
-          <button className="landing-home-link" type="button" onClick={() => scrollToHomeSection('examples')}>
-            {copy.examplesNav}
-          </button>
-          <button className="landing-home-link" type="button" onClick={() => scrollToHomeSection('workflow')}>
-            {copy.workflowNav}
-          </button>
-          <button className="landing-home-link" type="button" onClick={() => scrollToHomeSection('faq')}>
-            {copy.faqNav}
           </button>
         </nav>
         <div className="landing-actions">
@@ -396,11 +386,11 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
                     <figcaption className="showcase-sci-render-caption">
                       <div className="showcase-sci-render-caption-side is-before">
                         <strong>Raw Capture</strong>
-                        <small>Color cast 路 Uneven light 路 Soft detail.</small>
+                        <small>Color cast · Uneven light · Soft detail.</small>
                       </div>
                       <div className="showcase-sci-render-caption-side is-after">
                         <strong>AI Enhanced</strong>
-                        <small>Neutral white 路 Balanced light 路 Sky replaced.</small>
+                        <small>Neutral white · Balanced light · Sky replaced.</small>
                       </div>
                     </figcaption>
                   </figure>
@@ -494,7 +484,7 @@ export function LandingPage({ activeRoute, copy, hasSession, message, onNavigate
       )}
 
       {activeRoute === 'plans' && (
-        <Suspense fallback={<div className="plans-section plans-loading" aria-busy="true">正在加载方案...</div>}>
+        <Suspense fallback={<div className="plans-section plans-loading" aria-busy="true">Loading...</div>}>
           <PlansPage copy={copy} onStart={() => (hasSession ? onNavigate('studio') : onOpenAuth('signup'))} />
         </Suspense>
       )}
