@@ -142,12 +142,18 @@ app.get('/api/admin/projects', (req, res) => {
     return;
   }
 
-  const limit = Math.max(1, Math.min(500, Math.round(Number(req.query.limit ?? 120))));
+  const page = Math.max(1, Math.round(Number(req.query.page ?? 1)));
+  const pageSize = Math.max(1, Math.min(500, Math.round(Number(req.query.pageSize ?? req.query.limit ?? 200))));
   const projects = listAllProjectsForAdmin();
+  const pageCount = Math.max(1, Math.ceil(projects.length / pageSize));
+  const offset = (page - 1) * pageSize;
 
   res.json({
     total: projects.length,
-    items: projects.slice(0, limit).map((project: ProjectRecord) => buildAdminProjectPayload(project))
+    page,
+    pageSize,
+    pageCount,
+    items: projects.slice(offset, offset + pageSize).map((project: ProjectRecord) => buildAdminProjectPayload(project))
   });
 });
 

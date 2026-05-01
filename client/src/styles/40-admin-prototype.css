@@ -2703,6 +2703,12 @@
   font-weight: 600;
 }
 
+.admin-prototype .admin-list-meta {
+  padding: 16px 22px 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 .admin-prototype .works-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

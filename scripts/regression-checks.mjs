@@ -294,6 +294,18 @@ assertIncludes(
   'Admin works view must surface project health diagnostics.'
 );
 
+assertNotIncludes(
+  'client/src/App.tsx',
+  'slice(0, 32)',
+  'Admin works view must not hide projects behind a hard 32-item display cap.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  'pageSize',
+  'Admin projects endpoint must support paginated loading for all user works.'
+);
+
 assertIncludes(
   'server/src/routes/admin.ts',
   '/api/admin/projects/:id/deep-health',

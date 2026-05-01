@@ -226,6 +226,7 @@ import {
 } from './app-utils';
 
 const STRIPE_RETURN_PROJECT_STORAGE_KEY = 'metrovanai_stripe_return_project_id';
+const ADMIN_PROJECT_PAGE_SIZE = 200;
 
 function isAdminBillingAdjustmentEntry(entry: BillingEntry) {
   return entry.amountUsd === 0 && !entry.projectId && !entry.projectName && entry.note.startsWith('Admin adjustment:');
@@ -300,6 +301,9 @@ function App() {
   const [adminLoaded, setAdminLoaded] = useState(false);
   const [adminProjectsLoaded, setAdminProjectsLoaded] = useState(false);
   const [adminProjectsBusy, setAdminProjectsBusy] = useState(false);
+  const [adminProjectsTotal, setAdminProjectsTotal] = useState(0);
+  const [adminProjectsPage, setAdminProjectsPage] = useState(0);
+  const [adminProjectsPageCount, setAdminProjectsPageCount] = useState(1);
   const [adminOrdersLoaded, setAdminOrdersLoaded] = useState(false);
   const [adminOrdersBusy, setAdminOrdersBusy] = useState(false);
   const [adminRefundOrder, setAdminRefundOrder] = useState<PaymentOrderRecord | null>(null);
@@ -915,10 +919,13 @@ function App() {
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setAdminProjectsBusy(true);
-      fetchAdminProjects()
+      fetchAdminProjects({ page: 1, pageSize: ADMIN_PROJECT_PAGE_SIZE })
         .then((response) => {
           if (cancelled) return;
           setAdminProjects(response.items);
+          setAdminProjectsTotal(response.total);
+          setAdminProjectsPage(response.page);
+          setAdminProjectsPageCount(response.pageCount);
           setAdminProjectsLoaded(true);
         })
         .catch((error) => {
@@ -1879,13 +1886,51 @@ function App() {
     setAdminProjectsBusy(true);
     setAdminMessage('');
     try {
-      const response = await fetchAdminProjects();
+      const response = await fetchAdminProjects({ page: 1, pageSize: ADMIN_PROJECT_PAGE_SIZE });
       setAdminProjects(response.items);
+      setAdminProjectsTotal(response.total);
+      setAdminProjectsPage(response.page);
+      setAdminProjectsPageCount(response.pageCount);
       setAdminProjectsLoaded(true);
-      setAdminMessage(`已载入 ${response.total} 个项目。`);
+      setAdminMessage(
+        response.items.length >= response.total
+          ? `已载入全部 ${response.total} 个项目。`
+          : `已载入 ${response.items.length} / ${response.total} 个项目，可继续载入更多。`
+      );
     } catch (error) {
       setAdminProjectsLoaded(true);
       setAdminMessage(getUserFacingErrorMessage(error, '项目列表读取失败。', locale));
+    } finally {
+      setAdminProjectsBusy(false);
+    }
+  }
+
+  async function handleAdminLoadMoreProjects() {
+    if (!hasAdminSession || adminProjectsBusy || adminProjectsPage >= adminProjectsPageCount) {
+      return;
+    }
+
+    setAdminProjectsBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminProjects({ page: adminProjectsPage + 1, pageSize: ADMIN_PROJECT_PAGE_SIZE });
+      setAdminProjects((current) => {
+        const existingIds = new Set(current.map((project) => project.id));
+        const nextItems = response.items.filter((project) => !existingIds.has(project.id));
+        return [...current, ...nextItems];
+      });
+      setAdminProjectsTotal(response.total);
+      setAdminProjectsPage(response.page);
+      setAdminProjectsPageCount(response.pageCount);
+      setAdminProjectsLoaded(true);
+      const loadedCount = Math.min(response.page * response.pageSize, response.total);
+      setAdminMessage(
+        loadedCount >= response.total
+          ? `已载入全部 ${response.total} 个项目。`
+          : `已载入 ${loadedCount} / ${response.total} 个项目。`
+      );
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '继续载入项目失败。', locale));
     } finally {
       setAdminProjectsBusy(false);
     }
@@ -5265,11 +5310,19 @@ function App() {
       <div className="page-content active">
         {adminPageTitle(
           '修图作品',
-          <>所有用户的 AI 修图作品 · 当前载入 <span className="mono accent-text">{adminProjects.length.toLocaleString()}</span> 项</>,
+          <>
+            所有用户的 AI 修图作品 · 当前载入 <span className="mono accent-text">{adminProjects.length.toLocaleString()}</span>
+            {adminProjectsTotal ? <> / {adminProjectsTotal.toLocaleString()}</> : null} 项
+          </>,
           <>
             <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadProjects()} disabled={adminProjectsBusy}>
               {adminProjectsBusy ? '刷新中...' : '刷新作品'}
             </button>
+            {adminProjectsPage < adminProjectsPageCount ? (
+              <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadMoreProjects()} disabled={adminProjectsBusy}>
+                继续载入
+              </button>
+            ) : null}
             <button className="btn btn-primary" type="button" onClick={() => setAdminConsolePage('content')}>+ 添加精选</button>
           </>
         )}
@@ -5310,32 +5363,39 @@ function App() {
             />
           </div>
           {adminProjects.length ? (() => {
-            const filtered = adminProjects.filter((p) => !adminWorksSearch || p.name.toLowerCase().includes(adminWorksSearch.toLowerCase()) || (p.userDisplayName ?? p.userKey ?? '').toLowerCase().includes(adminWorksSearch.toLowerCase())).slice(0, 32);
+            const normalizedSearch = adminWorksSearch.trim().toLowerCase();
+            const filtered = adminProjects.filter((p) => !normalizedSearch || p.name.toLowerCase().includes(normalizedSearch) || (p.userDisplayName ?? p.userKey ?? '').toLowerCase().includes(normalizedSearch));
             return filtered.length ? (
-              <div className="works-grid">
-                {filtered.map((project, index) => {
-                  const preview = project.resultAssets[0]?.previewUrl ?? project.resultAssets[0]?.storageUrl ?? project.hdrItems[0]?.previewUrl ?? null;
-                  return (
-                    <button key={project.id} className="work-card" type="button" onClick={() => void handleAdminSelectProject(project.id)}>
-                      <div className={projectToneClass(index)}>
-                        {preview ? <img src={resolveMediaUrl(preview)} alt={project.name} loading="lazy" decoding="async" /> : null}
-                        <div className="badge-row">
-                          <span className="ai-badge">{project.studioFeatureTitle ?? project.workflowId ?? 'HDR ENHANCE'}</span>
-                          <span className="check">{project.status === 'completed' ? '✓' : project.status === 'failed' ? '⚠' : '⋯'}</span>
+              <>
+                <div className="admin-list-meta">
+                  当前显示 {filtered.length.toLocaleString()} 项
+                  {adminProjectsPage < adminProjectsPageCount ? ` · 还有 ${(adminProjectsTotal - adminProjects.length).toLocaleString()} 项未载入` : ''}
+                </div>
+                <div className="works-grid">
+                  {filtered.map((project, index) => {
+                    const preview = project.resultAssets[0]?.previewUrl ?? project.resultAssets[0]?.storageUrl ?? project.hdrItems[0]?.previewUrl ?? null;
+                    return (
+                      <button key={project.id} className="work-card" type="button" onClick={() => void handleAdminSelectProject(project.id)}>
+                        <div className={projectToneClass(index)}>
+                          {preview ? <img src={resolveMediaUrl(preview)} alt={project.name} loading="lazy" decoding="async" /> : null}
+                          <div className="badge-row">
+                            <span className="ai-badge">{project.studioFeatureTitle ?? project.workflowId ?? 'HDR ENHANCE'}</span>
+                            <span className="check">{project.status === 'completed' ? '✓' : project.status === 'failed' ? '⚠' : '⋯'}</span>
+                          </div>
                         </div>
-                      </div>
-                      <div className="work-meta">
-                        <div className="name">{project.name}</div>
-                        <div className="by"><span>{project.userDisplayName || project.userKey}</span><span>{formatAdminShortDate(project.updatedAt)}</span></div>
-                        <div className="admin-health-strip">
-                          <span className={getProjectHealthTagClass(project)}>{getProjectHealthLabel(project)}</span>
-                          <small>{project.adminHealth?.hdrCount ?? project.hdrItems.length} 组 · {project.adminHealth?.resultCount ?? project.resultAssets.length} 结果</small>
+                        <div className="work-meta">
+                          <div className="name">{project.name}</div>
+                          <div className="by"><span>{project.userDisplayName || project.userKey}</span><span>{formatAdminShortDate(project.updatedAt)}</span></div>
+                          <div className="admin-health-strip">
+                            <span className={getProjectHealthTagClass(project)}>{getProjectHealthLabel(project)}</span>
+                            <small>{project.adminHealth?.hdrCount ?? project.hdrItems.length} 组 · {project.adminHealth?.resultCount ?? project.resultAssets.length} 结果</small>
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
             ) : <div className="empty-tip">没有匹配 "{adminWorksSearch}" 的作品</div>;
           })() : (
             <div className="empty-tip">{adminProjectsBusy ? '正在读取作品...' : '暂无作品'}</div>

@@ -298,6 +298,9 @@ export interface AdminUsersPayload {
 
 export interface AdminProjectsPayload {
   total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
   items: ProjectRecord[];
 }
 
@@ -945,8 +948,11 @@ export async function fetchAdminUsers(query: AdminUserListQuery = {}) {
   return await jsonRequest<AdminUsersPayload>(`/api/admin/users${queryString ? `?${queryString}` : ''}`);
 }
 
-export async function fetchAdminProjects(limit = 120) {
-  const params = new URLSearchParams({ limit: String(limit) });
+export async function fetchAdminProjects(query: { page?: number; pageSize?: number; limit?: number } = {}) {
+  const params = new URLSearchParams();
+  if (query.page) params.set('page', String(query.page));
+  if (query.pageSize) params.set('pageSize', String(query.pageSize));
+  if (query.limit) params.set('limit', String(query.limit));
   return await jsonRequest<AdminProjectsPayload>(`/api/admin/projects?${params.toString()}`);
 }
 
