@@ -397,6 +397,24 @@ assertIncludes(
 
 assertIncludes(
   'client/src/app-utils.ts',
+  "if (normalized === '/billing' || normalized === '/账单') return 'billing';",
+  'Billing must be available as a first-class route.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '积分使用情况',
+  'Billing page must split credit usage from recharge records.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '充值记录',
+  'Billing page must expose recharge records with Stripe document links.'
+);
+
+assertIncludes(
+  'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'
 );

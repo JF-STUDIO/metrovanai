@@ -1,7 +1,6 @@
-import { formatDate, formatUsd } from '../app-utils';
-import type { ReactNode } from 'react';
+import { formatUsd } from '../app-utils';
 import type { UiLocale } from '../app-copy';
-import type { BillingEntry, BillingPackage, BillingSummary, PaymentOrderRecord } from '../types';
+import type { BillingPackage, BillingSummary } from '../types';
 
 interface BillingPanelCopy {
   authWorking: string;
@@ -9,13 +8,7 @@ interface BillingPanelCopy {
   billingCurrentBalance: string;
   billingHint: string;
   billingOpenRecharge: string;
-  billingTitle: string;
-  billingTopUpTotal: string;
   close: string;
-  noBilling: string;
-  noBillingHint: string;
-  recentBilling: string;
-  recentBillingHint: string;
   rechargeCouponLabel: string;
   rechargeCouponPlaceholder: string;
   rechargeCustomInvalid: string;
@@ -31,8 +24,6 @@ interface BillingPanelCopy {
   rechargeTitle: string;
   rechargeYouPay: string;
   topUpRedirecting: string;
-  stripePaymentSuccessBody: string;
-  stripePaymentSuccessTitle: string;
 }
 
 interface BillingPanelProps {
@@ -42,11 +33,7 @@ interface BillingPanelProps {
   copy: BillingPanelCopy;
   billingSummary: BillingSummary | null;
   locale: UiLocale;
-  latestPaidStripeOrder: PaymentOrderRecord | null | undefined;
-  renderStripeDocumentLinks: (order: PaymentOrderRecord | null | undefined, compact?: boolean) => ReactNode;
   openRecharge: () => void;
-  billingEntries: BillingEntry[];
-  billingOrders: PaymentOrderRecord[];
   setBillingOpen: (open: boolean) => void;
   rechargeOpen: boolean;
   setRechargeOpen: (open: boolean) => void;
@@ -69,18 +56,9 @@ interface BillingPanelProps {
 
 export function BillingPanel(props: BillingPanelProps) {
   const {
-    billingOpen,
     billingBusy,
-    billingModalMode,
     copy,
-    billingSummary,
     locale,
-    latestPaidStripeOrder,
-    renderStripeDocumentLinks,
-    openRecharge,
-    billingEntries,
-    billingOrders,
-    setBillingOpen,
     rechargeOpen,
     setRechargeOpen,
     setRechargeMessage,
@@ -102,107 +80,6 @@ export function BillingPanel(props: BillingPanelProps) {
 
   return (
     <>
-      {billingOpen && (
-        <div className="modal-backdrop" onClick={() => !billingBusy && setBillingOpen(false)}>
-          <div className="modal-card billing-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <strong>{billingModalMode === 'topup' ? copy.rechargeTitle : copy.billingTitle}</strong>
-                <span className="muted">{billingModalMode === 'topup' ? copy.rechargeHint : copy.billingHint}</span>
-              </div>
-              <button className="close-button" type="button" onClick={() => setBillingOpen(false)} disabled={billingBusy}>
-                ×
-              </button>
-            </div>
-
-            <div className="billing-summary-grid">
-              <article className="billing-stat-card">
-                <span>{copy.billingCurrentBalance}</span>
-                <strong>{billingSummary?.availablePoints ?? 0} pts</strong>
-              </article>
-              <article className="billing-stat-card">
-                <span>{copy.billingTopUpTotal}</span>
-                <strong>{formatUsd(billingSummary?.totalTopUpUsd ?? 0, locale)}</strong>
-              </article>
-              <article className="billing-stat-card">
-                <span>{copy.billingChargedTotal}</span>
-                <strong>{billingSummary?.totalChargedPoints ?? 0} pts</strong>
-              </article>
-            </div>
-
-            {billingModalMode === 'billing' && latestPaidStripeOrder && (
-              <div className="stripe-success-panel">
-                <div className="stripe-success-copy">
-                  <span className="stripe-badge">Stripe</span>
-                  <strong>{copy.stripePaymentSuccessTitle}</strong>
-                  <span>{copy.stripePaymentSuccessBody}</span>
-                  <em>
-                    {formatUsd(latestPaidStripeOrder.amountUsd, locale)} · {latestPaidStripeOrder.points} pts ·{' '}
-                    {formatDate(latestPaidStripeOrder.paidAt ?? latestPaidStripeOrder.createdAt, locale)}
-                  </em>
-                </div>
-                {renderStripeDocumentLinks(latestPaidStripeOrder)}
-              </div>
-            )}
-
-            <div className="billing-recharge-bar">
-              <div>
-                <strong>{copy.billingOpenRecharge}</strong>
-                <span className="muted">{copy.rechargeHint}</span>
-              </div>
-              <button className="solid-button small" type="button" onClick={openRecharge} disabled={billingBusy}>
-                {copy.billingOpenRecharge}
-              </button>
-            </div>
-
-            {billingModalMode === 'billing' && (
-              <div className="billing-entry-panel">
-                <div className="panel-head compact">
-                  <div>
-                    <strong>{copy.recentBilling}</strong>
-                    <span className="muted">{copy.recentBillingHint}</span>
-                  </div>
-                </div>
-                {billingEntries.length ? (
-                  <div className="billing-entry-list">
-                    {billingEntries.slice(0, 8).map((entry) => {
-                      const stripeOrder = billingOrders.find((order) => order.billingEntryId === entry.id && order.status === 'paid');
-                      return (
-                        <article key={entry.id} className="billing-entry-row">
-                          <div>
-                            <strong>{entry.note}</strong>
-                            <span>{formatDate(entry.createdAt, locale)}</span>
-                            {stripeOrder ? renderStripeDocumentLinks(stripeOrder, true) : null}
-                          </div>
-                          <div className={`billing-entry-amount ${entry.type === 'credit' ? 'credit' : 'charge'}`}>
-                            <strong>
-                              {entry.type === 'credit' ? '+' : '-'}
-                              {entry.points} pts
-                            </strong>
-                            <span>{formatUsd(entry.amountUsd, locale)}</span>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="empty-state billing-empty-state">
-                    <strong>{copy.noBilling}</strong>
-                    <span>{copy.noBillingHint}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button className="ghost-button" type="button" onClick={() => setBillingOpen(false)} disabled={billingBusy}>
-                {copy.close}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {rechargeOpen && (
         <div
           className="modal-backdrop"

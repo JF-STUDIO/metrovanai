@@ -157,7 +157,9 @@ import {
   createDemoProjects,
   createHdrItemFromExposure,
   filterSupportedImportFiles,
+  formatDate,
   formatGroupSummary,
+  formatUsd,
   formatUploadProgressLabel,
   getAuthErrorMessage,
   getAuthFeedbackMessage,
@@ -266,7 +268,6 @@ function App() {
   const [billingEntries, setBillingEntries] = useState<BillingEntry[]>(() => (isDemoMode ? DEMO_BILLING_ENTRIES : []));
   const [billingOrders, setBillingOrders] = useState<PaymentOrderRecord[]>([]);
   const [billingPackages, setBillingPackages] = useState<BillingPackage[]>(() => (isDemoMode ? DEMO_BILLING_PACKAGES : []));
-  const [recentStripeOrder, setRecentStripeOrder] = useState<PaymentOrderRecord | null>(null);
   const [billingOpen, setBillingOpen] = useState(false);
   const [billingModalMode, setBillingModalMode] = useState<'topup' | 'billing'>('billing');
   const [billingBusy, setBillingBusy] = useState(false);
@@ -567,10 +568,6 @@ function App() {
   const customRechargeIsActive = customRechargeAmount.trim().length > 0;
   const customRechargeAmountUsd = customRechargeIsActive ? parseCustomRechargeAmount(customRechargeAmount) : null;
   const customRechargePoints = customRechargeAmountUsd === null ? 0 : getCustomRechargePoints(customRechargeAmountUsd);
-  const latestPaidStripeOrder =
-    recentStripeOrder ??
-    billingOrders.find((order) => order.status === 'paid' && Boolean(order.stripeCheckoutSessionId)) ??
-    null;
   const viewerAssets = displayResultAssets;
   const safeViewerIndex = resultViewerIndex === null ? null : clampIndex(resultViewerIndex, viewerAssets.length);
   const currentViewerAsset = safeViewerIndex !== null ? viewerAssets[safeViewerIndex] ?? null : null;
@@ -1677,12 +1674,14 @@ function App() {
         .then((response) => {
           const returnProjectId = readStripeReturnProject();
           syncBilling(response.billing);
-          setRecentStripeOrder(response.order);
           setRechargeOpen(false);
           setBillingModalMode('billing');
-          setBillingOpen(!returnProjectId);
+          setBillingOpen(false);
           if (returnProjectId) {
             setCurrentProjectId(returnProjectId);
+            navigateToRoute('studio');
+          } else {
+            navigateToRoute('billing');
           }
           setCustomRechargeAmount('');
           setRechargeActivationCode('');
@@ -1697,7 +1696,8 @@ function App() {
         })
         .catch((error) => {
           setBillingModalMode('billing');
-          setBillingOpen(true);
+          setBillingOpen(false);
+          navigateToRoute('billing');
           setMessage(
             getUserFacingErrorMessage(
               error,
@@ -3024,7 +3024,6 @@ function App() {
     setBillingEntries(isDemoMode ? DEMO_BILLING_ENTRIES : []);
     setBillingOrders([]);
     setBillingPackages(isDemoMode ? DEMO_BILLING_PACKAGES : []);
-    setRecentStripeOrder(null);
     setBillingOpen(false);
     setBillingModalMode('billing');
     setRechargeOpen(false);
@@ -3054,6 +3053,7 @@ function App() {
     setUserMenuOpen(false);
     setHistoryMenuOpen(false);
     if (mode === 'topup') {
+      navigateToRoute('billing');
       setBillingOpen(false);
       openRecharge();
       if (isDemoMode || !session) {
@@ -3067,7 +3067,8 @@ function App() {
       return;
     }
     setBillingModalMode(mode);
-    setBillingOpen(true);
+    setBillingOpen(false);
+    navigateToRoute('billing');
     if (isDemoMode || !session) {
       return;
     }
@@ -4484,6 +4485,157 @@ function App() {
           </a>
         ))}
       </div>
+    );
+  }
+
+  function renderBillingRechargeLayer() {
+    return (
+      <BillingPanel
+        billingOpen={billingOpen}
+        billingBusy={billingBusy}
+        billingModalMode={billingModalMode}
+        copy={copy}
+        billingSummary={billingSummary}
+        locale={locale}
+        openRecharge={openRecharge}
+        setBillingOpen={setBillingOpen}
+        rechargeOpen={rechargeOpen}
+        setRechargeOpen={setRechargeOpen}
+        setRechargeMessage={setRechargeMessage}
+        rechargeActivationCode={rechargeActivationCode}
+        setRechargeActivationCode={setRechargeActivationCode}
+        rechargeMessage={rechargeMessage}
+        handleRedeemActivationCode={handleRedeemActivationCode}
+        customRechargeIsActive={customRechargeIsActive}
+        customRechargeAmount={customRechargeAmount}
+        setCustomRechargeAmount={setCustomRechargeAmount}
+        customRechargeAmountUsd={customRechargeAmountUsd}
+        customRechargePoints={customRechargePoints}
+        billingPackages={billingPackages}
+        activeBillingPackageId={activeBillingPackageId}
+        setSelectedBillingPackageId={setSelectedBillingPackageId}
+        selectedBillingPackage={selectedBillingPackage}
+        handleTopUp={handleTopUp}
+      />
+    );
+  }
+
+  function renderBillingPage() {
+    const usageEntries = billingEntries.filter((entry) => entry.type === 'charge');
+    const paidOrders = billingOrders.filter((order) => order.status === 'paid' || order.status === 'refunded');
+    return (
+      <>
+        <main className="billing-page app">
+          <header className="billing-page-header">
+            <button className="brand" type="button" onClick={() => navigateToRoute('studio')}>
+              <div className="brand-mark">M</div>
+              <div className="brand-text">
+                <strong>Metrovan AI</strong>
+                <small>{copy.billingTitle}</small>
+              </div>
+            </button>
+            <div className="billing-page-actions">
+              <button className="ghost-button" type="button" onClick={() => navigateToRoute('studio')}>
+                {locale === 'en' ? 'Back to studio' : '返回工作台'}
+              </button>
+              <button className="solid-button small" type="button" onClick={openRecharge} disabled={billingBusy}>
+                {copy.billingOpenRecharge}
+              </button>
+            </div>
+          </header>
+
+          {message ? <div className="global-message">{message}</div> : null}
+
+          <section className="billing-page-hero">
+            <div>
+              <span className="eyebrow">{locale === 'en' ? 'Credits & payments' : '积分和付款'}</span>
+              <h1>{copy.billingTitle}</h1>
+              <p>{copy.billingHint}</p>
+            </div>
+            <div className="billing-summary-grid">
+              <article className="billing-stat-card">
+                <span>{copy.billingCurrentBalance}</span>
+                <strong>{billingSummary?.availablePoints ?? 0} pts</strong>
+              </article>
+              <article className="billing-stat-card">
+                <span>{copy.billingTopUpTotal}</span>
+                <strong>{formatUsd(billingSummary?.totalTopUpUsd ?? 0, locale)}</strong>
+              </article>
+              <article className="billing-stat-card">
+                <span>{copy.billingChargedTotal}</span>
+                <strong>{billingSummary?.totalChargedPoints ?? 0} pts</strong>
+              </article>
+            </div>
+          </section>
+
+          <section className="billing-page-grid">
+            <article className="billing-section">
+              <div className="panel-head compact">
+                <div>
+                  <strong>{locale === 'en' ? 'Credit usage' : '积分使用情况'}</strong>
+                  <span className="muted">{locale === 'en' ? 'Project processing charges only.' : '只显示项目处理扣点记录。'}</span>
+                </div>
+              </div>
+              {usageEntries.length ? (
+                <div className="billing-entry-list">
+                  {usageEntries.slice(0, 24).map((entry) => (
+                    <article key={entry.id} className="billing-entry-row">
+                      <div>
+                        <strong>{entry.projectName || entry.note}</strong>
+                        <span>{entry.note} · {formatDate(entry.createdAt, locale)}</span>
+                      </div>
+                      <div className="billing-entry-amount charge">
+                        <strong>-{entry.points} pts</strong>
+                        <span>{formatUsd(entry.amountUsd, locale)}</span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state billing-empty-state">
+                  <strong>{locale === 'en' ? 'No credit usage yet' : '暂无积分使用记录'}</strong>
+                  <span>{locale === 'en' ? 'Processing charges will appear here.' : '项目处理扣点会显示在这里。'}</span>
+                </div>
+              )}
+            </article>
+
+            <article className="billing-section">
+              <div className="panel-head compact">
+                <div>
+                  <strong>{locale === 'en' ? 'Recharge records' : '充值记录'}</strong>
+                  <span className="muted">{locale === 'en' ? 'Stripe payments, receipts, and invoice PDF links.' : '显示每次充值金额，收据和 PDF 跳转到 Stripe。'}</span>
+                </div>
+              </div>
+              {paidOrders.length ? (
+                <div className="billing-entry-list">
+                  {paidOrders.slice(0, 24).map((order) => (
+                    <article key={order.id} className="billing-entry-row billing-recharge-row">
+                      <div>
+                        <strong>{order.packageName}</strong>
+                        <span>
+                          {formatUsd(order.amountUsd, locale)} · {order.points} pts · {formatPaymentOrderStatus(order.status)} ·{' '}
+                          {formatDate(order.paidAt ?? order.createdAt, locale)}
+                        </span>
+                        {renderStripeDocumentLinks(order, true)}
+                      </div>
+                      <div className="billing-entry-amount credit">
+                        <strong>+{order.points} pts</strong>
+                        <span>{formatUsd(order.amountUsd, locale)}</span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state billing-empty-state">
+                  <strong>{locale === 'en' ? 'No recharge records yet' : '暂无充值记录'}</strong>
+                  <span>{copy.noBillingHint}</span>
+                </div>
+              )}
+            </article>
+          </section>
+        </main>
+        {renderBillingRechargeLayer()}
+      </>
     );
   }
 
@@ -5959,6 +6111,10 @@ function App() {
 
   }
 
+  if (activeRoute === 'billing' && session) {
+    return renderBillingPage();
+  }
+
   if (activeRoute === 'home' || activeRoute === 'plans' || !session) {
     return (
       <>
@@ -6464,37 +6620,7 @@ function App() {
         }
       />
 
-      <BillingPanel
-        billingOpen={billingOpen}
-        billingBusy={billingBusy}
-        billingModalMode={billingModalMode}
-        copy={copy}
-        billingSummary={billingSummary}
-        locale={locale}
-        latestPaidStripeOrder={latestPaidStripeOrder}
-        renderStripeDocumentLinks={renderStripeDocumentLinks}
-        openRecharge={openRecharge}
-        billingEntries={billingEntries}
-        billingOrders={billingOrders}
-        setBillingOpen={setBillingOpen}
-        rechargeOpen={rechargeOpen}
-        setRechargeOpen={setRechargeOpen}
-        setRechargeMessage={setRechargeMessage}
-        rechargeActivationCode={rechargeActivationCode}
-        setRechargeActivationCode={setRechargeActivationCode}
-        rechargeMessage={rechargeMessage}
-        handleRedeemActivationCode={handleRedeemActivationCode}
-        customRechargeIsActive={customRechargeIsActive}
-        customRechargeAmount={customRechargeAmount}
-        setCustomRechargeAmount={setCustomRechargeAmount}
-        customRechargeAmountUsd={customRechargeAmountUsd}
-        customRechargePoints={customRechargePoints}
-        billingPackages={billingPackages}
-        activeBillingPackageId={activeBillingPackageId}
-        setSelectedBillingPackageId={setSelectedBillingPackageId}
-        selectedBillingPackage={selectedBillingPackage}
-        handleTopUp={handleTopUp}
-      />
+      {renderBillingRechargeLayer()}
 
       {settingsOpen && session && (
         <AccountSettingsDialog

@@ -829,6 +829,91 @@
   letter-spacing: 0.02em;
 }
 
+.billing-page {
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 10%, rgba(68, 196, 255, 0.12), transparent 28%),
+    var(--bg);
+}
+
+.billing-page-header,
+.billing-page-hero,
+.billing-page-grid {
+  width: min(1160px, 100%);
+  margin: 0 auto;
+}
+
+.billing-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.billing-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.billing-page-hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(360px, 1fr);
+  gap: 24px;
+  align-items: end;
+  margin-bottom: 20px;
+}
+
+.billing-page-hero h1 {
+  margin: 8px 0;
+  color: var(--text);
+  font-size: 34px;
+  letter-spacing: 0;
+}
+
+.billing-page-hero p {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.billing-page-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.billing-section {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.billing-recharge-row .stripe-document-actions {
+  margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .billing-page {
+    padding: 18px;
+  }
+
+  .billing-page-header,
+  .billing-page-hero,
+  .billing-page-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .billing-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 /* Recharge package price label */
 .recharge-card .recharge-package-price {
   font-family: var(--hp-mono);
