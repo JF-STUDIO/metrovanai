@@ -11,6 +11,7 @@ import {
 import { captureServerError } from '../observability.js';
 import { ensureDir, sanitizeSegment } from '../utils.js';
 import type { RouteContext } from './context.js';
+import type { ProjectRecord, ProjectDownloadJobRecord } from '../types.js';
 
 export function createAdminRouter(ctx: RouteContext) {
   const app = express.Router();
@@ -143,7 +144,23 @@ app.get('/api/admin/projects', (req, res) => {
 
   res.json({
     total: projects.length,
-    items: projects.slice(0, limit).map((project: any) => buildPublicProject(project))
+    items: projects.slice(0, limit).map((project: ProjectRecord) => buildAdminProjectPayload(project))
+  });
+});
+
+app.get('/api/admin/projects/:id', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const project = store.getProject(String(req.params.id ?? ''));
+  if (!project) {
+    res.status(404).json({ error: '找不到该项目。' });
+    return;
+  }
+
+  res.json({
+    project: buildAdminProjectPayload(project)
   });
 });
 
@@ -179,6 +196,162 @@ app.post('/api/admin/projects/:id/recover-runninghub-results', async (req, res) 
     project: store.getProject(projectId) ? buildPublicProject(store.getProject(projectId)!) : null
   });
 });
+
+function buildAdminProjectPayload(project: ProjectRecord) {
+  return {
+    ...buildPublicProject(project),
+    adminHealth: buildAdminProjectHealth(project)
+  };
+}
+
+function buildAdminProjectHealth(project: ProjectRecord) {
+  const downloadJobs = store
+    .listProjectDownloadJobs(project.id)
+    .sort((left: ProjectDownloadJobRecord, right: ProjectDownloadJobRecord) => right.createdAt - left.createdAt);
+  const latestDownloadJob = downloadJobs[0] ?? null;
+  const hdrStatusCounts = project.hdrItems.reduce<Record<string, number>>((counts, item) => {
+    counts[item.status] = (counts[item.status] ?? 0) + 1;
+    return counts;
+  }, {});
+  const exposureCount = project.hdrItems.reduce((sum, item) => sum + item.exposures.length, 0);
+  const missingSourceCount = project.hdrItems.reduce(
+    (sum, item) =>
+      sum +
+      item.exposures.filter((exposure) => !exposure.storageKey && !exposure.storagePath && !exposure.storageUrl).length,
+    0
+  );
+  const rawJpegSidecarGroups = project.hdrItems
+    .filter((item) => hasRawJpegSidecarMix(item.exposures.map((exposure) => exposure.originalName || exposure.fileName)))
+    .map((item) => item.title || `HDR ${item.index}`);
+  const duplicateSourceGroups = project.hdrItems
+    .filter((item) => hasDuplicateSources(item.exposures.map((exposure) => exposure.originalName || exposure.fileName)))
+    .map((item) => item.title || `HDR ${item.index}`);
+  const suspiciousResultFiles = project.resultAssets
+    .filter((asset) => isSuspiciousLocalJpeg(asset.storagePath))
+    .map((asset) => asset.fileName);
+  const warnings = [
+    missingSourceCount ? `${missingSourceCount} 个曝光缺少源文件引用` : '',
+    rawJpegSidecarGroups.length ? `${rawJpegSidecarGroups.length} 组混入同名 JPG 副本` : '',
+    duplicateSourceGroups.length ? `${duplicateSourceGroups.length} 组有重复文件` : '',
+    suspiciousResultFiles.length ? `${suspiciousResultFiles.length} 张结果图本地文件可疑` : '',
+    latestDownloadJob?.status === 'failed' ? `最近下载失败：${latestDownloadJob.error ?? 'unknown'}` : ''
+  ].filter(Boolean);
+  const failedCount = hdrStatusCounts.error ?? 0;
+  const processingCount = ['hdr-processing', 'workflow-upload', 'workflow-running'].reduce(
+    (sum, status) => sum + (hdrStatusCounts[status] ?? 0),
+    0
+  );
+  const status =
+    warnings.length || failedCount
+      ? 'attention'
+      : project.status === 'completed' && project.resultAssets.length === project.hdrItems.length
+        ? 'healthy'
+        : processingCount || project.status === 'processing' || project.status === 'uploading'
+          ? 'processing'
+          : 'idle';
+
+  return {
+    status,
+    exposureCount,
+    hdrCount: project.hdrItems.length,
+    resultCount: project.resultAssets.length,
+    failedCount,
+    processingCount,
+    missingSourceCount,
+    downloadReady: project.downloadReady,
+    latestDownloadJob: latestDownloadJob
+      ? {
+          jobId: latestDownloadJob.jobId,
+          status: latestDownloadJob.status,
+          completedAt: latestDownloadJob.completedAt,
+          error: latestDownloadJob.error
+        }
+      : null,
+    warnings,
+    rawJpegSidecarGroups,
+    duplicateSourceGroups,
+    suspiciousResultFiles
+  };
+}
+
+const ADMIN_RAW_EXTENSIONS = new Set([
+  '.arw',
+  '.cr2',
+  '.cr3',
+  '.crw',
+  '.nef',
+  '.nrw',
+  '.dng',
+  '.raf',
+  '.rw2',
+  '.rwl',
+  '.orf',
+  '.srw',
+  '.3fr',
+  '.fff',
+  '.iiq',
+  '.pef',
+  '.erf'
+]);
+const ADMIN_JPEG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
+
+function normalizeAdminFileName(fileName: string) {
+  return path.basename(String(fileName ?? '').replace(/\\/g, '/')).trim().toLowerCase();
+}
+
+function normalizeAdminFileStem(fileName: string) {
+  const normalized = normalizeAdminFileName(fileName);
+  const extension = path.extname(normalized);
+  return extension ? normalized.slice(0, -extension.length) : normalized;
+}
+
+function hasRawJpegSidecarMix(fileNames: string[]) {
+  const rawStems = new Set<string>();
+  const jpegStems = new Set<string>();
+  for (const fileName of fileNames) {
+    const normalized = normalizeAdminFileName(fileName);
+    const stem = normalizeAdminFileStem(normalized);
+    const extension = path.extname(normalized);
+    if (ADMIN_RAW_EXTENSIONS.has(extension)) rawStems.add(stem);
+    if (ADMIN_JPEG_EXTENSIONS.has(extension)) jpegStems.add(stem);
+  }
+  return Array.from(jpegStems).some((stem) => rawStems.has(stem));
+}
+
+function hasDuplicateSources(fileNames: string[]) {
+  const seen = new Set<string>();
+  for (const fileName of fileNames) {
+    const normalized = normalizeAdminFileName(fileName);
+    if (!normalized) continue;
+    if (seen.has(normalized)) return true;
+    seen.add(normalized);
+  }
+  return false;
+}
+
+function isSuspiciousLocalJpeg(filePath: string | null | undefined) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return false;
+  }
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension !== '.jpg' && extension !== '.jpeg') {
+    return false;
+  }
+  const stats = fs.statSync(filePath);
+  if (!stats.isFile() || stats.size < 4) {
+    return true;
+  }
+  const handle = fs.openSync(filePath, 'r');
+  try {
+    const start = Buffer.alloc(2);
+    const end = Buffer.alloc(2);
+    fs.readSync(handle, start, 0, 2, 0);
+    fs.readSync(handle, end, 0, 2, stats.size - 2);
+    return !(start[0] === 0xff && start[1] === 0xd8 && end[0] === 0xff && end[1] === 0xd9);
+  } finally {
+    fs.closeSync(handle);
+  }
+}
 
 app.get('/api/admin/orders', (req, res) => {
   if (!requireAdminApiAccess(req, res)) {
@@ -464,7 +637,7 @@ app.get('/api/admin/users/:id', (req, res) => {
 
   res.json({
     user: buildAdminUserRecord(user),
-    projects: store.listProjects(user.userKey).map((project: any) => buildPublicProject(project)),
+    projects: store.listProjects(user.userKey).map((project: ProjectRecord) => buildAdminProjectPayload(project)),
     billingEntries: store.listBillingEntries(user.userKey),
     auditLogs: store.listAuditLogs({ targetUserId: user.id, limit: 100 })
   });
@@ -483,7 +656,7 @@ app.get('/api/admin/users/:id/projects', (req, res) => {
 
   res.json({
     user: buildAdminUserRecord(user),
-    items: store.listProjects(user.userKey).map((project: any) => buildPublicProject(project))
+    items: store.listProjects(user.userKey).map((project: ProjectRecord) => buildAdminProjectPayload(project))
   });
 });
 

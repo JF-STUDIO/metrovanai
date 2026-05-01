@@ -532,6 +532,10 @@ export class LocalStore {
     );
   }
 
+  listProjectDownloadJobs(projectId: string) {
+    return this.loadDb().downloadJobs.filter((job) => job.projectId === projectId);
+  }
+
   findReusableProjectDownloadJob(projectId: string, userKey: string, requestKey: string, retentionMs: number) {
     const job =
       this.loadDb().downloadJobs.find((item) => item.projectId === projectId && item.userKey === userKey && item.requestKey === requestKey) ??

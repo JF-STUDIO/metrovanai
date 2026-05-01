@@ -99,6 +99,27 @@ export interface ResultAsset {
   regeneration?: ResultRegenerationState;
 }
 
+export interface ProjectAdminHealth {
+  status: 'healthy' | 'attention' | 'processing' | 'idle' | string;
+  exposureCount: number;
+  hdrCount: number;
+  resultCount: number;
+  failedCount: number;
+  processingCount: number;
+  missingSourceCount: number;
+  downloadReady: boolean;
+  latestDownloadJob: {
+    jobId: string;
+    status: string;
+    completedAt: number | null;
+    error: string | null;
+  } | null;
+  warnings: string[];
+  rawJpegSidecarGroups: string[];
+  duplicateSourceGroups: string[];
+  suspiciousResultFiles: string[];
+}
+
 export interface ProjectJobState {
   id: string;
   status: 'idle' | 'pending' | 'processing' | 'completed' | 'failed';
@@ -250,4 +271,5 @@ export interface ProjectRecord {
   groups: ProjectGroup[];
   resultAssets: ResultAsset[];
   job: ProjectJobState | null;
+  adminHealth?: ProjectAdminHealth;
 }

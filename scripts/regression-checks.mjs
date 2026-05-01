@@ -246,6 +246,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/routes/admin.ts',
+  'adminHealth: buildAdminProjectHealth(project)',
+  'Admin project payloads must expose project health diagnostics.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '项目健康检查',
+  'Admin works view must surface project health diagnostics.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'

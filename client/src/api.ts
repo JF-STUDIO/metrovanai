@@ -883,6 +883,10 @@ export async function fetchAdminProjects(limit = 120) {
   return await jsonRequest<AdminProjectsPayload>(`/api/admin/projects?${params.toString()}`);
 }
 
+export async function fetchAdminProjectDetail(projectId: string) {
+  return await jsonRequest<{ project: ProjectRecord }>(`/api/admin/projects/${encodeURIComponent(projectId)}`);
+}
+
 export async function recoverAdminProjectRunningHubResults(projectId: string) {
   return await jsonRequest<{ summary: AdminProjectRecoverySummary; project: ProjectRecord | null }>(
     `/api/admin/projects/${encodeURIComponent(projectId)}/recover-runninghub-results`,

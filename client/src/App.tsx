@@ -54,6 +54,7 @@ import {
   fetchAdminOpsHealth,
   fetchAdminOrderRefundPreview,
   fetchAdminOrders,
+  fetchAdminProjectDetail,
   fetchAdminProjects,
   fetchAdminSettings,
   fetchAdminUserDetail,
@@ -655,6 +656,21 @@ function App() {
     adminSelectedProject?.hdrItems.filter((item) => item.status === 'error') ?? [];
   const adminSelectedProjectProcessingItems =
     adminSelectedProject?.hdrItems.filter((item) => isHdrItemProcessing(item.status)) ?? [];
+  const adminProjectHealthCounts = useMemo(
+    () =>
+      adminProjects.reduce(
+        (counts, project) => {
+          const status = project.adminHealth?.status ?? 'idle';
+          if (status === 'healthy') counts.healthy += 1;
+          else if (status === 'attention') counts.attention += 1;
+          else if (status === 'processing') counts.processing += 1;
+          else counts.idle += 1;
+          return counts;
+        },
+        { healthy: 0, attention: 0, processing: 0, idle: 0 }
+      ),
+    [adminProjects]
+  );
   const hasAdminSession = session?.role === 'admin' && session.accountStatus === 'active';
   const adminUserQuery = useMemo<AdminUserListQuery>(
     () => ({
@@ -1590,9 +1606,12 @@ function App() {
     }
 
     const timer = window.setInterval(() => {
-      void fetchProject(adminSelectedProject.id)
+      void fetchAdminProjectDetail(adminSelectedProject.id)
         .then((response) => {
           setAdminDetailProjects((current) =>
+            current.map((project) => (project.id === response.project.id ? response.project : project))
+          );
+          setAdminProjects((current) =>
             current.map((project) => (project.id === response.project.id ? response.project : project))
           );
         })
@@ -1802,7 +1821,7 @@ function App() {
     setAdminDetailBusy(true);
     setAdminMessage('');
     try {
-      const response = await fetchProject(projectId);
+      const response = await fetchAdminProjectDetail(projectId);
       setAdminDetailProjects((current) => {
         const exists = current.some((project) => project.id === response.project.id);
         if (!exists) {
@@ -1810,6 +1829,7 @@ function App() {
         }
         return current.map((project) => (project.id === response.project.id ? response.project : project));
       });
+      setAdminProjects((current) => current.map((project) => (project.id === response.project.id ? response.project : project)));
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '项目读取失败。', locale));
     } finally {
@@ -4673,6 +4693,21 @@ function App() {
       </div>
     );
 
+    const getProjectHealthLabel = (project: ProjectRecord) => {
+      const status = project.adminHealth?.status;
+      if (status === 'healthy') return '健康';
+      if (status === 'attention') return '需检查';
+      if (status === 'processing') return '处理中';
+      return '待观察';
+    };
+    const getProjectHealthTagClass = (project: ProjectRecord) => {
+      const status = project.adminHealth?.status;
+      if (status === 'healthy') return 'tag tag-green';
+      if (status === 'attention') return 'tag tag-red';
+      if (status === 'processing') return 'tag tag-orange';
+      return 'tag tag-gray';
+    };
+
     const renderWorksPage = () => (
       <div className="page-content active">
         {adminPageTitle(
@@ -4685,6 +4720,12 @@ function App() {
             <button className="btn btn-primary" type="button" onClick={() => setAdminConsolePage('content')}>+ 添加精选</button>
           </>
         )}
+        <div className="kpi-grid">
+          {kpi('健康项目', <>{adminProjectHealthCounts.healthy}<span className="unit">项</span></>, <><span>可下载</span><span className="vs">结果完整</span></>)}
+          {kpi('需检查', <>{adminProjectHealthCounts.attention}<span className="unit">项</span></>, <><span>失败/缺失/可疑</span><span className="vs">优先处理</span></>, adminProjectHealthCounts.attention ? 'down' : 'up')}
+          {kpi('处理中', <>{adminProjectHealthCounts.processing}<span className="unit">项</span></>, <><span>队列</span><span className="vs">实时刷新</span></>)}
+          {kpi('下载异常', <>{adminProjects.filter((project) => project.adminHealth?.latestDownloadJob?.status === 'failed').length}<span className="unit">项</span></>, <><span>最近任务</span><span className="vs">下载包</span></>, adminProjects.some((project) => project.adminHealth?.latestDownloadJob?.status === 'failed') ? 'down' : 'up')}
+        </div>
         <div className="card">
           <div className="toolbar">
             <input
@@ -4711,6 +4752,10 @@ function App() {
                       <div className="work-meta">
                         <div className="name">{project.name}</div>
                         <div className="by"><span>{project.userDisplayName || project.userKey}</span><span>{formatAdminShortDate(project.updatedAt)}</span></div>
+                        <div className="admin-health-strip">
+                          <span className={getProjectHealthTagClass(project)}>{getProjectHealthLabel(project)}</span>
+                          <small>{project.adminHealth?.hdrCount ?? project.hdrItems.length} 组 · {project.adminHealth?.resultCount ?? project.resultAssets.length} 结果</small>
+                        </div>
                       </div>
                     </button>
                   );
@@ -4738,6 +4783,30 @@ function App() {
                 <span>处理中 {adminSelectedProjectProcessingItems.length}</span>
                 <span>结果 {adminSelectedProjectResults.length}</span>
               </div>
+              {adminSelectedProject.adminHealth ? (
+                <div className="admin-health-panel">
+                  <div className="admin-health-head">
+                    <span className={getProjectHealthTagClass(adminSelectedProject)}>{getProjectHealthLabel(adminSelectedProject)}</span>
+                    <strong>项目健康检查</strong>
+                    <small>{adminSelectedProject.adminHealth.latestDownloadJob ? `最近下载：${adminSelectedProject.adminHealth.latestDownloadJob.status}` : '暂无下载任务'}</small>
+                  </div>
+                  <div className="admin-health-grid">
+                    <div><strong>{adminSelectedProject.adminHealth.exposureCount}</strong><span>曝光文件</span></div>
+                    <div><strong>{adminSelectedProject.adminHealth.hdrCount}</strong><span>HDR 分组</span></div>
+                    <div><strong>{adminSelectedProject.adminHealth.resultCount}</strong><span>结果图</span></div>
+                    <div><strong>{adminSelectedProject.adminHealth.missingSourceCount}</strong><span>缺源文件</span></div>
+                  </div>
+                  {adminSelectedProject.adminHealth.warnings.length ? (
+                    <div className="admin-health-warnings">
+                      {adminSelectedProject.adminHealth.warnings.slice(0, 6).map((warning) => (
+                        <span key={warning}>{warning}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="admin-health-ok">未发现 RAW/JPG 混组、重复源文件或截断结果图风险。</div>
+                  )}
+                </div>
+              ) : null}
               {adminSelectedProjectResults.length ? (
                 <div className="admin-live-grid">
                   {adminSelectedProjectResults.slice(0, 12).map((asset) => (
