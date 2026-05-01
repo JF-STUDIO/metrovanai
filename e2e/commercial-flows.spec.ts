@@ -45,9 +45,9 @@ test('demo project creation flow exposes upload preparation controls', async ({ 
   await page.goto('/studio?demo=1');
 
   await page.getByRole('button', { name: /HDR True Color/i }).click();
-  await expect(page.getByRole('heading', { name: 'Project name' })).toBeVisible();
-  await expect(page.getByText('Name this project and upload the photos that need processing.')).toBeVisible();
-  await expect(page.getByLabel('Processing priority')).toHaveValue('standard');
+  await expect(page.getByRole('heading', { name: 'Create and import photos' })).toBeVisible();
+  await expect(page.getByText('Set a clear project name first.')).toBeVisible();
+  await expect(page.getByText('Selected workflow')).toBeVisible();
   await expect(page.getByText('Drag RAW / JPG here, or click to choose files')).toBeVisible();
   await expect(page.locator('.feature-create-dropzone input[type="file"]')).toHaveAttribute('multiple', '');
 
