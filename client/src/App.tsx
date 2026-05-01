@@ -1202,6 +1202,31 @@ function App() {
     setBillingPackages(payload.packages);
   }
 
+  async function confirmCheckoutSessionWithRetry(sessionId: string) {
+    const maxAttempts = 10;
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await confirmCheckoutSession(sessionId);
+      } catch (error) {
+        lastError = error;
+        const retryable =
+          error instanceof ApiRequestError &&
+          (error.status === 402 || error.status === 409 || error.status === 425 || error.status === 502 || error.status === 503);
+        if (!retryable || attempt === maxAttempts) {
+          throw error;
+        }
+        setMessage(
+          locale === 'en'
+            ? `Confirming Stripe payment... (${attempt}/${maxAttempts})`
+            : `正在确认 Stripe 付款...（${attempt}/${maxAttempts}）`
+        );
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(copy.topUpFailed);
+  }
+
   function syncAdminSystemSettings(settings: AdminSystemSettings) {
     setAdminSystemSettings(settings);
     setAdminSystemDraft({
@@ -1597,7 +1622,7 @@ function App() {
     const timer = window.setTimeout(() => {
       setBillingBusy(true);
       setMessage(copy.paymentConfirming);
-      void confirmCheckoutSession(stripeSessionId)
+      void confirmCheckoutSessionWithRetry(stripeSessionId)
         .then((response) => {
           syncBilling(response.billing);
           setRecentStripeOrder(response.order);
@@ -1610,7 +1635,17 @@ function App() {
           setMessage(`${copy.topUpSuccess} ${copy.stripePaymentSuccessTitle}`);
         })
         .catch((error) => {
-          setMessage(getUserFacingErrorMessage(error, copy.topUpFailed, locale));
+          setBillingModalMode('billing');
+          setBillingOpen(true);
+          setMessage(
+            getUserFacingErrorMessage(
+              error,
+              locale === 'en'
+                ? 'Stripe payment is still being confirmed. Please refresh billing in a moment if credits do not appear.'
+                : 'Stripe 付款可能仍在确认中。如果积分暂未到账，请稍后刷新账单。',
+              locale
+            )
+          );
         })
         .finally(() => {
           clearPaymentParams();

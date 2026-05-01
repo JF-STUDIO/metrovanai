@@ -372,6 +372,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'client/src/App.tsx',
+  'confirmCheckoutSessionWithRetry',
+  'Stripe return flow must retry checkout confirmation while payment settlement catches up.'
+);
+
+assertIncludes(
+  'client/src/components/BillingPanel.tsx',
+  'copy.topUpRedirecting',
+  'Recharge button must show a Stripe redirect state while checkout is being created.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'

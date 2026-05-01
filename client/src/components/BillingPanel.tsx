@@ -30,6 +30,7 @@ interface BillingPanelCopy {
   rechargeSave: string;
   rechargeTitle: string;
   rechargeYouPay: string;
+  topUpRedirecting: string;
   stripePaymentSuccessBody: string;
   stripePaymentSuccessTitle: string;
 }
@@ -326,7 +327,7 @@ export function BillingPanel(props: BillingPanelProps) {
                   onClick={() => void handleTopUp()}
                   disabled={billingBusy || (customRechargeIsActive && customRechargeAmountUsd === null)}
                 >
-                  {billingBusy ? copy.authWorking : copy.rechargePayNow}
+                  {billingBusy ? copy.topUpRedirecting : copy.rechargePayNow}
                 </button>
               </div>
             )}
