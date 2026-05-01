@@ -150,6 +150,12 @@ assertIncludes(
 );
 
 assertIncludes(
+  'client/src/api.ts',
+  "type: 'upload.performance'",
+  'Upload performance diagnostics must stay emitted for speed investigations.'
+);
+
+assertIncludes(
   'server/src/csrf.ts',
   'timingSafeEqual',
   'CSRF hash comparison must use a timing-safe comparison.'

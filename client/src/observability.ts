@@ -1,5 +1,10 @@
 type ClientEventLevel = 'info' | 'warning' | 'error';
-type ClientEventType = 'client.error' | 'upload.attempt-failed' | 'upload.batch-completed' | 'upload.batch-failed-files';
+type ClientEventType =
+  | 'client.error'
+  | 'upload.attempt-failed'
+  | 'upload.batch-completed'
+  | 'upload.batch-failed-files'
+  | 'upload.performance';
 
 interface ClientEventInput {
   type?: ClientEventType;

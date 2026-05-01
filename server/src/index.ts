@@ -223,7 +223,9 @@ resultRecoveryTimer.unref?.();
 const MIN_CUSTOM_TOP_UP_USD = 1;
 const MAX_CUSTOM_TOP_UP_USD = 50000;
 const clientEventSchema = z.object({
-  type: z.enum(['client.error', 'upload.attempt-failed', 'upload.batch-completed', 'upload.batch-failed-files']).optional(),
+  type: z
+    .enum(['client.error', 'upload.attempt-failed', 'upload.batch-completed', 'upload.batch-failed-files', 'upload.performance'])
+    .optional(),
   level: z.enum(['info', 'warning', 'error']).optional(),
   message: z.string().min(1).max(1000),
   stack: z.string().max(6000).nullable().optional(),

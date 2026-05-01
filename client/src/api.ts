@@ -1535,6 +1535,77 @@ function emitUploadBatchEvent(
   });
 }
 
+interface UploadPerformanceDiagnostics {
+  startedAt: number;
+  preparingMs: number;
+  targetRequestMs: number;
+  uploadMs: number;
+  finalizingMs: number;
+  directFiles: number;
+  multipartFiles: number;
+  targetBatches: number;
+  maxWorkerCount: number;
+  maxAdaptiveConcurrency: number;
+}
+
+function createUploadPerformanceDiagnostics(): UploadPerformanceDiagnostics {
+  return {
+    startedAt: Date.now(),
+    preparingMs: 0,
+    targetRequestMs: 0,
+    uploadMs: 0,
+    finalizingMs: 0,
+    directFiles: 0,
+    multipartFiles: 0,
+    targetBatches: 0,
+    maxWorkerCount: 0,
+    maxAdaptiveConcurrency: 0
+  };
+}
+
+function emitUploadPerformanceEvent(input: {
+  projectId: string;
+  status: 'completed' | 'failed';
+  files: File[];
+  uploadedFiles: number;
+  failedFiles: FailedUploadFile[];
+  diagnostics: UploadPerformanceDiagnostics;
+  error?: unknown;
+}) {
+  const totalBytes = input.files.reduce((sum, file) => sum + Math.max(1, file.size), 0);
+  const elapsedMs = Math.max(1, Date.now() - input.diagnostics.startedAt);
+  const uploadedBytes = input.status === 'completed'
+    ? totalBytes
+    : input.files.slice(0, Math.max(0, input.uploadedFiles)).reduce((sum, file) => sum + Math.max(1, file.size), 0);
+  sendClientEvent({
+    type: 'upload.performance',
+    level: input.status === 'completed' ? 'info' : 'warning',
+    message: `Upload ${input.status}`,
+    projectId: input.projectId,
+    context: {
+      status: input.status,
+      totalFiles: input.files.length,
+      uploadedFiles: input.uploadedFiles,
+      failedFiles: input.failedFiles.length,
+      totalBytes,
+      uploadedBytes,
+      totalMs: elapsedMs,
+      preparingMs: Math.round(input.diagnostics.preparingMs),
+      targetRequestMs: Math.round(input.diagnostics.targetRequestMs),
+      uploadMs: Math.round(input.diagnostics.uploadMs),
+      finalizingMs: Math.round(input.diagnostics.finalizingMs),
+      averageBytesPerSecond: Math.round((uploadedBytes / elapsedMs) * 1000),
+      directFiles: input.diagnostics.directFiles,
+      multipartFiles: input.diagnostics.multipartFiles,
+      targetBatches: input.diagnostics.targetBatches,
+      maxWorkerCount: input.diagnostics.maxWorkerCount,
+      maxAdaptiveConcurrency: input.diagnostics.maxAdaptiveConcurrency,
+      errorMessage: input.error ? getUploadFailureMessage(input.error) : null,
+      ...getNetworkContext()
+    }
+  });
+}
+
 function shouldRefreshDirectUploadTarget(error: unknown) {
   if (!(error instanceof DirectUploadError)) {
     return true;
@@ -2201,6 +2272,7 @@ async function uploadFilesViaDirectObject(
   options: UploadFilesOptions = {},
   targetLimits?: UploadCapabilitiesPayload['directUploadTargets']
 ) {
+  const diagnostics = createUploadPerformanceDiagnostics();
   throwIfUploadAborted(options.signal);
   const completedByIdentity = new Map<string, UploadedObjectReference>();
   for (const uploaded of options.completedObjects ?? []) {
@@ -2227,6 +2299,7 @@ async function uploadFilesViaDirectObject(
       uploadedFiles: files.length,
       totalFiles: files.length
     });
+    const finalizingStartedAt = Date.now();
     const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
       signal: options.signal,
       onOfflinePause: () =>
@@ -2238,8 +2311,10 @@ async function uploadFilesViaDirectObject(
           offline: true
         })
     });
+    diagnostics.finalizingMs += Date.now() - finalizingStartedAt;
     await clearPersistedProject(projectId);
     emitUploadBatchEvent('upload.batch-completed', { projectId, files, uploadedFiles: files.length, failedFiles: [] });
+    emitUploadPerformanceEvent({ projectId, status: 'completed', files, uploadedFiles: files.length, failedFiles: [], diagnostics });
     onProgress(100, {
       stage: 'completed',
       percent: 100,
@@ -2283,9 +2358,11 @@ async function uploadFilesViaDirectObject(
 
   const pendingEntries = pendingFiles.map((file, index) => ({ file, index }));
   const targetBatches = splitDirectUploadTargetBatches(pendingEntries, normalizeDirectUploadTargetLimits(targetLimits));
+  diagnostics.targetBatches = targetBatches.length;
 
   async function uploadTargetBatch(batch: PendingDirectUploadFile[]) {
     throwIfUploadAborted(options.signal);
+    const preparingStartedAt = Date.now();
     reportProgress({ stage: 'preparing' });
     const batchFiles = batch.map((item) => item.file);
     const adaptiveSampler = new ThroughputSampler(ADAPTIVE_UPLOAD_SAMPLE_MS, 1000);
@@ -2293,8 +2370,11 @@ async function uploadFilesViaDirectObject(
     const directTargetEntries = batch
       .map((entry, batchIndex) => ({ entry, batchIndex }))
       .filter(({ entry }) => !shouldUseMultipartUpload(entry.file));
+    diagnostics.directFiles += directTargetEntries.length;
+    diagnostics.multipartFiles += batch.length - directTargetEntries.length;
     const directTargetsByBatchIndex = new Map<number, DirectUploadTarget>();
     if (directTargetEntries.length) {
+      const targetRequestStartedAt = Date.now();
       const { targets } = await runWithOfflineRetry(
         () => createDirectUploadTargets(projectId, directTargetEntries.map(({ entry }) => entry.file)),
         {
@@ -2302,6 +2382,7 @@ async function uploadFilesViaDirectObject(
           onPause: () => reportProgress({ stage: 'paused', offline: true })
         }
       );
+      diagnostics.targetRequestMs += Date.now() - targetRequestStartedAt;
       if (targets.length !== directTargetEntries.length) {
         throw new Error('Direct upload target count mismatch.');
       }
@@ -2316,6 +2397,9 @@ async function uploadFilesViaDirectObject(
     let nextBatchFileIndex = 0;
     const maxWorkerCount = Math.min(ADAPTIVE_UPLOAD_MAX_CONCURRENCY, batch.length);
     let targetWorkerCount = clampUploadConcurrency(getDirectObjectUploadConcurrency(batchFiles), maxWorkerCount);
+    diagnostics.maxWorkerCount = Math.max(diagnostics.maxWorkerCount, maxWorkerCount);
+    diagnostics.maxAdaptiveConcurrency = Math.max(diagnostics.maxAdaptiveConcurrency, targetWorkerCount);
+    diagnostics.preparingMs += Date.now() - preparingStartedAt;
     let lastSampleAt = Date.now();
     const recordFileProgress = (fileIndex: number, fileSize: number, loadedBytes: number) => {
       const previousLoaded = Math.max(0, loadedByFile[fileIndex] ?? 0);
@@ -2357,6 +2441,7 @@ async function uploadFilesViaDirectObject(
       } else if (bps > ADAPTIVE_UPLOAD_HIGH_BPS) {
         targetWorkerCount = clampUploadConcurrency(Math.min(targetWorkerCount + 2, ADAPTIVE_UPLOAD_MAX_CONCURRENCY), maxWorkerCount);
       }
+      diagnostics.maxAdaptiveConcurrency = Math.max(diagnostics.maxAdaptiveConcurrency, targetWorkerCount);
     };
 
     async function worker(workerIndex: number) {
@@ -2476,52 +2561,62 @@ async function uploadFilesViaDirectObject(
       }
     }
 
+    const uploadStartedAt = Date.now();
     await Promise.all(Array.from({ length: maxWorkerCount }, (_unused, workerIndex) => worker(workerIndex)));
+    diagnostics.uploadMs += Date.now() - uploadStartedAt;
   }
 
-  for (const batch of targetBatches) {
-    await uploadTargetBatch(batch);
-  }
+  try {
+    for (const batch of targetBatches) {
+      await uploadTargetBatch(batch);
+    }
 
-  onProgress(96, {
-    stage: 'finalizing',
-    percent: 96,
-    uploadedFiles: files.length,
-    totalFiles: files.length
-  });
-  const completedObjects = files
-    .map((file) => findCompletedObjectForFile(completedByIdentity, file))
-    .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
-  if (options.continueOnFileError && !completedObjects.length) {
-    emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
-    throw new Error('No files uploaded.');
+    onProgress(96, {
+      stage: 'finalizing',
+      percent: 96,
+      uploadedFiles: files.length,
+      totalFiles: files.length
+    });
+    const completedObjects = files
+      .map((file) => findCompletedObjectForFile(completedByIdentity, file))
+      .filter((uploaded): uploaded is UploadedObjectReference => Boolean(uploaded));
+    if (options.continueOnFileError && !completedObjects.length) {
+      emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
+      throw new Error('No files uploaded.');
+    }
+    const finalizingStartedAt = Date.now();
+    const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
+      signal: options.signal,
+      onOfflinePause: () =>
+        onProgress(96, {
+          stage: 'paused',
+          percent: 96,
+          uploadedFiles: files.length,
+          totalFiles: files.length,
+          offline: true
+        })
+    });
+    diagnostics.finalizingMs += Date.now() - finalizingStartedAt;
+    await clearPersistedProject(projectId);
+    if (failedFiles.length) {
+      emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
+    }
+    emitUploadBatchEvent('upload.batch-completed', { projectId, files, uploadedFiles, failedFiles });
+    emitUploadPerformanceEvent({ projectId, status: 'completed', files, uploadedFiles: files.length, failedFiles, diagnostics });
+    onProgress(100, {
+      stage: 'completed',
+      percent: 100,
+      uploadedFiles: files.length,
+      totalFiles: files.length
+    });
+    return {
+      ...response,
+      directUploadFiles: completedObjects
+    };
+  } catch (error) {
+    emitUploadPerformanceEvent({ projectId, status: 'failed', files, uploadedFiles, failedFiles, diagnostics, error });
+    throw error;
   }
-  const response = await completeDirectObjectUploadReferencesReliably(projectId, completedObjects, {
-    signal: options.signal,
-    onOfflinePause: () =>
-      onProgress(96, {
-        stage: 'paused',
-        percent: 96,
-        uploadedFiles: files.length,
-        totalFiles: files.length,
-        offline: true
-      })
-  });
-  await clearPersistedProject(projectId);
-  if (failedFiles.length) {
-    emitUploadBatchEvent('upload.batch-failed-files', { projectId, files, uploadedFiles, failedFiles });
-  }
-  emitUploadBatchEvent('upload.batch-completed', { projectId, files, uploadedFiles, failedFiles });
-  onProgress(100, {
-    stage: 'completed',
-    percent: 100,
-    uploadedFiles: files.length,
-    totalFiles: files.length
-  });
-  return {
-    ...response,
-    directUploadFiles: completedObjects
-  };
 }
 
 export async function uploadFiles(projectId: string, files: File[], onProgress: UploadProgressHandler, options: UploadFilesOptions = {}) {
