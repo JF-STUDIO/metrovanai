@@ -1089,8 +1089,17 @@ function App() {
         })
         .catch((error) => {
           if (cancelled) return;
-          setAdminSystemLoaded(true);
-          setAdminMessage(getUserFacingErrorMessage(error, '系统设置读取失败。', locale));
+          fetchStudioFeatures()
+            .then((fallbackResponse) => {
+              if (cancelled) return;
+              syncAdminFeatureDraftFallback(fallbackResponse.features);
+              setAdminMessage('系统设置读取失败，已先载入前台功能卡片。请刷新配置后再保存。');
+            })
+            .catch(() => {
+              if (cancelled) return;
+              setAdminSystemLoaded(true);
+              setAdminMessage(getUserFacingErrorMessage(error, '系统设置读取失败。', locale));
+            });
         })
         .finally(() => {
           if (!cancelled) {
@@ -1251,6 +1260,17 @@ function App() {
     setAdminFeatureDrafts(normalizeStudioFeatureDrafts(settings.studioFeatures));
     setAdminActivationPackages(settings.billingPackages);
     setBillingPackages(settings.billingPackages);
+    setAdminSystemLoaded(true);
+  }
+
+  function syncAdminFeatureDraftFallback(features: StudioFeatureConfig[]) {
+    const drafts = normalizeStudioFeatureDrafts(features);
+    setAdminFeatureDrafts(drafts);
+    const cards = drafts.map(studioFeatureConfigToDefinition).filter((feature) => feature.status !== 'locked');
+    if (cards.length) {
+      setStudioFeatureCards(cards);
+      setSelectedFeatureId((current) => (cards.some((feature) => feature.id === current) ? current : cards[0]!.id));
+    }
     setAdminSystemLoaded(true);
   }
 
@@ -2387,7 +2407,13 @@ function App() {
       );
       setAdminMessage('系统设置已刷新。');
     } catch (error) {
-      setAdminMessage(getUserFacingErrorMessage(error, '系统设置读取失败。', locale));
+      try {
+        const fallbackResponse = await fetchStudioFeatures();
+        syncAdminFeatureDraftFallback(fallbackResponse.features);
+        setAdminMessage('系统设置读取失败，已先载入前台功能卡片。请稍后刷新配置后再保存。');
+      } catch {
+        setAdminMessage(getUserFacingErrorMessage(error, '系统设置读取失败。', locale));
+      }
     } finally {
       setAdminSystemBusy(false);
     }
@@ -2548,10 +2574,15 @@ function App() {
     setAdminSystemBusy(true);
     setAdminMessage('');
     try {
+      let baseSettings = adminSystemSettings;
+      if (!baseSettings) {
+        const response = await fetchAdminSettings();
+        baseSettings = response.settings;
+      }
       const response = await updateAdminSettings({
         runpodHdrBatchSize: Math.round(runpodHdrBatchSize),
         runningHubMaxInFlight: Math.round(runningHubMaxInFlight),
-        billingPackages: adminSystemSettings?.billingPackages ?? adminActivationPackages,
+        billingPackages: baseSettings.billingPackages ?? adminActivationPackages,
         studioFeatures: adminFeatureDrafts
       });
       syncAdminSystemSettings(response.settings);
@@ -5932,14 +5963,23 @@ function App() {
 
     const renderContentPage = () => (
       <div className="page-content active">
-        {adminPageTitle('内容运营', '前台功能卡片、对比图、输入输出节点、每张积分', <button className="btn btn-primary" type="button" onClick={handleAddAdminFeatureCard}>+ 添加功能卡片</button>)}
+        {adminPageTitle(
+          '内容运营',
+          '前台功能卡片、对比图、输入输出节点、每张积分',
+          <>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadSystemSettings()} disabled={adminSystemBusy}>
+              {adminSystemBusy ? '刷新中...' : '刷新卡片'}
+            </button>
+            <button className="btn btn-primary" type="button" onClick={handleAddAdminFeatureCard}>+ 添加功能卡片</button>
+          </>
+        )}
         <div className="card">
           <div className="card-header">
             <h3>功能卡片配置</h3>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy}>保存全部</button>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminSystemSettings}>保存全部</button>
           </div>
           <div className="card-body feature-admin-grid">
-            {adminFeatureDrafts.map((feature, index) => {
+            {adminFeatureDrafts.length ? adminFeatureDrafts.map((feature, index) => {
               const workflowDisplay = getAdminFeatureWorkflowDisplay(feature);
               const beforeImageBusy = adminFeatureImageBusy === `${feature.id}:beforeImageUrl`;
               const afterImageBusy = adminFeatureImageBusy === `${feature.id}:afterImageUrl`;
@@ -6068,7 +6108,11 @@ function App() {
                 </div>
               </details>
               );
-            })}
+            }) : (
+              <div className="empty-tip">
+                {adminSystemBusy ? '正在读取功能卡片...' : '功能卡片未载入，请刷新卡片。'}
+              </div>
+            )}
           </div>
         </div>
       </div>
