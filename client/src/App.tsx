@@ -5887,6 +5887,32 @@ function App() {
                   <small>Workflow: {workflowDisplay.workflowId || '未配置'} · 输入 {workflowDisplay.inputNodeId || '—'} · 输出 {workflowDisplay.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
                 </summary>
                 <div className="feature-admin-form">
+                  <div className="feature-admin-preview">
+                    <span className="feature-admin-preview-label">前台预览</span>
+                    <article className={`studio-feature-card admin-feature-preview-card tone-${feature.tone}${feature.enabled ? '' : ' locked'}`}>
+                      <div className="studio-feature-visual">
+                        {feature.beforeImageUrl && feature.afterImageUrl ? (
+                          <>
+                            <img className="studio-feature-before" src={feature.beforeImageUrl} alt="" loading="lazy" decoding="async" />
+                            <img className="studio-feature-after" src={feature.afterImageUrl} alt="" loading="lazy" decoding="async" />
+                            <span className="studio-feature-scanline" aria-hidden="true" />
+                          </>
+                        ) : (
+                          <span className="studio-feature-gradient" aria-hidden="true" />
+                        )}
+                        <span className="studio-feature-tag">{feature.tagZh || '功能标签'}</span>
+                        {!feature.enabled ? <span className="studio-feature-lock">未启用</span> : null}
+                      </div>
+                      <div className="studio-feature-body">
+                        <strong>{feature.titleZh || '功能名称'}</strong>
+                        <p>{feature.descriptionZh || '这里会显示前台功能卡片的短描述。'}</p>
+                        <div className="studio-feature-meta">
+                          <em>{feature.pointsPerPhoto} 积分 / 张</em>
+                          <span className="studio-feature-use">去使用</span>
+                        </div>
+                      </div>
+                    </article>
+                  </div>
                   <div className="feature-admin-actions">
                     <button className="btn btn-danger" type="button" onClick={() => handleDeleteAdminFeatureCard(feature.id)}>
                       删除卡片

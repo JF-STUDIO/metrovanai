@@ -3388,6 +3388,41 @@
   padding-top: 14px;
 }
 
+.admin-prototype .feature-admin-preview {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(124, 232, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(124, 232, 255, 0.04);
+}
+
+.admin-prototype .feature-admin-preview-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-prototype .admin-feature-preview-card {
+  width: min(360px, 100%);
+  min-height: 0;
+  cursor: default;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+}
+
+.admin-prototype .admin-feature-preview-card:hover {
+  transform: none;
+}
+
+.admin-prototype .admin-feature-preview-card .studio-feature-visual {
+  height: 120px;
+}
+
+.admin-prototype .admin-feature-preview-card .studio-feature-body p {
+  min-height: 0;
+}
+
 .admin-prototype .feature-admin-actions {
   grid-column: 1 / -1;
   display: flex;

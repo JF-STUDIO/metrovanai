@@ -518,6 +518,12 @@ assertIncludes(
 
 assertIncludes(
   'client/src/App.tsx',
+  'feature-admin-preview',
+  'Admin content operations must preview feature cards before saving.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
   'studioFeatures: adminFeatureDrafts',
   'Admin content saves must preserve the exact edited feature card list.'
 );
