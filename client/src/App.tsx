@@ -276,7 +276,6 @@ function App() {
   const [billingModalMode, setBillingModalMode] = useState<'topup' | 'billing'>('billing');
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingUsageExpanded, setBillingUsageExpanded] = useState(false);
-  const [billingAdjustmentsExpanded, setBillingAdjustmentsExpanded] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
   const [selectedBillingPackageId, setSelectedBillingPackageId] = useState<string | null>(null);
   const [customRechargeAmount, setCustomRechargeAmount] = useState('');
@@ -4543,7 +4542,6 @@ function App() {
 
   function renderBillingPage() {
     const usageEntries = billingEntries.filter((entry) => entry.type === 'charge' && !isAdminBillingAdjustmentEntry(entry));
-    const adminAdjustmentEntries = billingEntries.filter(isAdminBillingAdjustmentEntry);
     const paidOrders = billingOrders.filter((order) => order.status === 'paid' || order.status === 'refunded');
     return (
       <>
@@ -4602,11 +4600,11 @@ function App() {
                   <span className="muted">
                     {usageEntries.length
                       ? locale === 'en'
-                        ? `${usageEntries.length} charge records. Details are hidden until opened.`
+                        ? `${usageEntries.length} records.`
                         : `${usageEntries.length} 条扣点记录，默认收起，打开后查看明细。`
                       : locale === 'en'
-                        ? 'Project processing charges only.'
-                        : '只显示项目处理扣点记录。'}
+                        ? 'No records.'
+                        : '暂无记录。'}
                   </span>
                 </div>
                 {usageEntries.length ? (
@@ -4624,7 +4622,7 @@ function App() {
               {usageEntries.length ? (
                 billingUsageExpanded ? (
                   <div className="billing-entry-list">
-                    {usageEntries.slice(0, 24).map((entry) => (
+                    {usageEntries.map((entry) => (
                       <article key={entry.id} className="billing-entry-row">
                         <div>
                           <strong>{entry.projectName || entry.note}</strong>
@@ -4640,77 +4638,12 @@ function App() {
                 ) : (
                   <div className="empty-state billing-empty-state">
                     <strong>{locale === 'en' ? 'Credit usage is collapsed' : '积分使用明细已收起'}</strong>
-                    <span>
-                      {locale === 'en'
-                        ? `${billingSummary?.totalChargedPoints ?? 0} pts charged. Open details to review each project charge.`
-                        : `累计扣点 ${billingSummary?.totalChargedPoints ?? 0} pts，展开后查看每个项目扣点。`}
-                    </span>
+                    <span>{locale === 'en' ? `${billingSummary?.totalChargedPoints ?? 0} pts used.` : `累计扣点 ${billingSummary?.totalChargedPoints ?? 0} pts。`}</span>
                   </div>
                 )
               ) : (
                 <div className="empty-state billing-empty-state">
                   <strong>{locale === 'en' ? 'No credit usage yet' : '暂无积分使用记录'}</strong>
-                  <span>{locale === 'en' ? 'Processing charges will appear here.' : '项目处理扣点会显示在这里。'}</span>
-                </div>
-              )}
-            </article>
-
-            <article className="billing-section">
-              <div className="panel-head compact">
-                <div>
-                  <strong>{locale === 'en' ? 'Credit adjustments' : '积分调整记录'}</strong>
-                  <span className="muted">
-                    {adminAdjustmentEntries.length
-                      ? locale === 'en'
-                        ? 'Manual admin changes are separated from project usage.'
-                        : '后台手动加减积分单独显示，不计入项目累计扣点。'
-                      : locale === 'en'
-                        ? 'No manual admin credit changes.'
-                        : '暂无后台手动积分调整。'}
-                  </span>
-                </div>
-                {adminAdjustmentEntries.length ? (
-                  <button
-                    className="ghost-button small"
-                    type="button"
-                    onClick={() => setBillingAdjustmentsExpanded((current) => !current)}
-                  >
-                    {billingAdjustmentsExpanded
-                      ? locale === 'en' ? 'Hide details' : '收起明细'
-                      : locale === 'en' ? 'View details' : '展开明细'}
-                  </button>
-                ) : null}
-              </div>
-              {adminAdjustmentEntries.length ? (
-                billingAdjustmentsExpanded ? (
-                  <div className="billing-entry-list">
-                    {adminAdjustmentEntries.slice(0, 24).map((entry) => (
-                      <article key={entry.id} className="billing-entry-row">
-                        <div>
-                          <strong>{entry.type === 'credit' ? (locale === 'en' ? 'Manual credit' : '后台加分') : (locale === 'en' ? 'Manual deduction' : '后台扣减')}</strong>
-                          <span>{entry.note.replace(/^Admin adjustment:\s*/, '') || entry.note} · {formatDate(entry.createdAt, locale)}</span>
-                        </div>
-                        <div className={`billing-entry-amount ${entry.type}`}>
-                          <strong>{entry.type === 'credit' ? '+' : '-'}{entry.points} pts</strong>
-                          <span>{locale === 'en' ? 'Admin adjustment' : '管理员调整'}</span>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="empty-state billing-empty-state">
-                    <strong>{locale === 'en' ? 'Credit adjustments are collapsed' : '积分调整明细已收起'}</strong>
-                    <span>
-                      {locale === 'en'
-                        ? `Manual credits ${billingSummary?.totalAdminAdjustedCreditPoints ?? 0} pts · manual deductions ${billingSummary?.totalAdminAdjustedChargePoints ?? 0} pts.`
-                        : `手动加分 ${billingSummary?.totalAdminAdjustedCreditPoints ?? 0} pts · 手动扣减 ${billingSummary?.totalAdminAdjustedChargePoints ?? 0} pts。`}
-                    </span>
-                  </div>
-                )
-              ) : (
-                <div className="empty-state billing-empty-state">
-                  <strong>{locale === 'en' ? 'No adjustments' : '暂无调整记录'}</strong>
-                  <span>{locale === 'en' ? 'Admin credit changes will appear here.' : '后台手动加减积分会显示在这里。'}</span>
                 </div>
               )}
             </article>
@@ -4719,18 +4652,17 @@ function App() {
               <div className="panel-head compact">
                 <div>
                   <strong>{locale === 'en' ? 'Recharge records' : '充值记录'}</strong>
-                  <span className="muted">{locale === 'en' ? 'Stripe payments with invoice links.' : '显示每次充值金额，Invoice 跳转到 Stripe。'}</span>
+                  <span className="muted">{locale === 'en' ? 'Amount and Stripe invoice.' : '每次充值金额和 Invoice。'}</span>
                 </div>
               </div>
               {paidOrders.length ? (
                 <div className="billing-entry-list">
-                  {paidOrders.slice(0, 24).map((order) => (
+                  {paidOrders.map((order) => (
                     <article key={order.id} className="billing-entry-row billing-recharge-row">
                       <div>
-                        <strong>{order.packageName}</strong>
+                        <strong>{formatUsd(order.amountUsd, locale)}</strong>
                         <span>
-                          {formatUsd(order.amountUsd, locale)} · {order.points} pts · {formatPaymentOrderStatus(order.status)} ·{' '}
-                          {formatDate(order.paidAt ?? order.createdAt, locale)}
+                          {order.packageName} · {order.points} pts · {formatPaymentOrderStatus(order.status)} · {formatDate(order.paidAt ?? order.createdAt, locale)}
                         </span>
                       </div>
                       <div className="billing-entry-amount credit">
