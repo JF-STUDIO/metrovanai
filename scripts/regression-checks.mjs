@@ -349,6 +349,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/index.ts',
+  'persistOriginalStorageKey',
+  'Uploaded originals must be copied from incoming storage into persistent project storage before processing.'
+);
+
+assertIncludes(
+  'server/src/object-storage.ts',
+  'x-amz-copy-source',
+  'Object storage must support server-side copies for long-lived original backups.'
+);
+
+assertIncludes(
   'server/src/routes/admin.ts',
   "action: 'project.repair.regenerate_download'",
   'Admin download regeneration repairs must be audited.'

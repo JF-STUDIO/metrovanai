@@ -288,17 +288,25 @@ function normalizeMultipartEtag(value: string) {
 
 function createSignedHeaderRequest(
   config: ObjectStorageConfig,
-  method: 'GET' | 'HEAD',
+  method: 'GET' | 'HEAD' | 'PUT',
   url: URL,
-  canonicalQuery: string
+  canonicalQuery: string,
+  extraHeaders: Record<string, string> = {}
 ): { headers: Record<string, string> } {
   const now = new Date();
   const amzDate = toAmzDate(now);
   const dateStamp = amzDate.slice(0, 8);
   const scope = `${dateStamp}/${config.region}/s3/aws4_request`;
   const payloadHash = 'UNSIGNED-PAYLOAD';
-  const canonicalHeaders = `host:${url.host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
-  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+  const headers = {
+    ...Object.fromEntries(Object.entries(extraHeaders).map(([key, value]) => [key.toLowerCase(), value])),
+    host: url.host,
+    'x-amz-content-sha256': payloadHash,
+    'x-amz-date': amzDate
+  };
+  const sortedHeaderEntries = Object.entries(headers).sort(([left], [right]) => left.localeCompare(right));
+  const canonicalHeaders = sortedHeaderEntries.map(([key, value]) => `${key}:${String(value).trim()}\n`).join('');
+  const signedHeaders = sortedHeaderEntries.map(([key]) => key).join(';');
   const canonicalRequest = [
     method,
     url.pathname || '/',
@@ -315,6 +323,7 @@ function createSignedHeaderRequest(
 
   return {
     headers: {
+      ...extraHeaders,
       Authorization: `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
       'x-amz-content-sha256': payloadHash,
       'x-amz-date': amzDate
@@ -399,6 +408,41 @@ export async function getObjectStorageMetadata(storageKey: string) {
     etag: response.headers.get('etag'),
     lastModified: response.headers.get('last-modified')
   };
+}
+
+function buildCopySourceHeader(config: ObjectStorageConfig, storageKey: string) {
+  return `/${encodePathSegment(config.bucket)}/${encodeObjectKey(normalizeStorageKey(storageKey))}`;
+}
+
+export async function copyObjectInStorage(input: {
+  sourceStorageKey: string;
+  targetStorageKey: string;
+}) {
+  const config = getObjectStorageConfig();
+  const sourceStorageKey = normalizeStorageKey(input.sourceStorageKey);
+  const targetStorageKey = normalizeStorageKey(input.targetStorageKey);
+  if (
+    !config ||
+    !isConfiguredObjectStorageKey(sourceStorageKey) ||
+    !isConfiguredObjectStorageKey(targetStorageKey)
+  ) {
+    return null;
+  }
+
+  const url = getObjectUrl(config, targetStorageKey);
+  const canonicalQuery = '';
+  const copyHeaders = {
+    'x-amz-copy-source': buildCopySourceHeader(config, sourceStorageKey),
+    'x-amz-metadata-directive': 'COPY'
+  };
+  const signed = createSignedHeaderRequest(config, 'PUT', url, canonicalQuery, copyHeaders);
+  const response = await fetch(url, { method: 'PUT', headers: signed.headers });
+  const body = await response.text().catch(() => '');
+  if (!response.ok) {
+    throw new Error(`Object copy failed: ${response.status} ${body}`.trim());
+  }
+
+  return await getObjectStorageMetadata(targetStorageKey);
 }
 
 function buildIncomingProjectPrefix(

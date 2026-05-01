@@ -58,6 +58,7 @@ import {
   abortMultipartObjectUpload,
   assertDirectObjectUploadConfigured,
   completeMultipartObjectUpload,
+  copyObjectInStorage,
   createDirectObjectMultipartUpload,
   createObjectDownloadUrl,
   createDirectObjectUploadTarget,
@@ -1986,6 +1987,35 @@ function allocateOriginalTargetPath(originalsDir: string, desiredFileName: strin
   }
 }
 
+function isPersistentObjectStorageKey(storageKey: string | null | undefined) {
+  if (!storageKey) {
+    return false;
+  }
+  const normalizedKey = storageKey.replace(/\\/g, '/').replace(/^\/+/, '');
+  const persistentPrefix = trimObjectStoragePrefix(process.env.METROVAN_OBJECT_STORAGE_PERSISTENT_PREFIX, 'projects');
+  return normalizedKey === persistentPrefix || normalizedKey.startsWith(`${persistentPrefix}/`);
+}
+
+async function persistOriginalStorageKey(project: ProjectRecord, storageKey: string, fileName: string) {
+  if (isPersistentObjectStorageKey(storageKey)) {
+    return storageKey;
+  }
+
+  const persistentStorageKey = createPersistentObjectKey({
+    userKey: project.userKey,
+    projectId: project.id,
+    userDisplayName: project.userDisplayName,
+    projectName: project.name,
+    category: 'originals',
+    fileName
+  });
+  await copyObjectInStorage({
+    sourceStorageKey: storageKey,
+    targetStorageKey: persistentStorageKey
+  });
+  return persistentStorageKey;
+}
+
 async function commitStagedOriginals(projectId: string) {
   const project = store.getProject(projectId);
   if (!project) {
@@ -2040,9 +2070,10 @@ async function commitStagedOriginals(projectId: string) {
 
     if ((!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) && isCloudObjectStorageKey(storageKey)) {
       const targetPath = allocateOriginalTargetPath(dirs.originals, path.basename(sourcePath), reservedPaths);
+      const persistentStorageKey = await persistOriginalStorageKey(project, storageKey as string, path.basename(targetPath));
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       committedPaths.set(normalizedSourcePath, targetPath);
-      committedStorageKeys.set(normalizedSourcePath, storageKey as string);
+      committedStorageKeys.set(normalizedSourcePath, persistentStorageKey);
       continue;
     }
 
@@ -2060,6 +2091,25 @@ async function commitStagedOriginals(projectId: string) {
     const targetPath = allocateOriginalTargetPath(dirs.originals, path.basename(sourcePath), reservedPaths);
     fs.copyFileSync(sourcePath, targetPath);
     committedPaths.set(normalizedSourcePath, targetPath);
+    if (isCloudObjectStorageKey(storageKey)) {
+      const persistentStorageKey = await persistOriginalStorageKey(project, storageKey as string, path.basename(targetPath));
+      committedStorageKeys.set(normalizedSourcePath, persistentStorageKey);
+    } else if (isObjectStorageConfigured()) {
+      const persistentStorageKey = createPersistentObjectKey({
+        userKey: project.userKey,
+        projectId: project.id,
+        userDisplayName: project.userDisplayName,
+        projectName: project.name,
+        category: 'originals',
+        fileName: path.basename(targetPath)
+      });
+      await uploadFileToObjectStorage({
+        sourcePath: targetPath,
+        storageKey: persistentStorageKey,
+        contentType: exposure?.mimeType || 'application/octet-stream'
+      });
+      committedStorageKeys.set(normalizedSourcePath, persistentStorageKey);
+    }
   }
 
   const updated = store.updateProject(projectId, (current) => ({
