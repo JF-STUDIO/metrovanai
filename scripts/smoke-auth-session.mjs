@@ -320,17 +320,15 @@ async function main() {
       };
     });
 
-    await withStep('project_start_without_points_rejected_after_upload', async () => {
+    await withStep('trial_credits_allow_first_project_start', async () => {
       const before = await client.request('GET', '/api/billing');
       assert(before.status === 200, `Expected billing 200 before start, got ${before.status}`);
+      assert(before.payload?.summary?.availablePoints === 3, `Expected 3 trial points, got ${before.payload?.summary?.availablePoints}`);
       const response = await client.request('POST', `/api/projects/${projectId}/start`, {});
-      assert(response.status === 402, `Expected start 402 without points, got ${response.status}: ${JSON.stringify(response.payload)}`);
+      assert(response.status === 200, `Expected start 200 with trial points, got ${response.status}: ${JSON.stringify(response.payload)}`);
       const after = await client.request('GET', '/api/billing');
       assert(after.status === 200, `Expected billing 200 after start, got ${after.status}`);
-      assert(
-        after.payload?.summary?.availablePoints === before.payload?.summary?.availablePoints,
-        'Billing points changed after rejected start.'
-      );
+      assert(after.payload?.summary?.availablePoints <= before.payload?.summary?.availablePoints, 'Billing points increased after project start.');
       return { status: response.status, availablePoints: after.payload.summary.availablePoints };
     });
 
