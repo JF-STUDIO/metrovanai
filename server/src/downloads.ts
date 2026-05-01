@@ -22,6 +22,7 @@ export interface ProjectDownloadOptions {
   namingMode: 'original' | 'sequence' | 'custom-prefix';
   customPrefix?: string;
   variants: DownloadVariantOption[];
+  trialWatermark?: boolean;
 }
 
 export function getDefaultDownloadOptions(): ProjectDownloadOptions {
@@ -29,7 +30,26 @@ export function getDefaultDownloadOptions(): ProjectDownloadOptions {
     folderMode: 'grouped',
     namingMode: 'sequence',
     customPrefix: '',
-    variants: [{ key: 'hd', label: 'HD' }]
+    variants: [{ key: 'hd', label: 'HD' }],
+    trialWatermark: false
+  };
+}
+
+export function applyTrialDownloadPolicy(input?: ProjectDownloadOptions): ProjectDownloadOptions {
+  const normalized = normalizeDownloadOptions(input);
+  return {
+    ...normalized,
+    folderMode: 'grouped',
+    variants: [
+      {
+        key: 'custom',
+        label: 'Trial-1024',
+        longEdge: 1024,
+        width: null,
+        height: null
+      }
+    ],
+    trialWatermark: true
   };
 }
 
@@ -91,11 +111,12 @@ export async function buildProjectDownloadArchive(project: ProjectRecord, input?
       });
       const targetPath = path.join(variantFolder, targetFileName);
       const resize = resolveVariantResize(variant);
-      if (!resize) {
+      const watermarkText = options.trialWatermark ? 'Metrovan AI' : null;
+      if (!resize && !watermarkText) {
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
         fs.copyFileSync(asset.storagePath, targetPath);
       } else {
-        await writeJpegVariant(asset.storagePath, targetPath, 95, resize);
+        await writeJpegVariant(asset.storagePath, targetPath, 95, resize, { watermarkText });
       }
     }
   }
@@ -304,7 +325,8 @@ type PreparedDownloadSource = {
 async function prepareAssetDownloadSource(
   project: ProjectRecord,
   asset: DownloadAsset,
-  variant: DownloadVariantOption
+  variant: DownloadVariantOption,
+  options: ProjectDownloadOptions
 ): Promise<PreparedDownloadSource | null> {
   if (!(await ensureDownloadAssetFileReady(project, asset))) {
     console.warn(`[download] result missing: project=${project.id} asset=${asset.id} file=${asset.fileName}`);
@@ -312,9 +334,10 @@ async function prepareAssetDownloadSource(
   }
 
   const resize = resolveVariantResize(variant);
-  if (resize) {
+  const watermarkText = options.trialWatermark ? 'Metrovan AI' : null;
+  if (resize || watermarkText) {
     return {
-      stream: createJpegVariantStream(asset.storagePath, 95, resize),
+      stream: createJpegVariantStream(asset.storagePath, 95, resize, { watermarkText }),
       mtime: fs.statSync(asset.storagePath).mtime
     };
   }
@@ -410,7 +433,7 @@ export async function streamProjectDownloadArchive(
     for (const variant of options.variants) {
       const variantFolder = options.folderMode === 'grouped' ? getVariantFolderName(variant) : '';
       for (const [index, asset] of orderedAssets.entries()) {
-        const source = await prepareAssetDownloadSource(project, asset, variant);
+        const source = await prepareAssetDownloadSource(project, asset, variant, options);
         if (!source) {
           continue;
         }
@@ -603,7 +626,8 @@ function normalizeDownloadOptions(input?: ProjectDownloadOptions): ProjectDownlo
     folderMode: input?.folderMode === 'flat' ? 'flat' : defaults.folderMode,
     namingMode: input?.namingMode === 'original' || input?.namingMode === 'custom-prefix' ? input.namingMode : defaults.namingMode,
     customPrefix: sanitizeSegment(input?.customPrefix ?? '').slice(0, 40),
-    variants
+    variants,
+    trialWatermark: Boolean(input?.trialWatermark)
   };
 }
 

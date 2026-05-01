@@ -1,4 +1,6 @@
 import express from 'express';
+import fs from 'node:fs';
+import { createJpegVariantStream } from '../images.js';
 import type { ProjectRecord } from '../types.js';
 import type { RouteContext } from './context.js';
 
@@ -11,9 +13,11 @@ export function createProjectResultsRouter(ctx: RouteContext) {
     ensureResultThumbnailManifestItem,
     getOwnedProjectFromRequest,
     logServerEvent,
+    restoreObjectToFileIfAvailable,
     runWithConcurrency,
     sendCachedPreviewFile,
-    sendProtectedStorageFile
+    sendProtectedStorageFile,
+    store
   } = ctx;
 
 async function collectResultThumbnailManifestItems(project: ProjectRecord) {
@@ -89,7 +93,7 @@ app.get('/api/projects/:id/results/thumbnails-batch', async (req, res) => {
   await respondWithResultThumbnailManifest(req, res, 'batch');
 });
 
-app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
+app.get('/api/projects/:id/results/:resultAssetId/file', async (req, res) => {
   const owned = getOwnedProjectFromRequest(req, res);
   if (!owned) {
     return;
@@ -98,6 +102,33 @@ app.get('/api/projects/:id/results/:resultAssetId/file', (req, res) => {
   const asset = owned.project.resultAssets.find((item: any) => item.id === String(req.params.resultAssetId ?? ''));
   if (!asset) {
     res.status(404).json({ error: '找不到该文件。' });
+    return;
+  }
+
+  if (store.shouldRestrictTrialDownloads(owned.user.userKey)) {
+    try {
+      if (!fs.existsSync(asset.storagePath)) {
+        await restoreObjectToFileIfAvailable(asset.storageKey, asset.storagePath);
+      }
+      if (!fs.existsSync(asset.storagePath)) {
+        res.status(404).json({ error: '找不到该文件。' });
+        return;
+      }
+      res.status(200);
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, no-store');
+      const stream = createJpegVariantStream(asset.storagePath, 95, { longEdge: 1024 }, { watermarkText: 'Metrovan AI' });
+      for await (const chunk of stream) {
+        res.write(chunk);
+      }
+      res.end();
+    } catch (error) {
+      if (!res.headersSent) {
+        res.status(500).json({ error: '图片生成失败，请稍后再试。' });
+      } else {
+        res.destroy(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
     return;
   }
 

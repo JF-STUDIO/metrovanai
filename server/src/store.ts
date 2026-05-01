@@ -35,6 +35,34 @@ import {
 function isAdminBillingAdjustment(entry: BillingEntry) {
   return entry.amountUsd === 0 && !entry.projectId && !entry.projectName && entry.note.startsWith('Admin adjustment:');
 }
+
+function createBillingEntryRecord(input: {
+  userKey: string;
+  type: 'charge' | 'credit';
+  points: number;
+  amountUsd: number;
+  note: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  activationCodeId?: string | null;
+  activationCode?: string | null;
+  activationCodeLabel?: string | null;
+}): BillingEntry {
+  return {
+    id: nanoid(12),
+    userKey: input.userKey,
+    type: input.type,
+    points: Math.max(0, Math.round(input.points)),
+    amountUsd: Number(Math.max(0, input.amountUsd).toFixed(2)),
+    note: input.note.trim(),
+    projectId: input.projectId ?? null,
+    projectName: input.projectName?.trim() ?? '',
+    activationCodeId: input.activationCodeId ?? null,
+    activationCode: input.activationCode?.trim().toUpperCase() || null,
+    activationCodeLabel: input.activationCodeLabel?.trim() || null,
+    createdAt: new Date().toISOString()
+  };
+}
 import {
   createStorageProvider,
   type StorageProvider,
@@ -56,6 +84,8 @@ import {
 import { normalizeStudioFeatures } from './studio-features.js';
 
 const DEFAULT_PROJECT_REGENERATION_FREE_LIMIT = 10;
+const NEW_USER_TRIAL_CREDIT_POINTS = 3;
+const NEW_USER_TRIAL_CREDIT_NOTE = 'New user trial credit';
 
 interface GroupTemplate {
   sceneType: SceneType;
@@ -642,6 +672,17 @@ export class LocalStore {
       lastLoginAt: null
     };
     db.users.unshift(user);
+    db.billing.unshift(
+      createBillingEntryRecord({
+        userKey: user.userKey,
+        type: 'credit',
+        points: NEW_USER_TRIAL_CREDIT_POINTS,
+        amountUsd: 0,
+        note: NEW_USER_TRIAL_CREDIT_NOTE,
+        projectId: null,
+        projectName: ''
+      })
+    );
     this.saveDb(db);
     return user;
   }
@@ -709,6 +750,17 @@ export class LocalStore {
       lastLoginAt: null
     };
     db.users.unshift(user);
+    db.billing.unshift(
+      createBillingEntryRecord({
+        userKey: user.userKey,
+        type: 'credit',
+        points: NEW_USER_TRIAL_CREDIT_POINTS,
+        amountUsd: 0,
+        note: NEW_USER_TRIAL_CREDIT_NOTE,
+        projectId: null,
+        projectName: ''
+      })
+    );
     this.saveDb(db);
     return user;
   }
@@ -1006,23 +1058,17 @@ export class LocalStore {
     activationCodeLabel?: string | null;
   }) {
     const db = this.loadDb();
-    const entry: BillingEntry = {
-      id: nanoid(12),
-      userKey: input.userKey,
-      type: input.type,
-      points: Math.max(0, Math.round(input.points)),
-      amountUsd: Number(Math.max(0, input.amountUsd).toFixed(2)),
-      note: input.note.trim(),
-      projectId: input.projectId ?? null,
-      projectName: input.projectName?.trim() ?? '',
-      activationCodeId: input.activationCodeId ?? null,
-      activationCode: input.activationCode?.trim().toUpperCase() || null,
-      activationCodeLabel: input.activationCodeLabel?.trim() || null,
-      createdAt: new Date().toISOString()
-    };
+    const entry = createBillingEntryRecord(input);
     db.billing.unshift(entry);
     this.saveDb(db);
     return entry;
+  }
+
+  shouldRestrictTrialDownloads(userKey: string) {
+    const paidTopUpTotal = this.loadDb().billing
+      .filter((entry) => entry.userKey === userKey && entry.type === 'credit')
+      .reduce((sum, entry) => sum + entry.amountUsd, 0);
+    return paidTopUpTotal <= 0;
   }
 
   listPaymentOrders(userKey?: string) {

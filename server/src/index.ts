@@ -32,6 +32,7 @@ import {
 } from './auth.js';
 import {
   DownloadIncompleteError,
+  applyTrialDownloadPolicy,
   assertProjectDownloadAssetsReady,
   getDefaultDownloadOptions,
   getProjectDownloadFileName,
@@ -2946,6 +2947,7 @@ app.use(createProjectRouter({
   createDirectObjectUploadTarget,
   createMultipartUploadPartUrl,
   createProjectSchema,
+  applyTrialDownloadPolicy,
   createUploadBatchId,
   deleteObjectsFromStorage,
   deleteProjectObjectStorage,

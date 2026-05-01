@@ -107,6 +107,36 @@ assertIncludes(
   'Admin force logout must be audited.'
 );
 
+assertIncludes(
+  'server/src/store.ts',
+  'NEW_USER_TRIAL_CREDIT_POINTS = 3',
+  'New accounts must receive exactly 3 trial credits.'
+);
+
+assertIncludes(
+  'server/src/store.ts',
+  'shouldRestrictTrialDownloads',
+  'Trial-only accounts must be identifiable for restricted downloads.'
+);
+
+assertIncludes(
+  'server/src/downloads.ts',
+  "label: 'Trial-1024'",
+  'Trial downloads must be forced to a 1024px delivery variant.'
+);
+
+assertIncludes(
+  'server/src/downloads.ts',
+  "watermarkText = options.trialWatermark ? 'Metrovan AI' : null",
+  'Trial downloads must include a Metrovan AI watermark.'
+);
+
+assertIncludes(
+  'server/src/routes/project-results.ts',
+  "createJpegVariantStream(asset.storagePath, 95, { longEdge: 1024 }, { watermarkText: 'Metrovan AI' })",
+  'Trial-only accounts must receive restricted single-image result downloads.'
+);
+
 for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',

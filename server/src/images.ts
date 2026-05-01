@@ -55,6 +55,10 @@ export interface JpegVariantSize {
   height?: number | null;
 }
 
+export interface JpegVariantOptions {
+  watermarkText?: string | null;
+}
+
 const estimateRgbGainsScriptPath = fileURLToPath(new URL('../scripts/estimate_rgb_gains.py', import.meta.url));
 const estimateToneAdjustmentsScriptPath = fileURLToPath(
   new URL('../scripts/estimate_tone_adjustments.py', import.meta.url)
@@ -371,7 +375,8 @@ async function convertToJpegWithMagick(
   sourcePath: string,
   destinationPath: string,
   quality: number,
-  resize?: number | JpegVariantSize
+  resize?: number | JpegVariantSize,
+  options: JpegVariantOptions = {}
 ) {
   if (!toolPaths.magick) {
     throw new Error('ImageMagick is not available.');
@@ -385,6 +390,7 @@ async function convertToJpegWithMagick(
   if (resizeExpression) {
     args.push('-resize', resizeExpression);
   }
+  appendWatermarkArgs(args, options.watermarkText);
   args.push('-quality', String(quality), tempPath);
 
   const result = await runProcess(toolPaths.magick, args, {
@@ -423,23 +429,50 @@ function resolveResizeExpression(resize?: number | JpegVariantSize) {
   return `${width ?? ''}x${height ?? ''}>`;
 }
 
+function appendWatermarkArgs(args: string[], watermarkText?: string | null) {
+  const label = watermarkText?.trim();
+  if (!label) {
+    return;
+  }
+
+  args.push(
+    '-gravity',
+    'southeast',
+    '-fill',
+    'rgba(255,255,255,0.82)',
+    '-undercolor',
+    'rgba(0,0,0,0.42)',
+    '-pointsize',
+    '26',
+    '-annotate',
+    '+28+28',
+    `  ${label}  `
+  );
+}
+
 export async function writeJpegVariant(
   sourcePath: string,
   destinationPath: string,
   quality: number,
-  resize?: number | JpegVariantSize
+  resize?: number | JpegVariantSize,
+  options: JpegVariantOptions = {}
 ) {
   ensureParent(destinationPath);
   const extension = path.extname(sourcePath).toLowerCase();
-  if (!resolveResizeExpression(resize) && (extension === '.jpg' || extension === '.jpeg')) {
+  if (!resolveResizeExpression(resize) && !options.watermarkText?.trim() && (extension === '.jpg' || extension === '.jpeg')) {
     fs.copyFileSync(sourcePath, destinationPath);
     return;
   }
 
-  await convertToJpegWithMagick(sourcePath, destinationPath, quality, resize);
+  await convertToJpegWithMagick(sourcePath, destinationPath, quality, resize, options);
 }
 
-export function createJpegVariantStream(sourcePath: string, quality: number, resize?: number | JpegVariantSize) {
+export function createJpegVariantStream(
+  sourcePath: string,
+  quality: number,
+  resize?: number | JpegVariantSize,
+  options: JpegVariantOptions = {}
+) {
   if (!toolPaths.magick) {
     throw new Error('ImageMagick is not available.');
   }
@@ -449,6 +482,7 @@ export function createJpegVariantStream(sourcePath: string, quality: number, res
   if (resizeExpression) {
     args.push('-resize', resizeExpression);
   }
+  appendWatermarkArgs(args, options.watermarkText);
   args.push('-quality', String(quality), 'jpg:-');
 
   const output = new PassThrough();
