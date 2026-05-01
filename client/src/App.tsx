@@ -5591,6 +5591,7 @@ function App() {
                           onCancelUpload={handleCancelUpload}
                           onPauseUpload={handlePauseUpload}
                           onResumeUpload={handleResumeUpload}
+                          onRetryAllUploadFiles={() => void handleStartProcessing()}
                           onRetryUploadFile={(fileIdentity) => void handleStartProcessing({ retryUploadFileIdentity: fileIdentity })}
                         />
                       )}

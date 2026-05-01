@@ -133,8 +133,20 @@ assertMatches(
 
 assertIncludes(
   'client/src/api.ts',
-  'const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 8;',
-  'Direct upload should keep enough browser concurrency for production photo batches.'
+  'const DIRECT_OBJECT_UPLOAD_SMALL_FILE_CONCURRENCY = 4;',
+  'Direct upload should keep stable browser concurrency for production RAW batches.'
+);
+
+assertIncludes(
+  'client/src/api.ts',
+  'const MAX_UPLOAD_BATCH_RETRIES = 5;',
+  'Direct upload should tolerate transient browser/R2 upload failures.'
+);
+
+assertIncludes(
+  'client/src/components/ReviewUploadStatus.tsx',
+  'Retry all failed files',
+  'Upload retry UI must support batch retry instead of one-file-only recovery.'
 );
 
 assertIncludes(

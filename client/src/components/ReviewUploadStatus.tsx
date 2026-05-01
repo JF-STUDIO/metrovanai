@@ -24,6 +24,7 @@ interface ReviewUploadStatusProps {
   onCancelUpload: () => void;
   onPauseUpload: () => void;
   onResumeUpload: () => void;
+  onRetryAllUploadFiles: () => void;
   onRetryUploadFile: (fileIdentity: string) => void;
 }
 
@@ -40,8 +41,12 @@ export function ReviewUploadStatus({
   onCancelUpload,
   onPauseUpload,
   onResumeUpload,
+  onRetryAllUploadFiles,
   onRetryUploadFile
 }: ReviewUploadStatusProps) {
+  const visibleFailedUploadFiles = failedUploadFiles.slice(0, 8);
+  const hiddenFailedUploadFileCount = Math.max(0, failedUploadFiles.length - visibleFailedUploadFiles.length);
+
   return (
     <>
       {(showReviewLocalImportProgress || showReviewUploadProgress) && (
@@ -70,9 +75,21 @@ export function ReviewUploadStatus({
         <div className="review-upload-status" aria-live="polite">
           <div>
             <strong>{locale === 'en' ? 'Files waiting for retry' : '等待重试的文件'}</strong>
-            <span>{locale === 'en' ? 'Retry one file at a time before processing starts.' : '处理开始前请逐个重试失败文件。'}</span>
+            <span>
+              {locale === 'en'
+                ? `${failedUploadFiles.length} file${failedUploadFiles.length === 1 ? '' : 's'} need retry before processing starts.`
+                : `${failedUploadFiles.length} 个文件需要重试后才能开始处理。`}
+            </span>
           </div>
-          {failedUploadFiles.map((file) => (
+          <button
+            className="primary-button compact"
+            type="button"
+            onClick={onRetryAllUploadFiles}
+            disabled={busy}
+          >
+            {locale === 'en' ? 'Retry all failed files' : '重试全部失败文件'}
+          </button>
+          {visibleFailedUploadFiles.map((file) => (
             <button
               key={file.fileIdentity}
               className="ghost-button compact"
@@ -83,6 +100,13 @@ export function ReviewUploadStatus({
               {locale === 'en' ? `Retry ${file.fileName}` : `重试 ${file.fileName}`}
             </button>
           ))}
+          {hiddenFailedUploadFileCount > 0 && (
+            <span className="muted">
+              {locale === 'en'
+                ? `And ${hiddenFailedUploadFileCount} more.`
+                : `还有 ${hiddenFailedUploadFileCount} 个文件。`}
+            </span>
+          )}
         </div>
       )}
     </>
