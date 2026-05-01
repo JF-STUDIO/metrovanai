@@ -517,6 +517,8 @@ const UPLOAD_TELEMETRY_SAMPLE_MS = 12000;
 const UPLOAD_TELEMETRY_MIN_SPAN_MS = 3000;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES = 300;
 const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 30 * 1024 * 1024 * 1024;
+const CLIENT_DIRECT_UPLOAD_TARGET_MAX_FILES = 48;
+const CLIENT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES = 6 * 1024 * 1024 * 1024;
 let deprecatedUploadFileBatchWarningShown = false;
 
 class ThroughputSampler {
@@ -2228,12 +2230,14 @@ function collectCompletedObjects(files: File[], completedByIdentity: Map<string,
 function normalizeDirectUploadTargetLimits(limits?: UploadCapabilitiesPayload['directUploadTargets']): DirectUploadTargetLimits {
   const maxFiles = Number(limits?.maxFiles ?? DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES);
   const maxBatchBytes = Number(limits?.maxBatchBytes ?? DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES);
+  const serverMaxFiles = Number.isFinite(maxFiles) && maxFiles > 0 ? Math.floor(maxFiles) : DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES;
+  const serverMaxBatchBytes =
+    Number.isFinite(maxBatchBytes) && maxBatchBytes > 0
+      ? Math.floor(maxBatchBytes)
+      : DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES;
   return {
-    maxFiles: Number.isFinite(maxFiles) && maxFiles > 0 ? Math.floor(maxFiles) : DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES,
-    maxBatchBytes:
-      Number.isFinite(maxBatchBytes) && maxBatchBytes > 0
-        ? Math.floor(maxBatchBytes)
-        : DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES
+    maxFiles: Math.min(serverMaxFiles, CLIENT_DIRECT_UPLOAD_TARGET_MAX_FILES),
+    maxBatchBytes: Math.min(serverMaxBatchBytes, CLIENT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES)
   };
 }
 

@@ -144,6 +144,12 @@ assertIncludes(
 );
 
 assertIncludes(
+  'client/src/api.ts',
+  'const CLIENT_DIRECT_UPLOAD_TARGET_MAX_FILES = 48;',
+  'Direct upload should request signed upload targets in smaller browser-stable batches.'
+);
+
+assertIncludes(
   'client/src/components/ReviewUploadStatus.tsx',
   'Retry all failed files',
   'Upload retry UI must support batch retry instead of one-file-only recovery.'
