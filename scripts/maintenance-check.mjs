@@ -257,13 +257,14 @@ function buildApplicationPriorityQueue({ projects, failedItems, sidecarGroups, s
   }
   for (const [projectId, count] of failedByProject.entries()) {
     const project = projects.find((item) => item.id === projectId);
+    const completedProject = project?.status === 'completed';
     addReason(project, {
       code: 'failed-processing-items',
-      severity: 'error',
+      severity: completedProject ? 'warning' : 'error',
       title: '照片处理失败',
       detail: `${count} 张失败照片没有结果图。`,
       action: 'retry-failed-processing',
-      score: 100 + count * 25
+      score: completedProject ? 30 + count * 10 : 100 + count * 25
     });
   }
 
@@ -368,14 +369,20 @@ async function checkApplicationData() {
       Array.isArray(project.hdrItems) ? project.hdrItems.map((item) => ({ project, item })) : []
     );
     const failedItems = hdrItems.filter(({ item }) => item?.status === 'error' && !isCompletedHdrItem(item));
+    const blockingFailedItems = failedItems.filter(({ project }) => project?.status !== 'completed');
+    const completedProjectFailedItems = failedItems.filter(({ project }) => project?.status === 'completed');
     const sidecarGroups = hdrItems.filter(({ item }) => hasRawJpegSidecarMix(item?.exposures));
     const stalledProjects = projects.filter((project) => {
       const updatedAt = Date.parse(project.updatedAt);
       return (
-        (project.status === 'processing' || project.status === 'uploading' || project.job?.status === 'running') &&
+        (project.status === 'processing' || project.job?.status === 'running') &&
         Number.isFinite(updatedAt) &&
         Date.now() - updatedAt > 45 * 60 * 1000
       );
+    });
+    const stalledUploadProjects = projects.filter((project) => {
+      const updatedAt = Date.parse(project.updatedAt);
+      return project.status === 'uploading' && Number.isFinite(updatedAt) && Date.now() - updatedAt > 45 * 60 * 1000;
     });
     const recentFailedDownloads = downloadJobs.filter((job) => {
       const completedAt = Number(job.completedAt || job.createdAt || 0);
@@ -386,12 +393,19 @@ async function checkApplicationData() {
       return Number(project.pointsSpent ?? 0) !== completedCount;
     });
     const alerts = [
-      failedItems.length ? { code: 'failed-items', value: failedItems.length } : null,
-      sidecarGroups.length ? { code: 'raw-jpeg-sidecar-groups', value: sidecarGroups.length } : null,
-      stalledProjects.length ? { code: 'stalled-projects', value: stalledProjects.length } : null,
-      recentFailedDownloads.length ? { code: 'recent-failed-downloads', value: recentFailedDownloads.length } : null,
-      creditMismatchProjects.length ? { code: 'credit-mismatch-projects', value: creditMismatchProjects.length } : null
+      blockingFailedItems.length ? { code: 'failed-items', severity: 'error', value: blockingFailedItems.length } : null,
+      completedProjectFailedItems.length
+        ? { code: 'completed-project-failed-items', severity: 'warning', value: completedProjectFailedItems.length }
+        : null,
+      sidecarGroups.length ? { code: 'raw-jpeg-sidecar-groups', severity: 'warning', value: sidecarGroups.length } : null,
+      stalledProjects.length ? { code: 'stalled-projects', severity: 'error', value: stalledProjects.length } : null,
+      stalledUploadProjects.length
+        ? { code: 'stalled-upload-projects', severity: 'warning', value: stalledUploadProjects.length }
+        : null,
+      recentFailedDownloads.length ? { code: 'recent-failed-downloads', severity: 'warning', value: recentFailedDownloads.length } : null,
+      creditMismatchProjects.length ? { code: 'credit-mismatch-projects', severity: 'warning', value: creditMismatchProjects.length } : null
     ].filter(Boolean);
+    const blockingAlerts = alerts.filter((alert) => alert.severity === 'error');
     const priorityQueue = buildApplicationPriorityQueue({
       projects,
       failedItems,
@@ -401,16 +415,18 @@ async function checkApplicationData() {
       creditMismatchProjects
     });
 
-    record('application_data', alerts.length === 0, {
+    record('application_data', blockingAlerts.length === 0, {
       totals: {
         projects: projects.length,
         hdrItems: hdrItems.length,
         downloadJobs: downloadJobs.length
       },
       alerts,
+      blockingAlerts,
       samples: {
         failedProjectIds: Array.from(new Set(failedItems.map(({ project }) => project.id))).slice(0, 10),
         stalledProjectIds: stalledProjects.slice(0, 10).map((project) => project.id),
+        stalledUploadProjectIds: stalledUploadProjects.slice(0, 10).map((project) => project.id),
         failedDownloadJobIds: recentFailedDownloads.slice(0, 10).map((job) => job.jobId)
       },
       priorityQueue
