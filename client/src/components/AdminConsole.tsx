@@ -91,6 +91,13 @@ function adminNavIcon(page: AdminConsolePage) {
         <line x1="3" y1="9" x2="21" y2="9" />
       </>
     ),
+    maintenance: (
+      <>
+        <path d="M4 19V5" />
+        <path d="M4 19h16" />
+        <path d="m8 15 3-4 3 2 4-6" />
+      </>
+    ),
     logs: (
       <>
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -171,6 +178,7 @@ export function AdminConsole({
         <div className="nav-section">
           <div className="nav-section-label">运营 & 系统</div>
           {targetNavButton('content', '内容运营')}
+          {targetNavButton('maintenance', '维护报告')}
           {targetNavButton('logs', '操作日志')}
           {targetNavButton('settings', '系统设置')}
         </div>

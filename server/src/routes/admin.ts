@@ -175,6 +175,37 @@ app.get('/api/admin/ops/health', (req, res) => {
   res.json(buildAdminOpsHealthPayload());
 });
 
+app.get('/api/admin/maintenance/reports', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const limit = Math.max(1, Math.min(30, Math.round(Number(req.query.limit ?? 10))));
+  const reportsDir = process.env.METROVAN_MAINTENANCE_REPORT_DIR || path.resolve(process.cwd(), 'reports', 'maintenance');
+  if (!fs.existsSync(reportsDir)) {
+    res.json({ total: 0, items: [] });
+    return;
+  }
+
+  const items = fs
+    .readdirSync(reportsDir)
+    .filter((name) => /^maintenance-\d{8}T\d{6}Z\.json$/.test(name))
+    .map((name) => {
+      const fullPath = path.join(reportsDir, name);
+      const stat = fs.statSync(fullPath);
+      return { name, fullPath, mtimeMs: stat.mtimeMs };
+    })
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, limit)
+    .map(({ name, fullPath }) => buildAdminMaintenanceReportPayload(name, fullPath))
+    .filter(Boolean);
+
+  res.json({
+    total: items.length,
+    items
+  });
+});
+
 app.post('/api/admin/projects/:id/recover-runninghub-results', async (req, res) => {
   const actor = requireAdminApiAccess(req, res);
   if (!actor) {
@@ -383,6 +414,49 @@ function buildAdminProjectPayload(project: ProjectRecord) {
     ...buildPublicProject(project),
     adminHealth: buildAdminProjectHealth(project)
   };
+}
+
+function buildAdminMaintenanceReportPayload(name: string, fullPath: string) {
+  try {
+    const report = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+    const results = Array.isArray(report.results) ? report.results : [];
+    const applicationData = results.find((item: any) => item?.id === 'application_data') ?? null;
+    const maintenanceReport = results.find((item: any) => item?.id === 'maintenance_report') ?? null;
+    return {
+      id: name.replace(/\.json$/, ''),
+      fileName: name,
+      startedAt: report.startedAt ?? null,
+      completedAt: report.completedAt ?? null,
+      ok: Boolean(report.ok),
+      failedCount: Number(report.failedCount ?? results.filter((item: any) => item && item.ok === false).length),
+      checks: results.map((item: any) => ({
+        id: String(item?.id ?? 'unknown'),
+        ok: Boolean(item?.ok),
+        status: item?.status ?? null,
+        latestStatus: item?.latestStatus ?? null,
+        alertCount: Array.isArray(item?.alerts) ? item.alerts.length : 0,
+        error: item?.error ? String(item.error).slice(0, 240) : null
+      })),
+      totals: applicationData?.totals ?? null,
+      alerts: Array.isArray(applicationData?.alerts) ? applicationData.alerts.slice(0, 12) : [],
+      priorityQueue: Array.isArray(applicationData?.priorityQueue) ? applicationData.priorityQueue.slice(0, 5) : [],
+      alert: maintenanceReport?.alert ?? null
+    };
+  } catch (error) {
+    return {
+      id: name.replace(/\.json$/, ''),
+      fileName: name,
+      startedAt: null,
+      completedAt: null,
+      ok: false,
+      failedCount: 1,
+      checks: [{ id: 'report_parse', ok: false, status: null, latestStatus: null, alertCount: 0, error: error instanceof Error ? error.message : String(error) }],
+      totals: null,
+      alerts: [],
+      priorityQueue: [],
+      alert: null
+    };
+  }
 }
 
 function buildAdminProjectHealth(project: ProjectRecord) {

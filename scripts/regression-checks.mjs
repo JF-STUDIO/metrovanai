@@ -354,6 +354,24 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/routes/admin.ts',
+  '/api/admin/maintenance/reports',
+  'Admin must provide a maintenance report history endpoint.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '维护报告',
+  'Admin console must expose a maintenance report history page.'
+);
+
+assertIncludes(
+  'client/src/api.ts',
+  'fetchAdminMaintenanceReports',
+  'Client API must fetch admin maintenance reports.'
+);
+
+assertIncludes(
   'client/src/app-utils.ts',
   'ignoredRawSidecars',
   'Import filtering must report matching JPG sidecars that were ignored.'

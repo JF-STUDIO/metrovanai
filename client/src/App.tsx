@@ -54,6 +54,7 @@ import {
   fetchAdminOpsHealth,
   fetchAdminOrderRefundPreview,
   fetchAdminOrders,
+  fetchAdminMaintenanceReports,
   fetchAdminProjectDetail,
   fetchAdminProjects,
   fetchAdminSettings,
@@ -98,6 +99,7 @@ import {
 import type {
   AdminActivationCode,
   AdminAuditLogEntry,
+  AdminMaintenanceReportSummary,
   AdminOpsHealthPayload,
   AdminProjectRepairAction,
   AdminSystemSettings,
@@ -310,6 +312,9 @@ function App() {
   const [adminDetailProjects, setAdminDetailProjects] = useState<ProjectRecord[]>([]);
   const [adminDetailBillingEntries, setAdminDetailBillingEntries] = useState<BillingEntry[]>([]);
   const [adminAuditLogs, setAdminAuditLogs] = useState<AdminAuditLogEntry[]>([]);
+  const [adminMaintenanceReports, setAdminMaintenanceReports] = useState<AdminMaintenanceReportSummary[]>([]);
+  const [adminMaintenanceLoaded, setAdminMaintenanceLoaded] = useState(false);
+  const [adminMaintenanceBusy, setAdminMaintenanceBusy] = useState(false);
   const [adminDetailBusy, setAdminDetailBusy] = useState(false);
   const [adminActionBusy, setAdminActionBusy] = useState(false);
   const [adminDeepHealthBusy, setAdminDeepHealthBusy] = useState(false);
@@ -957,6 +962,38 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [activeRoute, adminOrdersLoaded, hasAdminSession, locale]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || !hasAdminSession || adminMaintenanceLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setAdminMaintenanceBusy(true);
+      fetchAdminMaintenanceReports()
+        .then((response) => {
+          if (cancelled) return;
+          setAdminMaintenanceReports(response.items);
+          setAdminMaintenanceLoaded(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setAdminMaintenanceLoaded(true);
+          setAdminMessage(getUserFacingErrorMessage(error, '维护报告读取失败。', locale));
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setAdminMaintenanceBusy(false);
+          }
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeRoute, adminMaintenanceLoaded, hasAdminSession, locale]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || !hasAdminSession || adminOpsHealth || adminOpsBusy) {
@@ -2112,6 +2149,27 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '审计日志读取失败。', locale));
     } finally {
       setAdminActionBusy(false);
+    }
+  }
+
+  async function handleAdminLoadMaintenanceReports() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminMaintenanceBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminMaintenanceReports();
+      setAdminMaintenanceReports(response.items);
+      setAdminMaintenanceLoaded(true);
+      setAdminMessage(`已载入 ${response.items.length} 份维护报告。`);
+    } catch (error) {
+      setAdminMaintenanceLoaded(true);
+      setAdminMessage(getUserFacingErrorMessage(error, '维护报告读取失败。', locale));
+    } finally {
+      setAdminMaintenanceBusy(false);
     }
   }
 
@@ -5574,6 +5632,67 @@ function App() {
       </div>
     );
 
+    const renderMaintenancePage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '维护报告',
+          <>自动巡检历史 · 最近载入 <span className="mono accent-text">{adminMaintenanceReports.length}</span> 份</>,
+          <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadMaintenanceReports()} disabled={adminMaintenanceBusy}>
+            {adminMaintenanceBusy ? '读取中...' : '刷新报告'}
+          </button>
+        )}
+        <div className="maintenance-report-list">
+          {adminMaintenanceReports.map((report) => (
+            <article className="card maintenance-report-card" key={report.id}>
+              <div className="admin-mini-head">
+                <strong>{formatAdminShortDate(report.completedAt ?? report.startedAt ?? '')}</strong>
+                <span className={report.ok ? 'tag tag-green' : 'tag tag-red'}>{report.ok ? '通过' : `${report.failedCount} 项异常`}</span>
+              </div>
+              <div className="admin-health-grid compact">
+                <div><strong>{report.totals?.projects ?? '—'}</strong><span>项目</span></div>
+                <div><strong>{report.totals?.hdrItems ?? '—'}</strong><span>HDR 项</span></div>
+                <div><strong>{report.totals?.downloadJobs ?? '—'}</strong><span>下载任务</span></div>
+                <div><strong>{report.alert?.sent ? '已发送' : report.alert?.reason ?? '未发送'}</strong><span>邮件告警</span></div>
+              </div>
+              {report.alerts.length ? (
+                <div className="maintenance-alert-row">
+                  {report.alerts.map((alert) => (
+                    <span key={alert.code}>{alert.code}: {alert.value}</span>
+                  ))}
+                </div>
+              ) : (
+                <div className="admin-health-ok">这份报告没有应用数据异常。</div>
+              )}
+              {report.priorityQueue.length ? (
+                <div className="maintenance-priority-list">
+                  {report.priorityQueue.map((item, index) => (
+                    <div className="maintenance-priority-item" key={`${report.id}-${item.projectId}`}>
+                      <span className={item.priority === 'high' ? 'tag tag-red' : item.priority === 'medium' ? 'tag tag-orange' : 'tag tag-gray'}>#{index + 1} {item.priority}</span>
+                      <strong>{item.projectName}</strong>
+                      <small>{item.rootCauseSummary}</small>
+                      <em>{item.recommendedActionLabels?.join(' / ') || '后台查看'}</em>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="maintenance-check-grid">
+                {report.checks.map((check) => (
+                  <span className={check.ok ? 'tag tag-green' : 'tag tag-red'} key={`${report.id}-${check.id}`}>
+                    {check.id}{check.alertCount ? ` · ${check.alertCount}` : ''}
+                  </span>
+                ))}
+              </div>
+            </article>
+          ))}
+          {!adminMaintenanceReports.length ? (
+            <div className="card">
+              <div className="empty-tip">{adminMaintenanceBusy ? '正在读取维护报告...' : '暂无维护报告，等待定时任务生成。'}</div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+
     const renderSettingsPage = () => (
       <div className="page-content active">
         {adminPageTitle('系统设置', '站点配置、AI 引擎、管理员账号', <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadSystemSettings()} disabled={adminSystemBusy}>{adminSystemBusy ? '读取中...' : '刷新配置'}</button>)}
@@ -5689,6 +5808,8 @@ function App() {
           return renderPromptsPage();
         case 'content':
           return renderContentPage();
+        case 'maintenance':
+          return renderMaintenancePage();
         case 'logs':
           return renderLogsPage();
         case 'settings':

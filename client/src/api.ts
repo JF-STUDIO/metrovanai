@@ -330,6 +330,41 @@ export interface AdminProjectRepairPayload {
   };
 }
 
+export interface AdminMaintenanceReportSummary {
+  id: string;
+  fileName: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  ok: boolean;
+  failedCount: number;
+  totals: { projects?: number; hdrItems?: number; downloadJobs?: number } | null;
+  alerts: Array<{ code: string; value: number }>;
+  priorityQueue: Array<{
+    projectId: string;
+    projectName: string;
+    priority: 'high' | 'medium' | 'low' | string;
+    score: number;
+    errorCount: number;
+    warningCount: number;
+    rootCauseSummary: string;
+    recommendedActionLabels?: string[];
+  }>;
+  checks: Array<{
+    id: string;
+    ok: boolean;
+    status: number | string | null;
+    latestStatus: string | null;
+    alertCount: number;
+    error: string | null;
+  }>;
+  alert: { sent?: boolean; recipients?: number; reason?: string; error?: string } | null;
+}
+
+export interface AdminMaintenanceReportsPayload {
+  total: number;
+  items: AdminMaintenanceReportSummary[];
+}
+
 export interface AdminOrdersPayload {
   total: number;
   items: PaymentOrderRecord[];
@@ -927,6 +962,11 @@ export async function repairAdminProject(projectId: string, action: AdminProject
     method: 'POST',
     body: JSON.stringify({ action })
   });
+}
+
+export async function fetchAdminMaintenanceReports(limit = 10) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return await jsonRequest<AdminMaintenanceReportsPayload>(`/api/admin/maintenance/reports?${params.toString()}`);
 }
 
 export async function fetchAdminOrders(limit = 120) {

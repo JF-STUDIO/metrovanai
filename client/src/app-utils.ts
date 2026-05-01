@@ -18,7 +18,7 @@ import type {
 
 export type AuthMode = 'signin' | 'signup' | 'reset-request' | 'reset-confirm' | 'verify-email';
 export type AppRoute = 'home' | 'plans' | 'studio' | 'admin';
-export type AdminConsolePage = 'dashboard' | 'users' | 'works' | 'orders' | 'plans' | 'codes' | 'engine' | 'prompts' | 'content' | 'logs' | 'settings';
+export type AdminConsolePage = 'dashboard' | 'users' | 'works' | 'orders' | 'plans' | 'codes' | 'engine' | 'prompts' | 'content' | 'maintenance' | 'logs' | 'settings';
 
 export const IMPORT_FILE_ACCEPT = '.arw,.cr2,.cr3,.crw,.nef,.nrw,.dng,.raf,.rw2,.rwl,.orf,.srw,.3fr,.fff,.iiq,.pef,.erf,.jpg,.jpeg';
 export const IMPORT_FILE_EXTENSIONS = new Set(IMPORT_FILE_ACCEPT.split(','));
@@ -398,6 +398,7 @@ export const ADMIN_CONSOLE_PAGE_LABELS: Record<AdminConsolePage, string> = {
   engine: 'AI 引擎',
   prompts: 'Prompt 模板',
   content: '内容运营',
+  maintenance: '维护报告',
   logs: '操作日志',
   settings: '系统设置'
 };

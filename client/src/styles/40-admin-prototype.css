@@ -1257,6 +1257,11 @@
     grid-template-columns: 1fr;
     align-items: start;
   }
+
+  .maintenance-priority-item {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
 }
 
 @media (max-width: 640px) {
@@ -2847,6 +2852,68 @@
 }
 
 .admin-priority-row em {
+  color: var(--text-mute);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.maintenance-report-list {
+  display: grid;
+  gap: 14px;
+}
+
+.maintenance-report-card {
+  display: grid;
+  gap: 12px;
+}
+
+.maintenance-alert-row,
+.maintenance-check-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.maintenance-alert-row span {
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 196, 87, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 196, 87, 0.08);
+  color: #ffd28a;
+  font-size: 12px;
+}
+
+.maintenance-priority-list {
+  display: grid;
+  gap: 8px;
+}
+
+.maintenance-priority-item {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 0.7fr) minmax(220px, 1.5fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.maintenance-priority-item strong,
+.maintenance-priority-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.maintenance-priority-item small {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.maintenance-priority-item em {
   color: var(--text-mute);
   font-size: 11px;
   font-style: normal;
