@@ -22,6 +22,14 @@ const WORKFLOW_BATCH_FILL_WAIT_MS = Math.max(
   0,
   Number(process.env.METROVAN_WORKFLOW_BATCH_FILL_WAIT_MS ?? 1200)
 );
+const WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS = Math.max(
+  1,
+  Math.min(5, Number(process.env.METROVAN_WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS ?? 3))
+);
+const WORKFLOW_ITEM_AUTO_RETRY_BASE_DELAY_MS = Math.max(
+  500,
+  Number(process.env.METROVAN_WORKFLOW_ITEM_AUTO_RETRY_BASE_DELAY_MS ?? 2500)
+);
 
 type RegenerationCreditReservation = Extract<
   ReturnType<LocalStore['reserveProjectRegenerationCredit']>,
@@ -139,6 +147,49 @@ function createEmptyWorkflowState() {
     completedAt: null,
     errorMessage: null
   };
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTransientProcessingError(message: string) {
+  const normalized = message.toLowerCase();
+  return [
+    'fetch failed',
+    'failed to fetch',
+    'econnreset',
+    'etimedout',
+    'eai_again',
+    'temporary failure',
+    'temporarily',
+    'timeout',
+    'timed out',
+    'socket',
+    'connection reset',
+    'connection aborted',
+    'connection refused',
+    'network is unreachable',
+    'failed to download cloud result',
+    'runpod batch status check failed',
+    'runpod batch job submission failed'
+  ].some((token) => normalized.includes(token));
+}
+
+function toUserFacingProcessingError(message: string) {
+  if (message.startsWith('云端处理网络请求失败') || message.startsWith('源文件缺失') || message.startsWith('云端处理完成但没有返回')) {
+    return message;
+  }
+  if (isTransientProcessingError(message)) {
+    return `云端处理网络请求失败，系统已自动重试仍未成功。原始错误：${message}`;
+  }
+  if (message.toLowerCase().includes('source file is missing') || message.includes('原图不存在')) {
+    return `源文件缺失，无法重新处理。原始错误：${message}`;
+  }
+  if (message.toLowerCase().includes('batch result is missing')) {
+    return `云端处理完成但没有返回这张结果图，系统已尝试恢复。原始错误：${message}`;
+  }
+  return message;
 }
 
 export class ProjectProcessor {
@@ -1372,12 +1423,25 @@ export class ProjectProcessor {
     taskExecution: TaskExecutionRunContext,
     onProgress: (update: WorkflowExecutionProgress) => void
   ): Promise<WorkflowBatchExecutionResult[]> {
-    if (taskExecution.executeWorkflowBatch) {
-      return await taskExecution.executeWorkflowBatch(project, executionItems, onProgress);
-    }
+    const executeSingleWithRetry = async (
+      executionItem: WorkflowBatchExecutionItem,
+      previousError?: string
+    ): Promise<WorkflowBatchExecutionResult> => {
+      let lastError = previousError ?? '';
+      for (let attempt = 1; attempt <= WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS; attempt += 1) {
+        if (attempt > 1) {
+          onProgress({
+            hdrItemId: executionItem.hdrItem.id,
+            monitorState: 'auto-retry',
+            detail: `自动重试 ${executionItem.hdrItem.title} (${attempt}/${WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS})`,
+            remoteProgress: 0,
+            queuePosition: 0,
+            workflowName: 'auto-retry',
+            taskId: executionItem.hdrItem.id
+          });
+          await delay(Math.min(20000, WORKFLOW_ITEM_AUTO_RETRY_BASE_DELAY_MS * (attempt - 1)));
+        }
 
-    return await Promise.all(
-      executionItems.map(async (executionItem) => {
         try {
           const artifact = await taskExecution.executeWorkflowTask(
             project,
@@ -1388,12 +1452,54 @@ export class ProjectProcessor {
           );
           return { hdrItemId: executionItem.hdrItem.id, artifact };
         } catch (error) {
-          return {
-            hdrItemId: executionItem.hdrItem.id,
-            errorMessage: error instanceof Error ? error.message : String(error)
-          };
+          lastError = getErrorMessage(error);
+          if (!isTransientProcessingError(lastError) || attempt >= WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS) {
+            return {
+              hdrItemId: executionItem.hdrItem.id,
+              errorMessage: toUserFacingProcessingError(lastError)
+            };
+          }
         }
-      })
+      }
+
+      return {
+        hdrItemId: executionItem.hdrItem.id,
+        errorMessage: toUserFacingProcessingError(lastError || 'Cloud processing did not return a result.')
+      };
+    };
+
+    if (taskExecution.executeWorkflowBatch) {
+      let batchResults: WorkflowBatchExecutionResult[];
+      try {
+        batchResults = await taskExecution.executeWorkflowBatch(project, executionItems, onProgress);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        if (!isTransientProcessingError(message)) {
+          throw error;
+        }
+        return await Promise.all(
+          executionItems.map(async (executionItem) => await executeSingleWithRetry(executionItem, message))
+        );
+      }
+      const itemsById = new Map(executionItems.map((executionItem) => [executionItem.hdrItem.id, executionItem]));
+      return await Promise.all(
+        batchResults.map(async (result) => {
+          if (result.artifact || !result.errorMessage || !isTransientProcessingError(result.errorMessage)) {
+            return result.artifact
+              ? result
+              : { ...result, errorMessage: toUserFacingProcessingError(result.errorMessage ?? '') };
+          }
+          const executionItem = itemsById.get(result.hdrItemId);
+          if (!executionItem) {
+            return { ...result, errorMessage: toUserFacingProcessingError(result.errorMessage) };
+          }
+          return await executeSingleWithRetry(executionItem, result.errorMessage);
+        })
+      );
+    }
+
+    return await Promise.all(
+      executionItems.map(async (executionItem) => await executeSingleWithRetry(executionItem))
     );
   }
 
@@ -1448,6 +1554,7 @@ export class ProjectProcessor {
   }
 
   private failWorkflowItem(projectId: string, hdrItem: HdrItem, message: string) {
+    const displayMessage = toUserFacingProcessingError(message);
     logServerEvent({
       level: 'warning',
       event: 'project.item.failed',
@@ -1457,20 +1564,20 @@ export class ProjectProcessor {
       details: {
         hdrItemId: hdrItem.id,
         title: hdrItem.title,
-        message
+        message: displayMessage
       }
     });
     this.store.setHdrItemState(projectId, hdrItem.id, (entry) => ({
       ...entry,
       status: 'error',
       statusText: createProcessingText('error'),
-      errorMessage: message,
+      errorMessage: displayMessage,
       workflow: {
         ...createEmptyWorkflowState(),
         ...(entry.workflow ?? {}),
         stage: 'failed',
         updatedAt: new Date().toISOString(),
-        errorMessage: message
+        errorMessage: displayMessage
       }
     }));
     this.store.setJobState(projectId, (job) => ({
@@ -1480,7 +1587,7 @@ export class ProjectProcessor {
         failed: job.workflowRealtime.failed + 1,
         active: Math.max(0, job.workflowRealtime.active - 1),
         monitorState: 'error',
-        detail: message
+        detail: displayMessage
       }
     }));
   }

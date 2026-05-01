@@ -345,9 +345,12 @@ function isTransientCloudTransferError(message: string) {
     'connection reset',
     'connection aborted',
     'connection refused',
+    'fetch failed',
     'network is unreachable',
+    'socket',
     'timed out',
     'timeout',
+    'temporarily',
     'failed to download cloud result'
   ].some((token) => lower.includes(token));
 }

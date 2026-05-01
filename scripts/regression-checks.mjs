@@ -331,6 +331,18 @@ assertIncludes(
 );
 
 assertIncludes(
+  'server/src/processor.ts',
+  'WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS',
+  'Transient cloud processing failures must be retried automatically before marking a photo failed.'
+);
+
+assertIncludes(
+  'server/src/processor.ts',
+  '云端处理网络请求失败，系统已自动重试仍未成功',
+  'Final processing errors should explain when automatic retries were exhausted.'
+);
+
+assertIncludes(
   'server/src/routes/admin.ts',
   "action: 'project.repair.regenerate_download'",
   'Admin download regeneration repairs must be audited.'
