@@ -4547,16 +4547,19 @@ function App() {
     const paidOrders = billingOrders.filter((order) => order.status === 'paid' || order.status === 'refunded');
     return (
       <>
-        <main className="billing-page app">
-          <header className="billing-page-header">
-            <button className="brand" type="button" onClick={() => navigateToRoute('studio')}>
-              <div className="brand-mark">M</div>
-              <div className="brand-text">
-                <strong>Metrovan AI</strong>
-                <small>{copy.billingTitle}</small>
-              </div>
+        <main className="billing-page studio-shell">
+          <div className="ambient-layer studio-ambient" />
+          <header className="studio-header billing-page-header">
+            <button className="brand-button" type="button" onClick={() => navigateToRoute('studio')}>
+              <span className="studio-brand-mark-shell" aria-hidden="true">
+                <img className="studio-brand-mark" src={logoMark} alt="Metrovan AI" decoding="async" />
+              </span>
+              <span className="brand-copy">
+                <strong>{copy.studioLabel}</strong>
+                <em>{copy.billingTitle}</em>
+              </span>
             </button>
-            <div className="billing-page-actions">
+            <div className="header-actions billing-page-actions">
               <button className="ghost-button" type="button" onClick={() => navigateToRoute('studio')}>
                 {locale === 'en' ? 'Back to studio' : '返回工作台'}
               </button>
@@ -4568,29 +4571,30 @@ function App() {
 
           {message ? <div className="global-message">{message}</div> : null}
 
-          <section className="billing-page-hero">
-            <div>
-              <span className="eyebrow">{locale === 'en' ? 'Credits & payments' : '积分和付款'}</span>
-              <h1>{copy.billingTitle}</h1>
-              <p>{copy.billingHint}</p>
+          <section className="workspace billing-page-workspace">
+            <div className="billing-page-hero">
+              <div>
+                <span className="eyebrow">{locale === 'en' ? 'Credits & payments' : '积分和付款'}</span>
+                <h1>{copy.billingTitle}</h1>
+                <p>{copy.billingHint}</p>
+              </div>
+              <div className="billing-summary-grid">
+                <article className="billing-stat-card">
+                  <span>{copy.billingCurrentBalance}</span>
+                  <strong>{billingSummary?.availablePoints ?? 0} pts</strong>
+                </article>
+                <article className="billing-stat-card">
+                  <span>{copy.billingTopUpTotal}</span>
+                  <strong>{formatUsd(billingSummary?.totalTopUpUsd ?? 0, locale)}</strong>
+                </article>
+                <article className="billing-stat-card">
+                  <span>{copy.billingChargedTotal}</span>
+                  <strong>{billingSummary?.totalChargedPoints ?? 0} pts</strong>
+                </article>
+              </div>
             </div>
-            <div className="billing-summary-grid">
-              <article className="billing-stat-card">
-                <span>{copy.billingCurrentBalance}</span>
-                <strong>{billingSummary?.availablePoints ?? 0} pts</strong>
-              </article>
-              <article className="billing-stat-card">
-                <span>{copy.billingTopUpTotal}</span>
-                <strong>{formatUsd(billingSummary?.totalTopUpUsd ?? 0, locale)}</strong>
-              </article>
-              <article className="billing-stat-card">
-                <span>{copy.billingChargedTotal}</span>
-                <strong>{billingSummary?.totalChargedPoints ?? 0} pts</strong>
-              </article>
-            </div>
-          </section>
 
-          <section className="billing-page-grid">
+            <div className="billing-page-grid">
             <article className="billing-section">
               <div className="panel-head compact">
                 <div>
@@ -4711,7 +4715,7 @@ function App() {
               )}
             </article>
 
-            <article className="billing-section">
+            <article className="billing-section billing-recharge-section">
               <div className="panel-head compact">
                 <div>
                   <strong>{locale === 'en' ? 'Recharge records' : '充值记录'}</strong>
@@ -4744,6 +4748,7 @@ function App() {
                 </div>
               )}
             </article>
+            </div>
           </section>
         </main>
         {renderBillingRechargeLayer()}
