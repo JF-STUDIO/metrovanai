@@ -228,6 +228,18 @@ assertIncludes(
   'CSRF retry must only happen once per request.'
 );
 
+assertIncludes(
+  'client/src/App.tsx',
+  "feature.enabled ? '前台显示' : '前台隐藏'",
+  'Admin feature cards must clearly show whether a saved card is visible on the frontend.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '关闭时保存成功也不会在前台显示',
+  'Admin feature enable checkbox must explain that disabled cards are hidden from the frontend.'
+);
+
 for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',

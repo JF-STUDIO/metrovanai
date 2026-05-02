@@ -2730,8 +2730,9 @@ function App() {
             }
           : current
       );
+      const visibleFeatureCount = response.settings.studioFeatures.filter((feature) => feature.enabled).length;
       setAdminMessage(
-        `已更新：Runpod 每批 ${response.settings.runpodHdrBatchSize} 组 HDR，RunningHub 并发 ${response.settings.runningHubMaxInFlight} 张。`
+        `已保存：前台显示 ${visibleFeatureCount} 张功能卡片，隐藏 ${response.settings.studioFeatures.length - visibleFeatureCount} 张。`
       );
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '系统设置保存失败。', locale));
@@ -6368,6 +6369,7 @@ function App() {
               >
                 <summary>
                   <span className={`tag ${planToneClass(index)}`}>{feature.status}</span>
+                  <span className={feature.enabled ? 'tag tag-green' : 'tag-red tag'}>{feature.enabled ? '前台显示' : '前台隐藏'}</span>
                   <strong>{feature.titleZh}</strong>
                   <small>Workflow: {workflowDisplay.workflowId || '未配置'} · 输入 {workflowDisplay.inputNodeId || '—'} · 输出 {workflowDisplay.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
                   <div className="feature-admin-order-actions" onClick={(event) => event.preventDefault()}>
@@ -6418,7 +6420,7 @@ function App() {
                       checked={feature.enabled}
                       onChange={(event) => updateAdminFeatureDraft(feature.id, { enabled: event.target.checked })}
                     />
-                    <span>前台启用</span>
+                    <span>前台启用（关闭时保存成功也不会在前台显示）</span>
                   </label>
                   <input value={feature.id} onChange={(event) => updateAdminFeatureDraft(feature.id, { id: event.target.value })} placeholder="功能 ID（英文 / 数字）" />
                   <select value={feature.category} onChange={(event) => updateAdminFeatureDraft(feature.id, { category: event.target.value as StudioFeatureConfig['category'] })}>
