@@ -2,6 +2,7 @@ import type {
   BillingEntry,
   BillingPackage,
   BillingSummary,
+  AdminFailedPhotoRow,
   PaymentOrderRecord,
   PaymentOrderRefundPreview,
   ProjectRecord
@@ -302,6 +303,16 @@ export interface AdminProjectsPayload {
   pageSize: number;
   pageCount: number;
   items: ProjectRecord[];
+}
+
+export interface AdminFailedPhotosPayload {
+  total: number;
+  totalAll: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  causeCounts: Record<string, { title: string; count: number }>;
+  items: AdminFailedPhotoRow[];
 }
 
 export interface AdminProjectRecoverySummary {
@@ -958,6 +969,15 @@ export async function fetchAdminProjects(query: { page?: number; pageSize?: numb
 
 export async function fetchAdminProjectDetail(projectId: string) {
   return await jsonRequest<{ project: ProjectRecord }>(`/api/admin/projects/${encodeURIComponent(projectId)}`);
+}
+
+export async function fetchAdminFailedPhotos(query: { page?: number; pageSize?: number; search?: string; cause?: string } = {}) {
+  const params = new URLSearchParams();
+  if (query.page) params.set('page', String(query.page));
+  if (query.pageSize) params.set('pageSize', String(query.pageSize));
+  if (query.search?.trim()) params.set('search', query.search.trim());
+  if (query.cause && query.cause !== 'all') params.set('cause', query.cause);
+  return await jsonRequest<AdminFailedPhotosPayload>(`/api/admin/failed-photos?${params.toString()}`);
 }
 
 export async function runAdminProjectDeepHealth(projectId: string) {

@@ -51,6 +51,7 @@ import {
   adjustAdminUserBilling,
   fetchAdminActivationCodes,
   fetchAdminAuditLogs,
+  fetchAdminFailedPhotos,
   fetchAdminOpsHealth,
   fetchAdminOrderRefundPreview,
   fetchAdminOrders,
@@ -117,6 +118,7 @@ import type {
   BillingPackage,
   BillingSummary,
   ColorMode,
+  AdminFailedPhotoRow,
   HdrItem,
   PaymentOrderRecord,
   PaymentOrderRefundPreview,
@@ -227,6 +229,7 @@ import {
 
 const STRIPE_RETURN_PROJECT_STORAGE_KEY = 'metrovanai_stripe_return_project_id';
 const ADMIN_PROJECT_PAGE_SIZE = 200;
+const ADMIN_FAILED_PHOTOS_PAGE_SIZE = 50;
 
 function isAdminBillingAdjustmentEntry(entry: BillingEntry) {
   return entry.amountUsd === 0 && !entry.projectId && !entry.projectName && entry.note.startsWith('Admin adjustment:');
@@ -369,6 +372,14 @@ function App() {
   const [adminWorksSearch, setAdminWorksSearch] = useState('');
   const [adminFailuresSearch, setAdminFailuresSearch] = useState('');
   const [adminFailureCauseFilter, setAdminFailureCauseFilter] = useState('all');
+  const [adminFailedPhotos, setAdminFailedPhotos] = useState<AdminFailedPhotoRow[]>([]);
+  const [adminFailedPhotosLoaded, setAdminFailedPhotosLoaded] = useState(false);
+  const [adminFailedPhotosBusy, setAdminFailedPhotosBusy] = useState(false);
+  const [adminFailedPhotosTotal, setAdminFailedPhotosTotal] = useState(0);
+  const [adminFailedPhotosTotalAll, setAdminFailedPhotosTotalAll] = useState(0);
+  const [adminFailedPhotosPage, setAdminFailedPhotosPage] = useState(1);
+  const [adminFailedPhotosPageCount, setAdminFailedPhotosPageCount] = useState(1);
+  const [adminFailedPhotosCauseCounts, setAdminFailedPhotosCauseCounts] = useState<Record<string, { title: string; count: number }>>({});
   const [adminOrdersSearch, setAdminOrdersSearch] = useState('');
   const [adminOrdersStatusFilter, setAdminOrdersStatusFilter] = useState<'all' | 'paid' | 'checkout_created' | 'failed' | 'refunded'>('all');
   const [adminLogsSearch, setAdminLogsSearch] = useState('');
@@ -738,41 +749,14 @@ function App() {
         .slice(0, 5),
     [adminProjects]
   );
-  const adminFailedPhotoRows = useMemo(
-    () =>
-      adminProjects.flatMap((project) =>
-        (project.adminHealth?.failedItemDiagnostics ?? []).map((diagnostic) => ({
-          project,
-          diagnostic
-        }))
-      ),
-    [adminProjects]
-  );
+  const adminFailedPhotoRows = adminFailedPhotos;
   const adminFailureCauseOptions = useMemo(
     () =>
-      Array.from(
-        new Map(adminFailedPhotoRows.map(({ diagnostic }) => [diagnostic.causeCode, diagnostic.causeTitle])).entries()
-      ).sort((left, right) => left[1].localeCompare(right[1], 'zh-CN')),
-    [adminFailedPhotoRows]
+      Object.entries(adminFailedPhotosCauseCounts)
+        .map(([code, value]) => [code, value.title] as const)
+        .sort((left, right) => left[1].localeCompare(right[1], 'zh-CN')),
+    [adminFailedPhotosCauseCounts]
   );
-  const adminFilteredFailedPhotoRows = useMemo(() => {
-    const normalizedSearch = adminFailuresSearch.trim().toLowerCase();
-    return adminFailedPhotoRows.filter(({ project, diagnostic }) => {
-      if (adminFailureCauseFilter !== 'all' && diagnostic.causeCode !== adminFailureCauseFilter) {
-        return false;
-      }
-      if (!normalizedSearch) {
-        return true;
-      }
-      return (
-        project.name.toLowerCase().includes(normalizedSearch) ||
-        (project.userDisplayName || project.userKey || '').toLowerCase().includes(normalizedSearch) ||
-        diagnostic.fileName.toLowerCase().includes(normalizedSearch) ||
-        diagnostic.causeTitle.toLowerCase().includes(normalizedSearch) ||
-        (diagnostic.errorMessage ?? '').toLowerCase().includes(normalizedSearch)
-      );
-    });
-  }, [adminFailedPhotoRows, adminFailureCauseFilter, adminFailuresSearch]);
   const hasAdminSession = session?.role === 'admin' && session.accountStatus === 'active';
   const adminUserQuery = useMemo<AdminUserListQuery>(
     () => ({
@@ -989,6 +973,48 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [activeRoute, adminProjectsLoaded, hasAdminSession, locale]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || adminConsolePage !== 'failures' || !hasAdminSession || adminFailedPhotosLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setAdminFailedPhotosBusy(true);
+      fetchAdminFailedPhotos({
+        page: 1,
+        pageSize: ADMIN_FAILED_PHOTOS_PAGE_SIZE,
+        search: adminFailuresSearch,
+        cause: adminFailureCauseFilter
+      })
+        .then((response) => {
+          if (cancelled) return;
+          setAdminFailedPhotos(response.items);
+          setAdminFailedPhotosTotal(response.total);
+          setAdminFailedPhotosTotalAll(response.totalAll);
+          setAdminFailedPhotosPage(response.page);
+          setAdminFailedPhotosPageCount(response.pageCount);
+          setAdminFailedPhotosCauseCounts(response.causeCounts);
+          setAdminFailedPhotosLoaded(true);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setAdminFailedPhotosLoaded(true);
+          setAdminMessage(getUserFacingErrorMessage(error, '失败照片读取失败。', locale));
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setAdminFailedPhotosBusy(false);
+          }
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeRoute, adminConsolePage, adminFailedPhotosLoaded, adminFailureCauseFilter, adminFailuresSearch, hasAdminSession, locale]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || !hasAdminSession || adminOrdersLoaded) {
@@ -1997,6 +2023,41 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '继续载入项目失败。', locale));
     } finally {
       setAdminProjectsBusy(false);
+    }
+  }
+
+  async function handleAdminLoadFailedPhotos(page = 1) {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminFailedPhotosBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminFailedPhotos({
+        page,
+        pageSize: ADMIN_FAILED_PHOTOS_PAGE_SIZE,
+        search: adminFailuresSearch,
+        cause: adminFailureCauseFilter
+      });
+      setAdminFailedPhotos(response.items);
+      setAdminFailedPhotosTotal(response.total);
+      setAdminFailedPhotosTotalAll(response.totalAll);
+      setAdminFailedPhotosPage(response.page);
+      setAdminFailedPhotosPageCount(response.pageCount);
+      setAdminFailedPhotosCauseCounts(response.causeCounts);
+      setAdminFailedPhotosLoaded(true);
+      setAdminMessage(
+        response.total
+          ? `已载入失败照片 ${response.items.length} / ${response.total} 张。`
+          : '当前筛选条件下没有失败照片。'
+      );
+    } catch (error) {
+      setAdminFailedPhotosLoaded(true);
+      setAdminMessage(getUserFacingErrorMessage(error, '失败照片读取失败。', locale));
+    } finally {
+      setAdminFailedPhotosBusy(false);
     }
   }
 
@@ -5397,67 +5458,69 @@ function App() {
     };
 
     const renderFailuresPage = () => {
-      const causeCounts = adminFailedPhotoRows.reduce<Record<string, number>>((counts, { diagnostic }) => {
-        counts[diagnostic.causeCode] = (counts[diagnostic.causeCode] ?? 0) + 1;
-        return counts;
-      }, {});
-      const runpodCount = adminFailedPhotoRows.filter(({ diagnostic }) => diagnostic.provider === 'runpod' || diagnostic.stage === 'runpod').length;
-      const runningHubCount = adminFailedPhotoRows.filter(({ diagnostic }) => diagnostic.provider === 'runninghub' || diagnostic.stage === 'runninghub').length;
-      const sourceMissingCount = causeCounts['source-missing'] ?? 0;
+      const runpodCount = adminFailedPhotoRows.filter((row) => row.diagnostic.provider === 'runpod' || row.diagnostic.stage === 'runpod').length;
+      const runningHubCount = adminFailedPhotoRows.filter((row) => row.diagnostic.provider === 'runninghub' || row.diagnostic.stage === 'runninghub').length;
+      const sourceMissingCount = adminFailedPhotosCauseCounts['source-missing']?.count ?? 0;
 
       return (
         <div className="page-content active">
           {adminPageTitle(
             '失败照片',
             <>
-              当前载入项目中的失败照片 · <span className="mono danger-text">{adminFailedPhotoRows.length}</span> 张
-              {adminProjectsPage < adminProjectsPageCount ? <> · 还有项目未载入</> : null}
+              全站失败照片 · <span className="mono danger-text">{adminFailedPhotosTotal}</span> 张
+              {adminFailedPhotosTotalAll !== adminFailedPhotosTotal ? <> · 全部异常 {adminFailedPhotosTotalAll}</> : null}
             </>,
             <>
-              <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadProjects()} disabled={adminProjectsBusy}>
-                {adminProjectsBusy ? '刷新中...' : '刷新项目'}
+              <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadFailedPhotos(1)} disabled={adminFailedPhotosBusy}>
+                {adminFailedPhotosBusy ? '刷新中...' : '刷新失败照片'}
               </button>
-              {adminProjectsPage < adminProjectsPageCount ? (
-                <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadMoreProjects()} disabled={adminProjectsBusy}>
-                  继续载入
-                </button>
-              ) : null}
             </>
           )}
           <div className="kpi-grid">
-            {kpi('失败照片', <>{adminFailedPhotoRows.length}<span className="unit">张</span></>, <><span>当前载入</span><span className="vs">全部原因</span></>, adminFailedPhotoRows.length ? 'down' : 'up')}
+            {kpi('失败照片', <>{adminFailedPhotosTotal}<span className="unit">张</span></>, <><span>服务端分页</span><span className="vs">当前筛选</span></>, adminFailedPhotosTotal ? 'down' : 'up')}
             {kpi('R2 原片缺失', <>{sourceMissingCount}<span className="unit">张</span></>, <><span>需重传/巡检</span><span className="vs">源文件</span></>, sourceMissingCount ? 'down' : 'up')}
-            {kpi('Runpod', <>{runpodCount}<span className="unit">张</span></>, <><span>worker / 下载原片</span><span className="vs">处理节点</span></>, runpodCount ? 'down' : 'up')}
-            {kpi('RunningHub', <>{runningHubCount}<span className="unit">张</span></>, <><span>工作流 / 输出</span><span className="vs">云端任务</span></>, runningHubCount ? 'down' : 'up')}
+            {kpi('Runpod', <>{runpodCount}<span className="unit">张</span></>, <><span>本页</span><span className="vs">处理节点</span></>, runpodCount ? 'down' : 'up')}
+            {kpi('RunningHub', <>{runningHubCount}<span className="unit">张</span></>, <><span>本页</span><span className="vs">云端任务</span></>, runningHubCount ? 'down' : 'up')}
           </div>
           <div className="card admin-failure-board">
             <div className="toolbar">
               <input
                 value={adminFailuresSearch}
-                onChange={(event) => setAdminFailuresSearch(event.target.value)}
+                onChange={(event) => {
+                  setAdminFailuresSearch(event.target.value);
+                  setAdminFailedPhotosLoaded(false);
+                }}
                 placeholder="搜索 项目 / 用户 / 文件 / 错误"
               />
-              <select value={adminFailureCauseFilter} onChange={(event) => setAdminFailureCauseFilter(event.target.value)}>
+              <select
+                value={adminFailureCauseFilter}
+                onChange={(event) => {
+                  setAdminFailureCauseFilter(event.target.value);
+                  setAdminFailedPhotosLoaded(false);
+                }}
+              >
                 <option value="all">全部原因</option>
                 {adminFailureCauseOptions.map(([code, title]) => (
                   <option value={code} key={code}>
-                    {title} ({causeCounts[code] ?? 0})
+                    {title} ({adminFailedPhotosCauseCounts[code]?.count ?? 0})
                   </option>
                 ))}
               </select>
             </div>
             <div className="admin-list-meta">
-              当前显示 {adminFilteredFailedPhotoRows.length.toLocaleString()} 张
+              当前显示第 {adminFailedPhotosPage} / {adminFailedPhotosPageCount} 页 · 本页 {adminFailedPhotoRows.length.toLocaleString()} 张
               {adminFailureCauseFilter !== 'all' ? ` · ${adminFailureCauseOptions.find(([code]) => code === adminFailureCauseFilter)?.[1] ?? adminFailureCauseFilter}` : ''}
             </div>
-            {adminFilteredFailedPhotoRows.length ? (
+            {adminFailedPhotoRows.length ? (
               <div className="admin-failure-table">
-                {adminFilteredFailedPhotoRows.map(({ project, diagnostic }) => (
-                  <article className="admin-failure-table-row" key={`${project.id}-${diagnostic.id}`}>
+                {adminFailedPhotoRows.map((row) => {
+                  const { diagnostic } = row;
+                  return (
+                  <article className="admin-failure-table-row" key={row.id}>
                     <div className="admin-failure-main">
                       <span className="tag tag-red">{diagnostic.causeTitle}</span>
                       <strong>{diagnostic.fileName}</strong>
-                      <small>{project.name} · {project.userDisplayName || project.userKey}</small>
+                      <small>{row.projectName} · {row.userDisplayName || row.userKey}</small>
                     </div>
                     <p>{diagnostic.causeDetail}</p>
                     <div className="admin-failure-meta">
@@ -5475,7 +5538,7 @@ function App() {
                         type="button"
                         onClick={() => {
                           setAdminConsolePage('works');
-                          void handleAdminSelectProject(project.id);
+                          void handleAdminSelectProject(row.projectId);
                         }}
                       >
                         打开项目处理
@@ -5483,13 +5546,33 @@ function App() {
                       <span className="admin-failure-next-action">{getAdminRepairActionLabel(diagnostic.recommendedAction)}</span>
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="admin-health-ok">
-                {adminFailedPhotoRows.length ? '没有匹配当前筛选条件的失败照片。' : adminProjectsBusy ? '正在读取项目失败诊断...' : '当前载入项目没有失败照片。'}
+                {adminFailedPhotosBusy ? '正在读取全站失败照片...' : adminFailedPhotosLoaded ? '当前筛选条件下没有失败照片。' : '等待读取失败照片。'}
               </div>
             )}
+            <div className="pagination">
+              <button
+                className="page-btn"
+                type="button"
+                onClick={() => void handleAdminLoadFailedPhotos(Math.max(1, adminFailedPhotosPage - 1))}
+                disabled={adminFailedPhotosBusy || adminFailedPhotosPage <= 1}
+              >
+                上一页
+              </button>
+              <span>第 {adminFailedPhotosPage} / {adminFailedPhotosPageCount} 页</span>
+              <button
+                className="page-btn"
+                type="button"
+                onClick={() => void handleAdminLoadFailedPhotos(Math.min(adminFailedPhotosPageCount, adminFailedPhotosPage + 1))}
+                disabled={adminFailedPhotosBusy || adminFailedPhotosPage >= adminFailedPhotosPageCount}
+              >
+                下一页
+              </button>
+            </div>
           </div>
         </div>
       );

@@ -157,6 +157,91 @@ app.get('/api/admin/projects', (req, res) => {
   });
 });
 
+app.get('/api/admin/failed-photos', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const page = Math.max(1, Math.round(Number(req.query.page ?? 1)));
+  const pageSize = Math.max(1, Math.min(200, Math.round(Number(req.query.pageSize ?? 50))));
+  const search = String(req.query.search ?? '').trim().toLowerCase();
+  const cause = String(req.query.cause ?? 'all').trim();
+  const projects = listAllProjectsForAdmin();
+  type FailedPhotoRow = {
+    id: string;
+    projectId: string;
+    projectName: string;
+    projectStatus: ProjectRecord['status'];
+    projectUpdatedAt: string;
+    userKey: string;
+    userDisplayName: string;
+    photoCount: number;
+    resultCount: number;
+    hdrCount: number;
+    diagnostic: ReturnType<typeof buildFailedItemDiagnostic>;
+  };
+  const rows: FailedPhotoRow[] = projects.flatMap((project: ProjectRecord) => {
+    const health = buildAdminProjectHealth(project);
+    return (health.failedItemDiagnostics ?? []).map((diagnostic: ReturnType<typeof buildFailedItemDiagnostic>) => ({
+      id: `${project.id}:${diagnostic.id}`,
+      projectId: project.id,
+      projectName: project.name,
+      projectStatus: project.status,
+      projectUpdatedAt: project.updatedAt,
+      userKey: project.userKey,
+      userDisplayName: project.userDisplayName,
+      photoCount: project.photoCount,
+      resultCount: project.resultAssets.length,
+      hdrCount: project.hdrItems.length,
+      diagnostic
+    }));
+  });
+
+  const searchMatchedRows = search
+    ? rows.filter((row) => {
+        const taskId =
+          row.diagnostic.runpodJobId || row.diagnostic.runpodBatchJobId || row.diagnostic.runningHubTaskId || '';
+        return [
+          row.projectName,
+          row.projectStatus,
+          row.userKey,
+          row.userDisplayName,
+          row.diagnostic.fileName,
+          row.diagnostic.causeTitle,
+          row.diagnostic.causeDetail,
+          row.diagnostic.errorMessage ?? '',
+          row.diagnostic.provider ?? '',
+          row.diagnostic.stage ?? '',
+          taskId
+        ].some((value) => String(value ?? '').toLowerCase().includes(search));
+      })
+    : rows;
+  const causeCounts = searchMatchedRows.reduce<Record<string, { title: string; count: number }>>((counts, row) => {
+    const code = row.diagnostic.causeCode;
+    counts[code] = {
+      title: row.diagnostic.causeTitle,
+      count: (counts[code]?.count ?? 0) + 1
+    };
+    return counts;
+  }, {});
+  const filteredRows =
+    cause && cause !== 'all'
+      ? searchMatchedRows.filter((row) => row.diagnostic.causeCode === cause)
+      : searchMatchedRows;
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const offset = (page - 1) * pageSize;
+
+  res.json({
+    total: filteredRows.length,
+    totalAll: rows.length,
+    page,
+    pageSize,
+    pageCount,
+    causeCounts,
+    items: filteredRows.slice(offset, offset + pageSize)
+  });
+});
+
 app.get('/api/admin/projects/:id', (req, res) => {
   if (!requireAdminApiAccess(req, res)) {
     return;

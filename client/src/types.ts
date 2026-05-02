@@ -168,6 +168,22 @@ export interface ProjectAdminDeepHealth {
   }>;
 }
 
+export type AdminFailedPhotoDiagnostic = NonNullable<NonNullable<ProjectAdminHealth['failedItemDiagnostics']>[number]>;
+
+export interface AdminFailedPhotoRow {
+  id: string;
+  projectId: string;
+  projectName: string;
+  projectStatus: ProjectStatus;
+  projectUpdatedAt: string;
+  userKey: string;
+  userDisplayName: string;
+  photoCount: number;
+  resultCount: number;
+  hdrCount: number;
+  diagnostic: AdminFailedPhotoDiagnostic;
+}
+
 export interface ProjectJobState {
   id: string;
   status: 'idle' | 'pending' | 'processing' | 'completed' | 'failed';
