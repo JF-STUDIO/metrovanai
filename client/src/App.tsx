@@ -6422,7 +6422,7 @@ function App() {
         </div>
         <div className="card">
           <div className="admin-health-ok">
-            实收估算按用户已充值金额 / 到账积分的平均点价计算；扣点标价按 $0.25/pt 显示。没有充值记录时按标价兜底。
+            实收估算按用户已充值金额 / 非项目到账积分的平均点价计算，后台赠送和重修退回会摊低点价；扣点标价按 $0.25/pt 显示。
           </div>
           <div className="admin-health-ok">
             新任务会记录每次 RunningHub 进入次数；历史项目若早期没有保存尝试次数，会按当前可见 task 计算最低成本。

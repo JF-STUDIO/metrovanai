@@ -273,20 +273,14 @@ app.get('/api/admin/project-costs', (req, res) => {
     if (typeof cached === 'number') {
       return cached;
     }
-    const entries = getUserBillingEntries(userKey).filter((entry) => !entry.projectId && entry.amountUsd > 0);
-    const paid = entries.reduce(
-      (sum, entry) => {
-        const sign = entry.type === 'credit' ? 1 : -1;
-        return {
-          points: sum.points + sign * entry.points,
-          amountUsd: sum.amountUsd + sign * entry.amountUsd
-        };
-      },
-      { points: 0, amountUsd: 0 }
+    const grantedEntries = getUserBillingEntries(userKey).filter(
+      (entry) => entry.type === 'credit' && !entry.projectId
     );
+    const totalPaidUsd = grantedEntries.reduce((sum, entry) => sum + entry.amountUsd, 0);
+    const netGrantedPoints = grantedEntries.reduce((sum, entry) => sum + entry.points, 0);
     const pointPrice =
-      paid.points > 0 && paid.amountUsd > 0
-        ? Number((paid.amountUsd / paid.points).toFixed(4))
+      netGrantedPoints > 0 && totalPaidUsd > 0
+        ? Number((totalPaidUsd / netGrantedPoints).toFixed(4))
         : POINT_PRICE_USD;
     userPointValueCache.set(userKey, pointPrice);
     return pointPrice;
