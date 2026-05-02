@@ -62,8 +62,51 @@
 }
 
 .landing-shell .restored-hero .hero-copy p {
+  width: 100%;
+  max-width: 46rem;
+  margin-inline: auto;
   font-weight: 400;
   letter-spacing: 0;
+  text-align: center;
+}
+
+.landing-shell .restored-hero .hero-copy,
+.landing-shell .restored-hero .hero-copy h1,
+.landing-shell .restored-badge,
+.landing-shell .hero-trust-row,
+.landing-shell .hero-actions.centered {
+  margin-inline: auto;
+}
+
+.landing-shell .restored-hero .hero-copy {
+  width: min(100%, 1060px);
+  justify-self: center;
+  align-items: center;
+  text-align: center;
+}
+
+.landing-shell .restored-hero .hero-copy h1 {
+  width: 100%;
+}
+
+.landing-shell .restored-badge,
+.landing-shell .hero-trust-row,
+.landing-shell .hero-actions.centered {
+  justify-content: center;
+}
+
+.landing-shell .hero-trust-row {
+  width: 100%;
+  max-width: 46rem;
+}
+
+.landing-shell .hero-trust-row span {
+  justify-content: center;
+}
+
+.landing-shell .hero-actions.centered {
+  width: 100%;
+  text-align: center;
 }
 
 .recharge-card {
