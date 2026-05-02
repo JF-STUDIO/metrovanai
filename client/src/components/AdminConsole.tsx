@@ -56,6 +56,13 @@ function adminNavIcon(page: AdminConsolePage) {
         <path d="m21 15-5-5L5 21" />
       </>
     ),
+    failures: (
+      <>
+        <path d="M12 3 2 20h20L12 3Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </>
+    ),
     orders: (
       <>
         <path d="M3 7h18l-2 12H5z" />
@@ -166,6 +173,7 @@ export function AdminConsole({
           <div className="nav-section-label">业务</div>
           {targetNavButton('users', '用户管理')}
           {targetNavButton('works', '修图作品', pendingProjectCount ? String(pendingProjectCount) : undefined)}
+          {targetNavButton('failures', '失败照片')}
           {targetNavButton('orders', '订单管理')}
           {targetNavButton('plans', '套餐配置')}
           {targetNavButton('codes', '兑换码')}

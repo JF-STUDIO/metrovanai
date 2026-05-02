@@ -18,7 +18,7 @@ import type {
 
 export type AuthMode = 'signin' | 'signup' | 'reset-request' | 'reset-confirm' | 'verify-email';
 export type AppRoute = 'home' | 'plans' | 'studio' | 'billing' | 'admin';
-export type AdminConsolePage = 'dashboard' | 'users' | 'works' | 'orders' | 'plans' | 'codes' | 'engine' | 'prompts' | 'content' | 'maintenance' | 'logs' | 'settings';
+export type AdminConsolePage = 'dashboard' | 'users' | 'works' | 'failures' | 'orders' | 'plans' | 'codes' | 'engine' | 'prompts' | 'content' | 'maintenance' | 'logs' | 'settings';
 
 export const IMPORT_FILE_ACCEPT = '.arw,.cr2,.cr3,.crw,.nef,.nrw,.dng,.raf,.rw2,.rwl,.orf,.srw,.3fr,.fff,.iiq,.pef,.erf,.jpg,.jpeg';
 export const IMPORT_FILE_EXTENSIONS = new Set(IMPORT_FILE_ACCEPT.split(','));
@@ -392,6 +392,7 @@ export const ADMIN_CONSOLE_PAGE_LABELS: Record<AdminConsolePage, string> = {
   dashboard: '仪表盘',
   users: '用户管理',
   works: '修图作品',
+  failures: '失败照片',
   orders: '订单管理',
   plans: '套餐配置',
   codes: '兑换码',
