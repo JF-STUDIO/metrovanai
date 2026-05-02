@@ -2663,7 +2663,7 @@ function App() {
 
   function getAdminFeatureWorkflowDisplay(feature: StudioFeatureConfig) {
     const items = adminWorkflowSummary?.items ?? [];
-    const configuredWorkflowId = feature.workflowId.trim();
+    const configuredWorkflowId = String(feature.workflowId ?? '').trim();
     const matched = configuredWorkflowId ? items.find((item) => item.workflowId === configuredWorkflowId) ?? null : null;
     const activeName = adminWorkflowSummary?.active?.trim().toLowerCase();
     const active = activeName ? items.find((item) => item.name.trim().toLowerCase() === activeName) ?? null : null;
@@ -2673,8 +2673,8 @@ function App() {
 
     return {
       workflowId: configuredWorkflowId || fallback?.workflowId || '',
-      inputNodeId: feature.inputNodeId.trim() || fallback?.inputNodeIds?.join(', ') || '',
-      outputNodeId: feature.outputNodeId.trim() || fallback?.outputNodeIds?.join(', ') || ''
+      inputNodeId: String(feature.inputNodeId ?? '').trim() || fallback?.inputNodeIds?.join(', ') || '',
+      outputNodeId: String(feature.outputNodeId ?? '').trim() || fallback?.outputNodeIds?.join(', ') || ''
     };
   }
 

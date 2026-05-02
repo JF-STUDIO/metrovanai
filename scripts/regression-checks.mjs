@@ -186,6 +186,18 @@ assertIncludes(
   'Admin verified-user filter must use the backend verified value.'
 );
 
+assertIncludes(
+  'client/src/studio-features.ts',
+  'normalizeStudioFeatureDraft(feature)',
+  'Studio feature cards must be normalized before admin preview/rendering.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  "String(feature.workflowId ?? '').trim()",
+  'Admin feature workflow display must tolerate legacy cards with missing workflow ids.'
+);
+
 for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',
