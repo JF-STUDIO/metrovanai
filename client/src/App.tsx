@@ -347,6 +347,7 @@ function App() {
     availablePoints: 0,
     runningHubRuns: 0,
     runningHubCostUsd: 0,
+    remainingCreditCostUsd: 0,
     profitUsd: 0
   });
   const [adminBillingUserTotal, setAdminBillingUserTotal] = useState(0);
@@ -3238,7 +3239,7 @@ function App() {
     setAdminMessage('');
     try {
       const response = await fetchAdminBillingUsers({ search: adminBillingLedgerSearch });
-      const header = ['Email', '姓名', '充值USD', '获得积分', '使用积分', '剩余积分', 'RunningHub次数', 'RunningHub成本USD', '利润USD', '项目数', '结果数'].join(',');
+      const header = ['Email', '姓名', '充值USD', '获得积分', '使用积分', '剩余积分', 'RunningHub次数', 'RunningHub成本USD', '剩余积分成本USD', '利润USD', '项目数', '结果数'].join(',');
       const rows = response.items.map((row) =>
         [
           row.userEmail,
@@ -3249,6 +3250,7 @@ function App() {
           row.availablePoints,
           row.runningHubRuns,
           row.runningHubCostUsd.toFixed(2),
+          row.remainingCreditCostUsd.toFixed(2),
           row.profitUsd.toFixed(2),
           row.projectCount,
           row.resultCount
@@ -6332,8 +6334,8 @@ function App() {
         <div className="kpi-grid">
           {kpi('充值金额', <>${adminBillingUserTotals.totalPaidUsd.toFixed(2)}</>, <span>实收现金</span>)}
           {kpi('RunningHub 成本', <>${adminBillingUserTotals.runningHubCostUsd.toFixed(2)}</>, <span>{adminBillingUserTotals.runningHubRuns.toLocaleString()} × ${adminBillingUserUnitUsd.toFixed(2)}</span>, adminBillingUserTotals.runningHubCostUsd ? 'down' : 'up')}
-          {kpi('当前利润', <>${adminBillingUserTotals.profitUsd.toFixed(2)}</>, <span>充值 - 成本</span>, adminBillingUserTotals.profitUsd < 0 ? 'down' : 'up')}
-          {kpi('剩余积分', <>{adminBillingUserTotals.availablePoints.toLocaleString()}<span className="unit">pts</span></>, <span>用户余额</span>)}
+          {kpi('剩余积分成本', <>${adminBillingUserTotals.remainingCreditCostUsd.toFixed(2)}</>, <span>{adminBillingUserTotals.availablePoints.toLocaleString()} × ${adminBillingUserUnitUsd.toFixed(2)}</span>, adminBillingUserTotals.remainingCreditCostUsd ? 'down' : 'up')}
+          {kpi('保守利润', <>${adminBillingUserTotals.profitUsd.toFixed(2)}</>, <span>充值 - 已用成本 - 剩余成本</span>, adminBillingUserTotals.profitUsd < 0 ? 'down' : 'up')}
         </div>
         <div className="card">
           <div className="toolbar">
@@ -6350,7 +6352,7 @@ function App() {
             />
           </div>
           <div className="admin-health-ok">
-            利润按实际充值金额 - 当前 RunningHub 次数 × $0.07 计算；重试和重修都会增加成本，免费赠送积分不会算成收入。
+            保守利润按实际充值金额 - 当前 RunningHub 次数 × $0.07 - 剩余积分 × $0.07 计算；重试和重修会继续增加实际成本。
           </div>
           {adminBillingUsers.length ? (
             <div className="table-wrap">
@@ -6362,6 +6364,7 @@ function App() {
                     <th>积分</th>
                     <th>RunningHub</th>
                     <th>成本</th>
+                    <th>剩余成本</th>
                     <th>利润</th>
                     <th>项目 / 结果</th>
                     <th>操作</th>
@@ -6388,6 +6391,7 @@ function App() {
                       </td>
                       <td className="mono">{row.runningHubRuns.toLocaleString()} 次 <span className="text-muted">({row.workflowRuns}+{row.regenerationRuns})</span></td>
                       <td className="mono">${row.runningHubCostUsd.toFixed(2)}</td>
+                      <td className="mono">${row.remainingCreditCostUsd.toFixed(2)}</td>
                       <td className={row.profitUsd < 0 ? 'mono danger-text' : 'mono accent-text'}>${row.profitUsd.toFixed(2)}</td>
                       <td className="mono">{row.projectCount} / {row.resultCount}</td>
                       <td>

@@ -239,6 +239,7 @@ app.get('/api/admin/billing-users', (req, res) => {
     workflowRuns: number;
     regenerationRuns: number;
     runningHubCostUsd: number;
+    remainingCreditCostUsd: number;
     profitUsd: number;
     lastSeenAt: string;
   };
@@ -287,7 +288,8 @@ app.get('/api/admin/billing-users', (req, res) => {
       );
       const runningHubRuns = workflowRuns + regenerationRuns;
       const runningHubCostUsd = Number((runningHubRuns * runningHubUnitCostUsd).toFixed(2));
-      const profitUsd = Number((totalPaidUsd - runningHubCostUsd).toFixed(2));
+      const remainingCreditCostUsd = Number((availablePoints * runningHubUnitCostUsd).toFixed(2));
+      const profitUsd = Number((totalPaidUsd - runningHubCostUsd - remainingCreditCostUsd).toFixed(2));
       return {
         userId: user.id,
         userKey: user.userKey,
@@ -303,6 +305,7 @@ app.get('/api/admin/billing-users', (req, res) => {
         workflowRuns,
         regenerationRuns,
         runningHubCostUsd,
+        remainingCreditCostUsd,
         profitUsd,
         lastSeenAt: user.lastLoginAt ?? user.updatedAt ?? user.createdAt
       };
@@ -327,6 +330,7 @@ app.get('/api/admin/billing-users', (req, res) => {
       availablePoints: rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.availablePoints, 0),
       runningHubRuns: rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.runningHubRuns, 0),
       runningHubCostUsd: Number(rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.runningHubCostUsd, 0).toFixed(2)),
+      remainingCreditCostUsd: Number(rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.remainingCreditCostUsd, 0).toFixed(2)),
       profitUsd: Number(rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.profitUsd, 0).toFixed(2))
     },
     items: rows.slice(0, 500)

@@ -513,6 +513,7 @@ export interface AdminBillingUserSummaryRow {
   workflowRuns: number;
   regenerationRuns: number;
   runningHubCostUsd: number;
+  remainingCreditCostUsd: number;
   profitUsd: number;
   lastSeenAt: string;
 }
@@ -527,6 +528,7 @@ export interface AdminBillingUserSummaryPayload {
     availablePoints: number;
     runningHubRuns: number;
     runningHubCostUsd: number;
+    remainingCreditCostUsd: number;
     profitUsd: number;
   };
   items: AdminBillingUserSummaryRow[];
