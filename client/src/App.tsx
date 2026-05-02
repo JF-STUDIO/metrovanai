@@ -5298,7 +5298,7 @@ function App() {
   if (activeRoute === 'admin') {
     const paidOrders = adminOrders.filter((order) => order.status === 'paid');
     const pendingProjectCount = adminProjects.filter((project) =>
-      ['importing', 'uploading', 'processing', 'failed'].includes(project.status)
+      ['importing', 'uploading', 'processing'].includes(project.status)
     ).length;
     const planPackages = adminSystemSettings?.billingPackages?.length
       ? adminSystemSettings.billingPackages
