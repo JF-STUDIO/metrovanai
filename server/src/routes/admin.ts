@@ -292,7 +292,7 @@ app.get('/api/admin/project-costs', (req, res) => {
     const pointPrice =
       netGrantedPoints > 0 && totalPaidUsd > 0
         ? Number((totalPaidUsd / netGrantedPoints).toFixed(4))
-        : POINT_PRICE_USD;
+        : 0;
     const value = {
       pointPriceUsd: pointPrice,
       paidUsd: Number(totalPaidUsd.toFixed(2)),
