@@ -93,6 +93,33 @@ function percentile(values, ratio) {
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * ratio))];
 }
 
+function summarizeTimings(results) {
+  const names = [...new Set(results.flatMap((item) => Object.keys(item.timings ?? {})))].sort();
+  const summary = {};
+  for (const name of names) {
+    const values = results
+      .map((item) => item.timings?.[name])
+      .filter((value) => Number.isFinite(value));
+    if (!values.length) continue;
+    summary[name] = {
+      count: values.length,
+      p50Ms: percentile(values, 0.5),
+      p95Ms: percentile(values, 0.95),
+      maxMs: Math.max(...values),
+      totalMs: values.reduce((sum, value) => sum + value, 0)
+    };
+  }
+  return summary;
+}
+
+function getSlowestTiming(timings) {
+  const [name, value] =
+    Object.entries(timings)
+      .filter(([key]) => !key.endsWith('Wait') || key === 'processingWait')
+      .sort((left, right) => right[1].p95Ms - left[1].p95Ms)[0] ?? [];
+  return name ? { name, ...value } : null;
+}
+
 function getMimeType(filePath) {
   const extension = path.extname(filePath).toLowerCase();
   if (JPG_EXTENSIONS.has(extension)) return 'image/jpeg';
@@ -279,9 +306,12 @@ async function runUser(index) {
 
   const uploadedFiles = await step('directUpload', async () => {
     const files = getUserUploadFiles(index);
+    const targetStarted = performance.now();
     const targetResponse = await client.request('POST', `/api/projects/${projectId}/direct-upload/targets`, { files });
+    timings.directUploadTargets = Math.round(performance.now() - targetStarted);
     if (targetResponse.status !== 200) throw new Error(`targets ${targetResponse.status}`);
     const targets = targetResponse.payload.targets ?? [];
+    const putStarted = performance.now();
     await Promise.all(
       targets.map(async (target, fileIndex) => {
         const upload = await fetch(target.uploadUrl, {
@@ -294,6 +324,7 @@ async function runUser(index) {
         return { ...files[fileIndex], storageKey: target.storageKey };
       })
     );
+    timings.directUploadPut = Math.round(performance.now() - putStarted);
     const completeFiles = targets.map((target, fileIndex) => ({
       originalName: target.originalName || files[fileIndex].originalName,
       mimeType: target.mimeType || files[fileIndex].mimeType,
@@ -303,6 +334,7 @@ async function runUser(index) {
     for (const file of completeFiles) {
       uploadedStorageKeys.add(file.storageKey);
     }
+    const completeStarted = performance.now();
     const complete = await retryStep(async () => {
       const response = await client.request('POST', `/api/projects/${projectId}/direct-upload/complete`, { files: completeFiles });
       if (response.status !== 200) {
@@ -310,6 +342,7 @@ async function runUser(index) {
       }
       return response;
     });
+    timings.directUploadComplete = Math.round(performance.now() - completeStarted);
     return completeFiles;
   });
 
@@ -363,26 +396,34 @@ async function runUser(index) {
 
   const processing = startProcessing
     ? await step('processing', async () => {
+        const startStarted = performance.now();
         const start = await client.request('POST', `/api/projects/${projectId}/start`, {});
+        timings.processingStart = Math.round(performance.now() - startStarted);
         if (start.status !== 200) throw new Error(`start ${start.status}: ${JSON.stringify(start.payload).slice(0, 500)}`);
 
         const deadline = Date.now() + processingWaitMs;
         let latestProject = start.payload.project;
+        const phasePolls = {};
+        const waitStarted = performance.now();
         while (Date.now() < deadline) {
           const response = await client.request('GET', `/api/projects/${projectId}`);
           if (response.status !== 200) throw new Error(`processing-poll ${response.status}`);
           latestProject = response.payload.project;
+          const phase = latestProject?.job?.phase ?? latestProject?.status ?? 'unknown';
+          phasePolls[phase] = (phasePolls[phase] ?? 0) + 1;
           if (latestProject?.status === 'completed' || latestProject?.status === 'failed') {
             break;
           }
           await sleep(processingPollMs);
         }
+        timings.processingWait = Math.round(performance.now() - waitStarted);
         return {
           status: latestProject?.status ?? 'unknown',
           jobStatus: latestProject?.job?.status ?? null,
           jobPhase: latestProject?.job?.phase ?? null,
           resultCount: latestProject?.resultAssets?.length ?? 0,
-          failedCount: latestProject?.hdrItems?.filter((item) => item.status === 'error').length ?? 0
+          failedCount: latestProject?.hdrItems?.filter((item) => item.status === 'error').length ?? 0,
+          phasePolls
         };
       })
     : await step('poll', async () => {
@@ -492,6 +533,7 @@ async function main() {
     const fulfilled = results.filter((item) => item.status === 'fulfilled').map((item) => item.value);
     const rejected = results.filter((item) => item.status === 'rejected').map((item) => item.reason);
     const totals = fulfilled.map((item) => item.totalMs);
+    const timings = summarizeTimings(fulfilled);
     const processingResults = fulfilled.map((item) => item.processing).filter(Boolean);
     const processingStatuses = processingResults.reduce((counts, item) => {
       counts[item.status] = (counts[item.status] ?? 0) + 1;
@@ -520,6 +562,8 @@ async function main() {
       p50Ms: percentile(totals, 0.5),
       p95Ms: percentile(totals, 0.95),
       maxMs: totals.length ? Math.max(...totals) : 0,
+      slowestStep: getSlowestTiming(timings),
+      timings,
       errors: [
         ...rejected.slice(0, 5).map((error) => (error instanceof Error ? error.message : String(error))),
         ...processingIncomplete.slice(0, 5).map((item) => `processing ${item.status} phase=${item.jobPhase ?? 'unknown'}`)
