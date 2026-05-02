@@ -326,11 +326,6 @@ app.get('/api/admin/project-costs', (req, res) => {
       const projectEntries = getUserBillingEntries(project.userKey).filter(
         (entry: BillingEntry) => entry.projectId === project.id
       );
-      const listRevenueUsd = Number(
-        projectEntries
-          .reduce((sum, entry) => sum + (entry.type === 'charge' ? entry.amountUsd : -entry.amountUsd), 0)
-          .toFixed(2)
-      );
       const chargedPoints = projectEntries
         .filter((entry: BillingEntry) => entry.type === 'charge')
         .reduce((sum, entry) => sum + entry.points, 0);
@@ -338,17 +333,19 @@ app.get('/api/admin/project-costs', (req, res) => {
         .filter((entry: BillingEntry) => entry.type === 'credit')
         .reduce((sum, entry) => sum + entry.points, 0);
       const netPoints = chargedPoints - refundedPoints;
+      const listRevenueUsd = Number((netPoints * POINT_PRICE_USD).toFixed(2));
       const userPointValue = getUserPointValue(project.userKey);
       const blendedPointPriceUsd = userPointValue.pointPriceUsd;
       const cashRevenueUsd = Number((netPoints * blendedPointPriceUsd).toFixed(2));
       const revenueUsd = cashRevenueUsd;
-      const workflowRuns = project.hdrItems.reduce((sum, item) => {
+      const recordedWorkflowRuns = project.hdrItems.reduce((sum, item) => {
         const count = Math.max(
           item.workflow?.runningHubTaskId ? 1 : 0,
           Math.round(Number(item.workflow?.runningHubRunCount ?? 0))
         );
         return sum + count;
       }, 0);
+      const workflowRuns = Math.max(recordedWorkflowRuns, project.resultAssets.length);
       const regenerationRuns = project.hdrItems.reduce((sum, item) => {
         const count = Math.max(
           item.regeneration?.taskId ? 1 : 0,
