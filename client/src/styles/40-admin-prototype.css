@@ -3636,6 +3636,22 @@
   background: rgba(92, 227, 165, 0.06);
 }
 
+.admin-prototype .feature-admin-save-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(124, 232, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(124, 232, 255, 0.05);
+}
+
+.admin-prototype .feature-admin-save-row small {
+  color: var(--text-dim);
+}
+
 .admin-prototype .feature-admin-form textarea {
   min-height: 72px;
   grid-column: 1 / -1;

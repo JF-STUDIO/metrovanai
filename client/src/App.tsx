@@ -2653,7 +2653,7 @@ function App() {
     try {
       const response = await uploadAdminStudioFeatureImage(file);
       updateAdminFeatureDraft(featureId, { [field]: response.url } as Partial<Pick<StudioFeatureConfig, StudioFeatureImageField>>);
-      setAdminMessage('对比图已上传，保存卡片配置后前台生效。');
+      setAdminMessage('对比图已上传到草稿。请确认“前台启用”和发布前检查，然后点击“保存全部并发布到前台”。');
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '对比图上传失败。', locale));
     } finally {
@@ -2755,7 +2755,7 @@ function App() {
       );
       const visibleFeatureCount = response.settings.studioFeatures.filter((feature) => feature.enabled).length;
       setAdminMessage(
-        `已保存：前台显示 ${visibleFeatureCount} 张功能卡片，隐藏 ${response.settings.studioFeatures.length - visibleFeatureCount} 张。`
+        `已保存并同步：前台显示 ${visibleFeatureCount} 张功能卡片，隐藏 ${response.settings.studioFeatures.length - visibleFeatureCount} 张。用户端刷新后可见。`
       );
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '系统设置保存失败。', locale));
@@ -6381,8 +6381,13 @@ function App() {
         )}
         <div className="card">
           <div className="card-header">
-            <h3>功能卡片配置</h3>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminSystemSettings}>保存全部</button>
+            <div>
+              <h3>功能卡片配置</h3>
+              <div className="card-sub">只有“前台显示”且发布前检查通过的卡片会出现在用户端。</div>
+            </div>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminSystemSettings}>
+              {adminSystemBusy ? '保存中...' : '保存全部并发布到前台'}
+            </button>
           </div>
           <div className="card-body feature-admin-grid">
             {adminFeatureDrafts.length ? adminFeatureDrafts.map((feature, index) => {
@@ -6462,6 +6467,12 @@ function App() {
                       <span>这张卡片已具备前台展示和创建项目所需配置。</span>
                     </div>
                   )}
+                  <div className="feature-admin-save-row">
+                    <small>{feature.enabled ? '保存成功后会进入用户端功能卡片。' : '当前为前台隐藏，保存后用户端不会显示。'}</small>
+                    <button className="btn btn-primary" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminSystemSettings}>
+                      {adminSystemBusy ? '保存中...' : '保存全部并发布到前台'}
+                    </button>
+                  </div>
                   <label className="admin-check-field">
                     <input
                       type="checkbox"
