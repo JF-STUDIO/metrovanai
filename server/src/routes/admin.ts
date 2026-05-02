@@ -238,6 +238,8 @@ app.get('/api/admin/project-costs', (req, res) => {
     listRevenueUsd: number;
     cashRevenueUsd: number;
     blendedPointPriceUsd: number;
+    userPaidUsd: number;
+    userGrantedPoints: number;
     runningHubRuns: number;
     workflowRuns: number;
     regenerationRuns: number;
@@ -256,7 +258,10 @@ app.get('/api/admin/project-costs', (req, res) => {
     netPoints: number;
   };
   const userBillingCache = new Map<string, BillingEntry[]>();
-  const userPointValueCache = new Map<string, number>();
+  const userPointValueCache = new Map<
+    string,
+    { pointPriceUsd: number; paidUsd: number; grantedPoints: number }
+  >();
 
   const getUserBillingEntries = (userKey: string) => {
     const cached = userBillingCache.get(userKey);
@@ -268,9 +273,9 @@ app.get('/api/admin/project-costs', (req, res) => {
     return entries;
   };
 
-  const getUserBlendedPointPriceUsd = (userKey: string) => {
+  const getUserPointValue = (userKey: string) => {
     const cached = userPointValueCache.get(userKey);
-    if (typeof cached === 'number') {
+    if (cached) {
       return cached;
     }
     const grantedEntries = getUserBillingEntries(userKey).filter(
@@ -282,8 +287,13 @@ app.get('/api/admin/project-costs', (req, res) => {
       netGrantedPoints > 0 && totalPaidUsd > 0
         ? Number((totalPaidUsd / netGrantedPoints).toFixed(4))
         : POINT_PRICE_USD;
-    userPointValueCache.set(userKey, pointPrice);
-    return pointPrice;
+    const value = {
+      pointPriceUsd: pointPrice,
+      paidUsd: Number(totalPaidUsd.toFixed(2)),
+      grantedPoints: netGrantedPoints
+    };
+    userPointValueCache.set(userKey, value);
+    return value;
   };
 
   const rows: AdminProjectCostRow[] = projects.map((project: ProjectRecord) => {
@@ -302,7 +312,8 @@ app.get('/api/admin/project-costs', (req, res) => {
       .filter((entry: BillingEntry) => entry.type === 'credit')
       .reduce((sum, entry) => sum + entry.points, 0);
     const netPoints = chargedPoints - refundedPoints;
-    const blendedPointPriceUsd = getUserBlendedPointPriceUsd(project.userKey);
+    const userPointValue = getUserPointValue(project.userKey);
+    const blendedPointPriceUsd = userPointValue.pointPriceUsd;
     const cashRevenueUsd = Number((netPoints * blendedPointPriceUsd).toFixed(2));
     const revenueUsd = cashRevenueUsd;
     const workflowRuns = project.hdrItems.reduce((sum, item) => {
@@ -337,6 +348,8 @@ app.get('/api/admin/project-costs', (req, res) => {
       listRevenueUsd,
       cashRevenueUsd,
       blendedPointPriceUsd,
+      userPaidUsd: userPointValue.paidUsd,
+      userGrantedPoints: userPointValue.grantedPoints,
       runningHubRuns,
       workflowRuns,
       regenerationRuns,

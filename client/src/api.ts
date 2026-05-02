@@ -513,6 +513,8 @@ export interface AdminProjectCostRow {
   listRevenueUsd: number;
   cashRevenueUsd: number;
   blendedPointPriceUsd: number;
+  userPaidUsd: number;
+  userGrantedPoints: number;
   runningHubRuns: number;
   workflowRuns: number;
   regenerationRuns: number;

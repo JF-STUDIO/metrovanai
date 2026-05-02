@@ -6461,7 +6461,8 @@ function App() {
                       <td>
                         <div className="admin-status-stack">
                           <span className="mono">${row.cashRevenueUsd.toFixed(2)} · {row.netPoints} pts</span>
-                          <small>${row.listRevenueUsd.toFixed(2)} 标价 · ${row.blendedPointPriceUsd.toFixed(4)}/pt</small>
+                          <small>${row.userPaidUsd.toFixed(2)} / {row.userGrantedPoints.toLocaleString()} pts = ${row.blendedPointPriceUsd.toFixed(4)}/pt</small>
+                          <small>${row.listRevenueUsd.toFixed(2)} 标价</small>
                         </div>
                       </td>
                       <td className="mono">{row.runningHubRuns} 次 <span className="text-muted">({row.workflowRuns}+{row.regenerationRuns})</span></td>
