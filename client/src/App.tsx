@@ -6358,12 +6358,13 @@ function App() {
                 key={feature.id}
                 className="feature-admin-card"
                 open={Boolean(adminExpandedFeatureIds[feature.id])}
-                onToggle={(event) =>
+                onToggle={(event) => {
+                  const isOpen = event.currentTarget.open;
                   setAdminExpandedFeatureIds((current) => ({
                     ...current,
-                    [feature.id]: event.currentTarget.open
-                  }))
-                }
+                    [feature.id]: isOpen
+                  }));
+                }}
               >
                 <summary>
                   <span className={`tag ${planToneClass(index)}`}>{feature.status}</span>

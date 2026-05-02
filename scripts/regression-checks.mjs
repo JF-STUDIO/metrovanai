@@ -198,6 +198,18 @@ assertIncludes(
   'Admin feature workflow display must tolerate legacy cards with missing workflow ids.'
 );
 
+assertIncludes(
+  'client/src/App.tsx',
+  'const isOpen = event.currentTarget.open;',
+  'Admin feature card toggle must capture the details open state before the React event is released.'
+);
+
+assertNotIncludes(
+  'client/src/App.tsx',
+  '[feature.id]: event.currentTarget.open',
+  'Admin feature card toggle must not read currentTarget inside a state updater.'
+);
+
 for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',
