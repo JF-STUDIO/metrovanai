@@ -17,8 +17,9 @@ const args = new Map(
   })
 );
 const users = Math.max(1, Math.min(100, Number(args.get('users') ?? process.env.METROVAN_LOAD_USERS ?? 10)));
-const filesPerUser = Math.max(1, Math.min(20, Number(args.get('files') ?? process.env.METROVAN_LOAD_FILES_PER_USER ?? 3)));
+const filesPerUser = Math.max(1, Math.min(100, Number(args.get('files') ?? process.env.METROVAN_LOAD_FILES_PER_USER ?? 3)));
 const pollCount = Math.max(1, Math.min(20, Number(args.get('polls') ?? process.env.METROVAN_LOAD_POLLS ?? 4)));
+const sourceDir = String(args.get('source-dir') ?? process.env.METROVAN_LOAD_SOURCE_DIR ?? '').trim();
 const port = Number(process.env.METROVAN_LOAD_TEST_PORT || 21000 + Math.floor(Math.random() * 1000));
 const apiRoot = `http://127.0.0.1:${port}`;
 const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metrovan-load-upload-'));
@@ -35,6 +36,8 @@ const requiredObjectStorageEnv = [
 ];
 let serverOutput = '';
 const uploadedStorageKeys = new Set();
+const RAW_EXTENSIONS = new Set(['.arw', '.cr2', '.cr3', '.crw', '.nef', '.nrw', '.raf', '.dng', '.rw2', '.rwl', '.orf', '.srw', '.3fr', '.fff', '.iiq', '.pef']);
+const JPG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return false;
@@ -66,10 +69,87 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function retryStep(fn, attempts = 4, delayMs = 1500) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn(attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+      await sleep(delayMs * attempt);
+    }
+  }
+  throw lastError;
+}
+
 function percentile(values, ratio) {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * ratio))];
+}
+
+function getMimeType(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (JPG_EXTENSIONS.has(extension)) return 'image/jpeg';
+  if (extension === '.arw') return 'image/x-sony-arw';
+  if (extension === '.cr2' || extension === '.cr3' || extension === '.crw') return 'image/x-canon-crw';
+  if (extension === '.nef' || extension === '.nrw') return 'image/x-nikon-nef';
+  if (extension === '.dng') return 'image/x-adobe-dng';
+  return 'application/octet-stream';
+}
+
+function loadSourceFiles() {
+  if (!sourceDir) return [];
+  const resolved = path.resolve(sourceDir);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Source dir not found: ${resolved}`);
+  }
+  return fs
+    .readdirSync(resolved)
+    .map((name) => path.join(resolved, name))
+    .filter((filePath) => {
+      const extension = path.extname(filePath).toLowerCase();
+      return fs.statSync(filePath).isFile() && (RAW_EXTENSIONS.has(extension) || JPG_EXTENSIONS.has(extension));
+    })
+    .sort((left, right) => path.basename(left).localeCompare(path.basename(right)))
+    .map((filePath) => {
+      const stat = fs.statSync(filePath);
+      const extension = path.extname(filePath).toLowerCase();
+      return {
+        sourcePath: filePath,
+        originalName: path.basename(filePath),
+        mimeType: getMimeType(filePath),
+        size: stat.size,
+        extension,
+        isRaw: RAW_EXTENSIONS.has(extension)
+      };
+    });
+}
+
+const sourceFiles = loadSourceFiles();
+if (sourceDir && sourceFiles.length < users * filesPerUser) {
+  throw new Error(`Source dir only has ${sourceFiles.length} supported files, need ${users * filesPerUser}.`);
+}
+
+function getUserUploadFiles(index) {
+  if (!sourceFiles.length) {
+    return Array.from({ length: filesPerUser }, (_, fileIndex) => ({
+      originalName: `load-${stamp}-${index}-${fileIndex}.jpg`,
+      mimeType: 'image/jpeg',
+      size: smokeJpeg.length,
+      extension: '.jpg',
+      isRaw: false,
+      body: smokeJpeg
+    }));
+  }
+
+  const offset = (index - 1) * filesPerUser;
+  return sourceFiles.slice(offset, offset + filesPerUser).map((file, fileIndex) => ({
+    ...file,
+    originalName: `${String(index).padStart(3, '0')}-${String(fileIndex + 1).padStart(3, '0')}-${file.originalName}`,
+    body: fs.createReadStream(file.sourcePath)
+  }));
 }
 
 function extractTokenFromLogs(authMode, recipient) {
@@ -193,11 +273,7 @@ async function runUser(index) {
   });
 
   const uploadedFiles = await step('directUpload', async () => {
-    const files = Array.from({ length: filesPerUser }, (_, fileIndex) => ({
-      originalName: `load-${stamp}-${index}-${fileIndex}.jpg`,
-      mimeType: 'image/jpeg',
-      size: smokeJpeg.length
-    }));
+    const files = getUserUploadFiles(index);
     const targetResponse = await client.request('POST', `/api/projects/${projectId}/direct-upload/targets`, { files });
     if (targetResponse.status !== 200) throw new Error(`targets ${targetResponse.status}`);
     const targets = targetResponse.payload.targets ?? [];
@@ -205,8 +281,9 @@ async function runUser(index) {
       targets.map(async (target, fileIndex) => {
         const upload = await fetch(target.uploadUrl, {
           method: 'PUT',
-          headers: { 'Content-Type': 'image/jpeg' },
-          body: smokeJpeg
+          headers: { 'Content-Type': files[fileIndex].mimeType, 'Content-Length': String(files[fileIndex].size) },
+          body: files[fileIndex].body,
+          duplex: 'half'
         });
         if (!upload.ok) throw new Error(`put ${upload.status}`);
         return { ...files[fileIndex], storageKey: target.storageKey };
@@ -221,8 +298,13 @@ async function runUser(index) {
     for (const file of completeFiles) {
       uploadedStorageKeys.add(file.storageKey);
     }
-    const complete = await client.request('POST', `/api/projects/${projectId}/direct-upload/complete`, { files: completeFiles });
-    if (complete.status !== 200) throw new Error(`complete ${complete.status}`);
+    const complete = await retryStep(async () => {
+      const response = await client.request('POST', `/api/projects/${projectId}/direct-upload/complete`, { files: completeFiles });
+      if (response.status !== 200) {
+        throw new Error(`complete ${response.status}: ${JSON.stringify(response.payload).slice(0, 500)}`);
+      }
+      return response;
+    });
     return completeFiles;
   });
 
@@ -237,10 +319,10 @@ async function runUser(index) {
           {
             originalName: file.originalName,
             fileName: file.originalName,
-            extension: '.jpg',
-            mimeType: 'image/jpeg',
+            extension: file.extension,
+            mimeType: file.mimeType,
             size: file.size,
-            isRaw: false,
+            isRaw: file.isRaw,
             storageKey: file.storageKey
           }
         ]
