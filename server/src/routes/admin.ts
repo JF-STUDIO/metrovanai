@@ -65,6 +65,52 @@ export function createAdminRouter(ctx: RouteContext) {
     getStripeObjectId
   } = ctx;
 
+  function getStudioFeaturePublishIssues(feature: {
+    id: string;
+    enabled: boolean;
+    titleZh: string;
+    titleEn: string;
+    descriptionZh: string;
+    descriptionEn: string;
+    beforeImageUrl: string;
+    afterImageUrl: string;
+    workflowId: string;
+    inputNodeId: string;
+    outputNodeId: string;
+    pointsPerPhoto: number;
+  }) {
+    const workflows = buildAdminWorkflowPayload();
+    const workflowItems = workflows.items as Array<{
+      name: string;
+      workflowId?: string | null;
+      inputNodeIds?: string[];
+      outputNodeIds?: string[];
+    }>;
+    const configuredWorkflowId = feature.workflowId.trim();
+    const matched = configuredWorkflowId
+      ? workflowItems.find((item) => item.workflowId === configuredWorkflowId) ?? null
+      : null;
+    const activeName = workflows.active?.trim().toLowerCase();
+    const active = activeName
+      ? workflowItems.find((item) => item.name.trim().toLowerCase() === activeName) ?? null
+      : null;
+    const defaultWorkflow = workflowItems.find((item) => item.workflowId) ?? null;
+    const shouldUseDefaultWorkflow = feature.id === 'hdr-true-color' || feature.id === 'hdr-white-wall';
+    const fallback = matched ?? (shouldUseDefaultWorkflow ? active ?? defaultWorkflow : null);
+    const workflowId = configuredWorkflowId || fallback?.workflowId || '';
+    const inputNodeId = feature.inputNodeId.trim() || fallback?.inputNodeIds?.join(', ') || '';
+    const outputNodeId = feature.outputNodeId.trim() || fallback?.outputNodeIds?.join(', ') || '';
+    const issues: string[] = [];
+    if (!feature.titleZh.trim() || !feature.titleEn.trim()) issues.push('中英文名称');
+    if (!feature.descriptionZh.trim() || !feature.descriptionEn.trim()) issues.push('中英文描述');
+    if (!feature.beforeImageUrl.trim() || !feature.afterImageUrl.trim()) issues.push('Before / After 对比图');
+    if (!workflowId.trim()) issues.push('Workflow ID');
+    if (!inputNodeId.trim()) issues.push('输入节点');
+    if (!outputNodeId.trim()) issues.push('输出节点');
+    if (!Number.isFinite(feature.pointsPerPhoto) || feature.pointsPerPhoto <= 0) issues.push('每张积分');
+    return issues;
+  }
+
 app.use('/api/admin', async (req, res, next) => {
   const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
   if (
@@ -1368,6 +1414,26 @@ app.patch('/api/admin/settings', (req, res) => {
   const parsed = adminSystemSettingsSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  const invalidPublishedFeature = parsed.data.studioFeatures?.find((feature: {
+    id: string;
+    enabled: boolean;
+    titleZh: string;
+    titleEn: string;
+    descriptionZh: string;
+    descriptionEn: string;
+    beforeImageUrl: string;
+    afterImageUrl: string;
+    workflowId: string;
+    inputNodeId: string;
+    outputNodeId: string;
+    pointsPerPhoto: number;
+  }) => feature.enabled && getStudioFeaturePublishIssues(feature).length > 0);
+  if (invalidPublishedFeature) {
+    res.status(400).json({
+      error: `“${invalidPublishedFeature.titleZh || invalidPublishedFeature.id}” 已开启前台显示，但缺少：${getStudioFeaturePublishIssues(invalidPublishedFeature).join('、')}。`
+    });
     return;
   }
 

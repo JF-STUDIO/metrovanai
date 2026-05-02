@@ -2678,6 +2678,19 @@ function App() {
     };
   }
 
+  function getAdminFeaturePublishIssues(feature: StudioFeatureConfig) {
+    const workflowDisplay = getAdminFeatureWorkflowDisplay(feature);
+    const issues: string[] = [];
+    if (!feature.titleZh.trim() || !feature.titleEn.trim()) issues.push('中英文名称');
+    if (!feature.descriptionZh.trim() || !feature.descriptionEn.trim()) issues.push('中英文描述');
+    if (!feature.beforeImageUrl.trim() || !feature.afterImageUrl.trim()) issues.push('Before / After 对比图');
+    if (!workflowDisplay.workflowId.trim()) issues.push('Workflow ID');
+    if (!workflowDisplay.inputNodeId.trim()) issues.push('输入节点');
+    if (!workflowDisplay.outputNodeId.trim()) issues.push('输出节点');
+    if (!Number.isFinite(feature.pointsPerPhoto) || feature.pointsPerPhoto <= 0) issues.push('每张积分');
+    return issues;
+  }
+
   async function handleAdminSaveSystemSettings() {
     const runpodHdrBatchSize = Number(adminSystemDraft.runpodHdrBatchSize);
     const runningHubMaxInFlight = Number(adminSystemDraft.runningHubMaxInFlight);
@@ -2695,6 +2708,16 @@ function App() {
       runningHubMaxInFlight > MAX_RUNNINGHUB_MAX_IN_FLIGHT
     ) {
       setAdminMessage(`RunningHub 并发数量必须是 ${MIN_RUNNINGHUB_MAX_IN_FLIGHT} 到 ${MAX_RUNNINGHUB_MAX_IN_FLIGHT}。`);
+      return;
+    }
+    const invalidPublishedFeature = adminFeatureDrafts.find((feature) => feature.enabled && getAdminFeaturePublishIssues(feature).length > 0);
+    if (invalidPublishedFeature) {
+      const issues = getAdminFeaturePublishIssues(invalidPublishedFeature);
+      setAdminExpandedFeatureIds((current) => ({
+        ...current,
+        [invalidPublishedFeature.id]: true
+      }));
+      setAdminMessage(`“${invalidPublishedFeature.titleZh || invalidPublishedFeature.id}” 已开启前台显示，但缺少：${issues.join('、')}。请补齐后再保存，或先关闭前台启用。`);
       return;
     }
 
@@ -4688,6 +4711,15 @@ function App() {
     }).format(new Date(value));
   }
 
+  function formatAdminTodayLabel() {
+    const formatted = new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'zh-CN', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    }).format(new Date());
+    return locale === 'en' ? `Today · ${formatted}` : `今天 · ${formatted}`;
+  }
+
   function formatPaymentOrderStatus(status: PaymentOrderRecord['status']) {
     switch (status) {
       case 'paid':
@@ -5147,7 +5179,7 @@ function App() {
         {adminPageTitle(
           '仪表盘',
           <>
-            今天 · 2026 年 4 月 28 日 · <span className="status-dot live" /> 系统运行中
+            {formatAdminTodayLabel()} · <span className="status-dot live" /> 系统运行中
           </>,
           <>
             <button className="btn btn-ghost" type="button" onClick={exportAdminOrdersCSV} disabled={!adminOrders.length}>
@@ -6266,8 +6298,9 @@ function App() {
       <div className="page-content active">
         {adminPageTitle(
           'AI 引擎',
-          '管理所有 AI 修图引擎 · 监控调用量、成本、错误率',
+          '只读监控 · 查看工作流、节点、API 状态和估算调用成本',
           <>
+            <span className="tag tag-gray">只读</span>
             <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>{adminWorkflowBusy ? '刷新中...' : '刷新引擎'}</button>
           </>
         )}
@@ -6316,7 +6349,14 @@ function App() {
 
     const renderPromptsPage = () => (
       <div className="page-content active">
-        {adminPageTitle('Prompt 模板', '每个 AI 引擎背后的提示词配置 · 改动需重新评测', <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>{adminWorkflowBusy ? '刷新中...' : '刷新模板'}</button>)}
+        {adminPageTitle(
+          'Prompt 模板',
+          '只读配置索引 · 当前后台展示 Prompt 节点和 Workflow ID',
+          <>
+            <span className="tag tag-gray">只读</span>
+            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>{adminWorkflowBusy ? '刷新中...' : '刷新模板'}</button>
+          </>
+        )}
         <div className="card">
           <div className="card-body prompt-grid">
             {workflowItems.length ? workflowItems.map((item) => (
@@ -6352,6 +6392,7 @@ function App() {
           <div className="card-body feature-admin-grid">
             {adminFeatureDrafts.length ? adminFeatureDrafts.map((feature, index) => {
               const workflowDisplay = getAdminFeatureWorkflowDisplay(feature);
+              const publishIssues = getAdminFeaturePublishIssues(feature);
               const beforeImageBusy = adminFeatureImageBusy === `${feature.id}:beforeImageUrl`;
               const afterImageBusy = adminFeatureImageBusy === `${feature.id}:afterImageUrl`;
               return (
@@ -6370,6 +6411,7 @@ function App() {
                 <summary>
                   <span className={`tag ${planToneClass(index)}`}>{feature.status}</span>
                   <span className={feature.enabled ? 'tag tag-green' : 'tag-red tag'}>{feature.enabled ? '前台显示' : '前台隐藏'}</span>
+                  {feature.enabled && publishIssues.length ? <span className="tag tag-orange">缺配置</span> : null}
                   <strong>{feature.titleZh}</strong>
                   <small>Workflow: {workflowDisplay.workflowId || '未配置'} · 输入 {workflowDisplay.inputNodeId || '—'} · 输出 {workflowDisplay.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
                   <div className="feature-admin-order-actions" onClick={(event) => event.preventDefault()}>
@@ -6414,6 +6456,17 @@ function App() {
                     </button>
                     <small>删除后需要点击保存全部才会同步到前台。</small>
                   </div>
+                  {publishIssues.length ? (
+                    <div className={`feature-admin-publish-check${feature.enabled ? ' warning' : ''}`}>
+                      <strong>{feature.enabled ? '前台启用前需要补齐' : '发布前检查'}</strong>
+                      <span>{publishIssues.join('、')}</span>
+                    </div>
+                  ) : (
+                    <div className="feature-admin-publish-check ready">
+                      <strong>发布前检查通过</strong>
+                      <span>这张卡片已具备前台展示和创建项目所需配置。</span>
+                    </div>
+                  )}
                   <label className="admin-check-field">
                     <input
                       type="checkbox"

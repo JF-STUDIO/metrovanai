@@ -3510,7 +3510,7 @@
 
 .admin-prototype .feature-admin-card summary {
   display: grid;
-  grid-template-columns: auto minmax(160px, 0.4fr) minmax(0, 1fr) auto;
+  grid-template-columns: auto auto auto minmax(120px, 0.32fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   cursor: pointer;
@@ -3580,6 +3580,36 @@
 
 .admin-prototype .feature-admin-actions small {
   color: var(--text-dim);
+}
+
+.admin-prototype .feature-admin-publish-check {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 247, 251, 0.1);
+  border-radius: 10px;
+  background: rgba(245, 247, 251, 0.04);
+}
+
+.admin-prototype .feature-admin-publish-check strong {
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.admin-prototype .feature-admin-publish-check span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.admin-prototype .feature-admin-publish-check.warning {
+  border-color: rgba(255, 195, 107, 0.22);
+  background: rgba(255, 195, 107, 0.08);
+}
+
+.admin-prototype .feature-admin-publish-check.ready {
+  border-color: rgba(92, 227, 165, 0.18);
+  background: rgba(92, 227, 165, 0.06);
 }
 
 .admin-prototype .feature-admin-form textarea {
