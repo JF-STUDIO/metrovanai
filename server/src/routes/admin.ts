@@ -12,7 +12,7 @@ import {
 import { captureServerError } from '../observability.js';
 import { ensureDir, sanitizeSegment } from '../utils.js';
 import type { RouteContext } from './context.js';
-import type { ProjectRecord, ProjectDownloadJobRecord } from '../types.js';
+import type { BillingEntry, ProjectRecord, ProjectDownloadJobRecord, UserRecord } from '../types.js';
 
 export function createAdminRouter(ctx: RouteContext) {
   const app = express.Router();
@@ -143,6 +143,69 @@ app.get('/api/admin/users', (req, res) => {
       pageSize: Number(req.query.pageSize ?? 25)
     })
   );
+});
+
+app.get('/api/admin/billing-ledger', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const search = String(req.query.search ?? '').trim().toLowerCase();
+  const type = String(req.query.type ?? 'all');
+  const page = Math.max(1, Math.round(Number(req.query.page ?? 1)));
+  const pageSize = Math.max(1, Math.min(200, Math.round(Number(req.query.pageSize ?? 50))));
+  const usersByKey = new Map<string, UserRecord>(store.listUsers().map((user: UserRecord) => [user.userKey, user]));
+  const allEntries = store
+    .listUsers()
+    .flatMap((user: UserRecord) =>
+      store.listBillingEntries(user.userKey).map((entry: BillingEntry) => ({
+        ...entry,
+        userId: user.id,
+        userEmail: user.email,
+        userDisplayName: user.displayName
+      }))
+    )
+    .filter((entry: BillingEntry & { userId: string; userEmail: string; userDisplayName: string }) => {
+      if (type === 'charge' || type === 'credit') {
+        if (entry.type !== type) return false;
+      }
+      if (!search) return true;
+      const user = usersByKey.get(entry.userKey);
+      const haystack = [
+        user?.email,
+        user?.displayName,
+        user?.userKey,
+        entry.userEmail,
+        entry.userDisplayName,
+        entry.projectName,
+        entry.note,
+        entry.activationCode,
+        entry.activationCodeLabel
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(search);
+    })
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+  const total = allEntries.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const normalizedPage = Math.min(page, pageCount);
+  const offset = (normalizedPage - 1) * pageSize;
+
+  res.json({
+    total,
+    page: normalizedPage,
+    pageSize,
+    pageCount,
+    totals: {
+      chargePoints: allEntries.filter((entry) => entry.type === 'charge').reduce((sum, entry) => sum + entry.points, 0),
+      creditPoints: allEntries.filter((entry) => entry.type === 'credit').reduce((sum, entry) => sum + entry.points, 0),
+      amountUsd: Number(allEntries.filter((entry) => entry.type === 'credit').reduce((sum, entry) => sum + entry.amountUsd, 0).toFixed(2))
+    },
+    items: allEntries.slice(offset, offset + pageSize)
+  });
 });
 
 app.get('/api/admin/audit-logs', (req, res) => {

@@ -69,6 +69,14 @@ function adminNavIcon(page: AdminConsolePage) {
         <path d="M8 7V5a4 4 0 0 1 8 0v2" />
       </>
     ),
+    billing: (
+      <>
+        <path d="M4 4h16v16H4z" />
+        <path d="M8 8h8" />
+        <path d="M8 12h8" />
+        <path d="M8 16h5" />
+      </>
+    ),
     plans: (
       <>
         <path d="M12 2 4 7v10l8 5 8-5V7z" />
@@ -175,6 +183,7 @@ export function AdminConsole({
           {targetNavButton('works', '修图作品', pendingProjectCount ? String(pendingProjectCount) : undefined)}
           {targetNavButton('failures', '失败照片')}
           {targetNavButton('orders', '订单管理')}
+          {targetNavButton('billing', '账单流水')}
           {targetNavButton('plans', '套餐配置')}
           {targetNavButton('codes', '兑换码')}
         </div>

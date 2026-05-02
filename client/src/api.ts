@@ -479,6 +479,25 @@ export interface AdminUserDetailPayload {
   auditLogs: AdminAuditLogEntry[];
 }
 
+export interface AdminBillingLedgerRow extends BillingEntry {
+  userId: string;
+  userEmail: string;
+  userDisplayName: string;
+}
+
+export interface AdminBillingLedgerPayload {
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  totals: {
+    chargePoints: number;
+    creditPoints: number;
+    amountUsd: number;
+  };
+  items: AdminBillingLedgerRow[];
+}
+
 export interface AdminActivationCode {
   id: string;
   code: string;
@@ -1044,6 +1063,21 @@ export async function fetchAdminMaintenanceReports(limit = 10) {
 export async function fetchAdminOrders(limit = 120) {
   const params = new URLSearchParams({ limit: String(limit) });
   return await jsonRequest<AdminOrdersPayload>(`/api/admin/orders?${params.toString()}`);
+}
+
+export async function fetchAdminBillingLedger(query: {
+  search?: string;
+  type?: 'all' | 'charge' | 'credit';
+  page?: number;
+  pageSize?: number;
+} = {}) {
+  const params = new URLSearchParams();
+  if (query.search?.trim()) params.set('search', query.search.trim());
+  if (query.type && query.type !== 'all') params.set('type', query.type);
+  if (query.page) params.set('page', String(query.page));
+  if (query.pageSize) params.set('pageSize', String(query.pageSize));
+  const queryString = params.toString();
+  return await jsonRequest<AdminBillingLedgerPayload>(`/api/admin/billing-ledger${queryString ? `?${queryString}` : ''}`);
 }
 
 export async function fetchAdminOrderRefundPreview(orderId: string) {

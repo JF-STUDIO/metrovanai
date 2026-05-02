@@ -52,6 +52,7 @@ import {
   adjustAdminUserBilling,
   fetchAdminActivationCodes,
   fetchAdminAuditLogs,
+  fetchAdminBillingLedger,
   fetchAdminFailedPhotos,
   fetchAdminOpsHealth,
   fetchAdminOrderRefundPreview,
@@ -101,6 +102,8 @@ import {
 import type {
   AdminActivationCode,
   AdminAuditLogEntry,
+  AdminBillingLedgerPayload,
+  AdminBillingLedgerRow,
   AdminMaintenanceReportSummary,
   AdminOpsHealthPayload,
   AdminProjectRepairAction,
@@ -319,6 +322,19 @@ function App() {
   const [adminProjectsPageCount, setAdminProjectsPageCount] = useState(1);
   const [adminOrdersLoaded, setAdminOrdersLoaded] = useState(false);
   const [adminOrdersBusy, setAdminOrdersBusy] = useState(false);
+  const [adminBillingLedger, setAdminBillingLedger] = useState<AdminBillingLedgerRow[]>([]);
+  const [adminBillingLedgerTotals, setAdminBillingLedgerTotals] = useState<AdminBillingLedgerPayload['totals']>({
+    chargePoints: 0,
+    creditPoints: 0,
+    amountUsd: 0
+  });
+  const [adminBillingLedgerTotal, setAdminBillingLedgerTotal] = useState(0);
+  const [adminBillingLedgerPage, setAdminBillingLedgerPage] = useState(1);
+  const [adminBillingLedgerPageCount, setAdminBillingLedgerPageCount] = useState(1);
+  const [adminBillingLedgerSearch, setAdminBillingLedgerSearch] = useState('');
+  const [adminBillingLedgerType, setAdminBillingLedgerType] = useState<'all' | 'charge' | 'credit'>('charge');
+  const [adminBillingLedgerLoaded, setAdminBillingLedgerLoaded] = useState(false);
+  const [adminBillingLedgerBusy, setAdminBillingLedgerBusy] = useState(false);
   const [adminRefundOrder, setAdminRefundOrder] = useState<PaymentOrderRecord | null>(null);
   const [adminRefundPreview, setAdminRefundPreview] = useState<PaymentOrderRefundPreview | null>(null);
   const [adminRefundBusy, setAdminRefundBusy] = useState(false);
@@ -1058,6 +1074,14 @@ function App() {
       window.clearTimeout(timer);
     };
   }, [activeRoute, adminOrdersLoaded, hasAdminSession, locale]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || adminConsolePage !== 'billing' || !hasAdminSession || adminBillingLedgerLoaded) {
+      return;
+    }
+
+    void handleAdminLoadBillingLedger(1);
+  }, [activeRoute, adminBillingLedgerLoaded, adminConsolePage, hasAdminSession]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || !hasAdminSession || adminMaintenanceLoaded) {
@@ -2093,6 +2117,36 @@ function App() {
     }
   }
 
+  async function handleAdminLoadBillingLedger(page = 1) {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminBillingLedgerBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminBillingLedger({
+        search: adminBillingLedgerSearch,
+        type: adminBillingLedgerType,
+        page,
+        pageSize: 50
+      });
+      setAdminBillingLedger(response.items);
+      setAdminBillingLedgerTotals(response.totals);
+      setAdminBillingLedgerTotal(response.total);
+      setAdminBillingLedgerPage(response.page);
+      setAdminBillingLedgerPageCount(response.pageCount);
+      setAdminBillingLedgerLoaded(true);
+      setAdminMessage(response.total ? `已载入 ${response.total.toLocaleString()} 条账单流水。` : '没有匹配的账单流水。');
+    } catch (error) {
+      setAdminBillingLedgerLoaded(true);
+      setAdminMessage(getUserFacingErrorMessage(error, '账单流水读取失败。', locale));
+    } finally {
+      setAdminBillingLedgerBusy(false);
+    }
+  }
+
   async function handleAdminOpenRefund(order: PaymentOrderRecord) {
     if (!hasAdminSession) {
       setAdminMessage('请先用管理员账号登录。');
@@ -2184,6 +2238,7 @@ function App() {
   }
 
   async function handleAdminOpenUserBilling(userId: string) {
+    setAdminConsolePage('users');
     await handleAdminSelectUser(userId);
     window.setTimeout(() => {
       adminBillingLedgerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -6074,6 +6129,109 @@ function App() {
       </div>
     );
 
+    const renderBillingLedgerPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '账单流水',
+          <>全站积分扣费与入账 · 当前匹配 <span className="mono accent-text">{adminBillingLedgerTotal.toLocaleString()}</span> 条</>,
+          <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadBillingLedger(1)} disabled={adminBillingLedgerBusy}>
+            {adminBillingLedgerBusy ? '查询中...' : '查询流水'}
+          </button>
+        )}
+        <div className="kpi-grid">
+          {kpi('扣费积分', <>{adminBillingLedgerTotals.chargePoints.toLocaleString()}<span className="unit">pts</span></>, <span>当前筛选</span>, adminBillingLedgerTotals.chargePoints ? 'down' : 'up')}
+          {kpi('入账积分', <>{adminBillingLedgerTotals.creditPoints.toLocaleString()}<span className="unit">pts</span></>, <span>当前筛选</span>)}
+          {kpi('入账金额', <>${adminBillingLedgerTotals.amountUsd.toFixed(2)}</>, <span>充值/补款</span>)}
+          {kpi('当前页', <>{adminBillingLedgerPage}<span className="unit">/ {adminBillingLedgerPageCount}</span></>, <span>每页 50 条</span>)}
+        </div>
+        <div className="card">
+          <div className="toolbar">
+            <input
+              value={adminBillingLedgerSearch}
+              onChange={(event) => {
+                setAdminBillingLedgerSearch(event.target.value);
+                setAdminBillingLedgerLoaded(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleAdminLoadBillingLedger(1);
+              }}
+              placeholder="搜索邮箱 / 用户名 / 项目名 / 备注 / 兑换码"
+            />
+            <select
+              value={adminBillingLedgerType}
+              onChange={(event) => {
+                setAdminBillingLedgerType(event.target.value as typeof adminBillingLedgerType);
+                setAdminBillingLedgerLoaded(false);
+              }}
+            >
+              <option value="charge">只看扣费</option>
+              <option value="credit">只看入账</option>
+              <option value="all">全部流水</option>
+            </select>
+          </div>
+          {adminBillingLedger.length ? (
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>用户</th>
+                      <th>类型</th>
+                      <th>积分</th>
+                      <th>金额</th>
+                      <th>项目 / 备注</th>
+                      <th>时间</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adminBillingLedger.map((entry, index) => (
+                      <tr key={entry.id}>
+                        <td>
+                          <div className="user-cell">
+                            <div className={userAvatarClass(index)}>{getAdminInitials(entry.userDisplayName || entry.userEmail)}</div>
+                            <div>
+                              <div className="name">{entry.userDisplayName}</div>
+                              <div className="email">{entry.userEmail}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td><span className={entry.type === 'charge' ? 'tag tag-red' : 'tag tag-green'}>{entry.type === 'charge' ? '扣费' : '入账'}</span></td>
+                        <td className="mono">{entry.type === 'charge' ? '-' : '+'}{entry.points.toLocaleString()} pts</td>
+                        <td className="mono">{entry.amountUsd > 0 ? `$${entry.amountUsd.toFixed(2)}` : '—'}</td>
+                        <td>
+                          <div className="admin-status-stack">
+                            <span>{getBillingEntryAdminLabel(entry)}</span>
+                            {entry.note && entry.note !== getBillingEntryAdminLabel(entry) ? <small>{entry.note}</small> : null}
+                          </div>
+                        </td>
+                        <td className="cell-id">{formatAdminDate(entry.createdAt)}</td>
+                        <td>
+                          <button className="tbl-icon tbl-icon-text" type="button" onClick={() => void handleAdminOpenUserBilling(entry.userId)} title="查看用户账单">
+                            账
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pagination">
+                <span>显示 {adminBillingLedger.length} / {adminBillingLedgerTotal.toLocaleString()} 条 · 第 {adminBillingLedgerPage} / {adminBillingLedgerPageCount} 页</span>
+                <div className="page-btns">
+                  <button className="page-btn" type="button" onClick={() => void handleAdminLoadBillingLedger(Math.max(1, adminBillingLedgerPage - 1))} disabled={adminBillingLedgerBusy || adminBillingLedgerPage <= 1}>‹</button>
+                  <span className="page-btn active">{adminBillingLedgerPage}</span>
+                  <button className="page-btn" type="button" onClick={() => void handleAdminLoadBillingLedger(Math.min(adminBillingLedgerPageCount, adminBillingLedgerPage + 1))} disabled={adminBillingLedgerBusy || adminBillingLedgerPage >= adminBillingLedgerPageCount}>›</button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="empty-tip">{adminBillingLedgerBusy ? '正在查询账单流水...' : '没有匹配的账单流水。'}</div>
+          )}
+        </div>
+      </div>
+    );
+
     const renderPlansPage = () => (
       <div className="page-content active">
         {adminPageTitle(
@@ -6818,6 +6976,8 @@ function App() {
           return renderFailuresPage();
         case 'orders':
           return renderOrdersPage();
+        case 'billing':
+          return renderBillingLedgerPage();
         case 'plans':
           return renderPlansPage();
         case 'codes':
