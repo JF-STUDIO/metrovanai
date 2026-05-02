@@ -234,6 +234,7 @@ import {
 const STRIPE_RETURN_PROJECT_STORAGE_KEY = 'metrovanai_stripe_return_project_id';
 const ADMIN_PROJECT_PAGE_SIZE = 200;
 const ADMIN_FAILED_PHOTOS_PAGE_SIZE = 50;
+type AdminBillingLedgerDatePreset = 'all' | 'today' | 'week' | 'month' | '30d' | 'custom';
 
 function isAdminBillingAdjustmentEntry(entry: BillingEntry) {
   return entry.amountUsd === 0 && !entry.projectId && !entry.projectName && entry.note.startsWith('Admin adjustment:');
@@ -246,6 +247,14 @@ function getBillingEntryAdminLabel(entry: BillingEntry) {
   if (isAdminBillingAdjustmentEntry(entry)) return entry.type === 'credit' ? '管理员补积分' : '管理员扣积分';
   if (entry.note) return entry.note;
   return entry.type === 'credit' ? '积分入账' : '积分扣费';
+}
+
+function formatDateInputValue(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
 }
 
 function App() {
@@ -333,6 +342,9 @@ function App() {
   const [adminBillingLedgerPageCount, setAdminBillingLedgerPageCount] = useState(1);
   const [adminBillingLedgerSearch, setAdminBillingLedgerSearch] = useState('');
   const [adminBillingLedgerType, setAdminBillingLedgerType] = useState<'all' | 'charge' | 'credit'>('charge');
+  const [adminBillingLedgerDatePreset, setAdminBillingLedgerDatePreset] = useState<AdminBillingLedgerDatePreset>('30d');
+  const [adminBillingLedgerStartDate, setAdminBillingLedgerStartDate] = useState('');
+  const [adminBillingLedgerEndDate, setAdminBillingLedgerEndDate] = useState('');
   const [adminBillingLedgerLoaded, setAdminBillingLedgerLoaded] = useState(false);
   const [adminBillingLedgerBusy, setAdminBillingLedgerBusy] = useState(false);
   const [adminRefundOrder, setAdminRefundOrder] = useState<PaymentOrderRecord | null>(null);
@@ -2117,6 +2129,36 @@ function App() {
     }
   }
 
+  function getAdminBillingLedgerDateRange() {
+    const today = new Date();
+    const endDate = formatDateInputValue(today);
+    const start = new Date(today);
+    if (adminBillingLedgerDatePreset === 'today') {
+      return { startDate: endDate, endDate };
+    }
+    if (adminBillingLedgerDatePreset === 'week') {
+      const day = today.getDay();
+      const daysFromMonday = day === 0 ? 6 : day - 1;
+      start.setDate(today.getDate() - daysFromMonday);
+      return { startDate: formatDateInputValue(start), endDate };
+    }
+    if (adminBillingLedgerDatePreset === 'month') {
+      start.setDate(1);
+      return { startDate: formatDateInputValue(start), endDate };
+    }
+    if (adminBillingLedgerDatePreset === '30d') {
+      start.setDate(today.getDate() - 29);
+      return { startDate: formatDateInputValue(start), endDate };
+    }
+    if (adminBillingLedgerDatePreset === 'custom') {
+      return {
+        startDate: adminBillingLedgerStartDate,
+        endDate: adminBillingLedgerEndDate
+      };
+    }
+    return { startDate: '', endDate: '' };
+  }
+
   async function handleAdminLoadBillingLedger(page = 1) {
     if (!hasAdminSession) {
       setAdminMessage('请先用管理员账号登录。');
@@ -2129,6 +2171,7 @@ function App() {
       const response = await fetchAdminBillingLedger({
         search: adminBillingLedgerSearch,
         type: adminBillingLedgerType,
+        ...getAdminBillingLedgerDateRange(),
         page,
         pageSize: 50
       });
@@ -3089,6 +3132,7 @@ function App() {
       const response = await fetchAdminBillingLedger({
         search: adminBillingLedgerSearch,
         type: adminBillingLedgerType,
+        ...getAdminBillingLedgerDateRange(),
         page: 1,
         pageSize: Math.max(1, Math.min(5000, adminBillingLedgerTotal || 5000))
       });
@@ -6212,6 +6256,42 @@ function App() {
               <option value="credit">只看入账</option>
               <option value="all">全部流水</option>
             </select>
+            <select
+              value={adminBillingLedgerDatePreset}
+              onChange={(event) => {
+                setAdminBillingLedgerDatePreset(event.target.value as AdminBillingLedgerDatePreset);
+                setAdminBillingLedgerLoaded(false);
+              }}
+            >
+              <option value="30d">最近 30 天</option>
+              <option value="today">今天</option>
+              <option value="week">本周</option>
+              <option value="month">本月</option>
+              <option value="all">全部日期</option>
+              <option value="custom">自定义日期</option>
+            </select>
+            {adminBillingLedgerDatePreset === 'custom' ? (
+              <>
+                <input
+                  type="date"
+                  value={adminBillingLedgerStartDate}
+                  onChange={(event) => {
+                    setAdminBillingLedgerStartDate(event.target.value);
+                    setAdminBillingLedgerLoaded(false);
+                  }}
+                  aria-label="开始日期"
+                />
+                <input
+                  type="date"
+                  value={adminBillingLedgerEndDate}
+                  onChange={(event) => {
+                    setAdminBillingLedgerEndDate(event.target.value);
+                    setAdminBillingLedgerLoaded(false);
+                  }}
+                  aria-label="结束日期"
+                />
+              </>
+            ) : null}
           </div>
           {adminBillingLedger.length ? (
             <>

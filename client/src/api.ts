@@ -1068,12 +1068,16 @@ export async function fetchAdminOrders(limit = 120) {
 export async function fetchAdminBillingLedger(query: {
   search?: string;
   type?: 'all' | 'charge' | 'credit';
+  startDate?: string;
+  endDate?: string;
   page?: number;
   pageSize?: number;
 } = {}) {
   const params = new URLSearchParams();
   if (query.search?.trim()) params.set('search', query.search.trim());
   if (query.type && query.type !== 'all') params.set('type', query.type);
+  if (query.startDate?.trim()) params.set('startDate', query.startDate.trim());
+  if (query.endDate?.trim()) params.set('endDate', query.endDate.trim());
   if (query.page) params.set('page', String(query.page));
   if (query.pageSize) params.set('pageSize', String(query.pageSize));
   const queryString = params.toString();

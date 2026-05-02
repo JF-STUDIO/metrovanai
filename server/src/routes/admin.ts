@@ -153,7 +153,11 @@ app.get('/api/admin/billing-ledger', (req, res) => {
   const search = String(req.query.search ?? '').trim().toLowerCase();
   const type = String(req.query.type ?? 'all');
   const page = Math.max(1, Math.round(Number(req.query.page ?? 1)));
-  const pageSize = Math.max(1, Math.min(200, Math.round(Number(req.query.pageSize ?? 50))));
+  const pageSize = Math.max(1, Math.min(5000, Math.round(Number(req.query.pageSize ?? 50))));
+  const startDate = String(req.query.startDate ?? '').trim();
+  const endDate = String(req.query.endDate ?? '').trim();
+  const startTime = startDate ? Date.parse(`${startDate}T00:00:00.000Z`) : null;
+  const endTime = endDate ? Date.parse(`${endDate}T23:59:59.999Z`) : null;
   const usersByKey = new Map<string, UserRecord>(store.listUsers().map((user: UserRecord) => [user.userKey, user]));
   const allEntries = store
     .listUsers()
@@ -166,6 +170,9 @@ app.get('/api/admin/billing-ledger', (req, res) => {
       }))
     )
     .filter((entry: BillingEntry & { userId: string; userEmail: string; userDisplayName: string }) => {
+      const createdTime = Date.parse(entry.createdAt);
+      if (Number.isFinite(startTime) && Number.isFinite(createdTime) && createdTime < startTime!) return false;
+      if (Number.isFinite(endTime) && Number.isFinite(createdTime) && createdTime > endTime!) return false;
       if (type === 'charge' || type === 'credit') {
         if (entry.type !== type) return false;
       }
