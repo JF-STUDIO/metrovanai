@@ -52,7 +52,7 @@ import {
   adjustAdminUserBilling,
   fetchAdminActivationCodes,
   fetchAdminAuditLogs,
-  fetchAdminBillingLedger,
+  fetchAdminBillingUsers,
   fetchAdminFailedPhotos,
   fetchAdminOpsHealth,
   fetchAdminOrderRefundPreview,
@@ -104,8 +104,8 @@ import {
 import type {
   AdminActivationCode,
   AdminAuditLogEntry,
-  AdminBillingLedgerPayload,
-  AdminBillingLedgerRow,
+  AdminBillingUserSummaryPayload,
+  AdminBillingUserSummaryRow,
   AdminMaintenanceReportSummary,
   AdminOpsHealthPayload,
   AdminProjectCostsPayload,
@@ -338,22 +338,21 @@ function App() {
   const [adminProjectsPageCount, setAdminProjectsPageCount] = useState(1);
   const [adminOrdersLoaded, setAdminOrdersLoaded] = useState(false);
   const [adminOrdersBusy, setAdminOrdersBusy] = useState(false);
-  const [adminBillingLedger, setAdminBillingLedger] = useState<AdminBillingLedgerRow[]>([]);
-  const [adminBillingLedgerTotals, setAdminBillingLedgerTotals] = useState<AdminBillingLedgerPayload['totals']>({
-    chargePoints: 0,
-    creditPoints: 0,
-    amountUsd: 0
-  });
-  const [adminBillingLedgerTotal, setAdminBillingLedgerTotal] = useState(0);
-  const [adminBillingLedgerPage, setAdminBillingLedgerPage] = useState(1);
-  const [adminBillingLedgerPageCount, setAdminBillingLedgerPageCount] = useState(1);
   const [adminBillingLedgerSearch, setAdminBillingLedgerSearch] = useState('');
-  const [adminBillingLedgerType, setAdminBillingLedgerType] = useState<'all' | 'charge' | 'credit'>('charge');
-  const [adminBillingLedgerDatePreset, setAdminBillingLedgerDatePreset] = useState<AdminBillingLedgerDatePreset>('30d');
-  const [adminBillingLedgerStartDate, setAdminBillingLedgerStartDate] = useState('');
-  const [adminBillingLedgerEndDate, setAdminBillingLedgerEndDate] = useState('');
-  const [adminBillingLedgerLoaded, setAdminBillingLedgerLoaded] = useState(false);
-  const [adminBillingLedgerBusy, setAdminBillingLedgerBusy] = useState(false);
+  const [adminBillingUsers, setAdminBillingUsers] = useState<AdminBillingUserSummaryRow[]>([]);
+  const [adminBillingUserTotals, setAdminBillingUserTotals] = useState<AdminBillingUserSummaryPayload['totals']>({
+    totalPaidUsd: 0,
+    totalGrantedPoints: 0,
+    totalChargedPoints: 0,
+    availablePoints: 0,
+    runningHubRuns: 0,
+    runningHubCostUsd: 0,
+    profitUsd: 0
+  });
+  const [adminBillingUserTotal, setAdminBillingUserTotal] = useState(0);
+  const [adminBillingUserUnitUsd, setAdminBillingUserUnitUsd] = useState(0.07);
+  const [adminBillingUsersLoaded, setAdminBillingUsersLoaded] = useState(false);
+  const [adminBillingUsersBusy, setAdminBillingUsersBusy] = useState(false);
   const [adminProjectCosts, setAdminProjectCosts] = useState<AdminProjectCostRow[]>([]);
   const [adminProjectCostTotal, setAdminProjectCostTotal] = useState(0);
   const [adminProjectCostTotals, setAdminProjectCostTotals] = useState<AdminProjectCostsPayload['totals']>({
@@ -1127,12 +1126,12 @@ function App() {
   }, [activeRoute, adminOrdersLoaded, hasAdminSession, locale]);
 
   useEffect(() => {
-    if (activeRoute !== 'admin' || adminConsolePage !== 'billing' || !hasAdminSession || adminBillingLedgerLoaded) {
+    if (activeRoute !== 'admin' || adminConsolePage !== 'billing' || !hasAdminSession || adminBillingUsersLoaded) {
       return;
     }
 
-    void handleAdminLoadBillingLedger(1);
-  }, [activeRoute, adminBillingLedgerLoaded, adminConsolePage, hasAdminSession]);
+    void handleAdminLoadBillingUsers();
+  }, [activeRoute, adminBillingUsersLoaded, adminConsolePage, hasAdminSession]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || adminConsolePage !== 'costs' || !hasAdminSession || adminProjectCostsLoaded) {
@@ -2218,42 +2217,31 @@ function App() {
     return { startDate: '', endDate: '' };
   }
 
-  function getAdminBillingLedgerDateRange() {
-    return getAdminDateRange(adminBillingLedgerDatePreset, adminBillingLedgerStartDate, adminBillingLedgerEndDate);
-  }
-
   function getAdminProjectCostDateRange() {
     return getAdminDateRange(adminProjectCostDatePreset, adminProjectCostStartDate, adminProjectCostEndDate);
   }
 
-  async function handleAdminLoadBillingLedger(page = 1) {
+  async function handleAdminLoadBillingUsers() {
     if (!hasAdminSession) {
       setAdminMessage('请先用管理员账号登录。');
       return;
     }
 
-    setAdminBillingLedgerBusy(true);
+    setAdminBillingUsersBusy(true);
     setAdminMessage('');
     try {
-      const response = await fetchAdminBillingLedger({
-        search: adminBillingLedgerSearch,
-        type: adminBillingLedgerType,
-        ...getAdminBillingLedgerDateRange(),
-        page,
-        pageSize: 50
-      });
-      setAdminBillingLedger(response.items);
-      setAdminBillingLedgerTotals(response.totals);
-      setAdminBillingLedgerTotal(response.total);
-      setAdminBillingLedgerPage(response.page);
-      setAdminBillingLedgerPageCount(response.pageCount);
-      setAdminBillingLedgerLoaded(true);
-      setAdminMessage(response.total ? `已载入 ${response.total.toLocaleString()} 条账单流水。` : '没有匹配的账单流水。');
+      const response = await fetchAdminBillingUsers({ search: adminBillingLedgerSearch });
+      setAdminBillingUsers(response.items);
+      setAdminBillingUserTotals(response.totals);
+      setAdminBillingUserTotal(response.total);
+      setAdminBillingUserUnitUsd(response.unitCostUsd);
+      setAdminBillingUsersLoaded(true);
+      setAdminMessage(response.total ? `已载入 ${response.total.toLocaleString()} 个用户账单汇总。` : '没有匹配的用户账单。');
     } catch (error) {
-      setAdminBillingLedgerLoaded(true);
-      setAdminMessage(getUserFacingErrorMessage(error, '账单流水读取失败。', locale));
+      setAdminBillingUsersLoaded(true);
+      setAdminMessage(getUserFacingErrorMessage(error, '用户账单汇总读取失败。', locale));
     } finally {
-      setAdminBillingLedgerBusy(false);
+      setAdminBillingUsersBusy(false);
     }
   }
 
@@ -3240,43 +3228,38 @@ function App() {
     downloadCSV(`metrovan-orders-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
   }
 
-  async function exportAdminBillingLedgerCSV() {
+  async function exportAdminBillingUsersCSV() {
     if (!hasAdminSession) {
       setAdminMessage('请先用管理员账号登录。');
       return;
     }
 
-    setAdminBillingLedgerBusy(true);
+    setAdminBillingUsersBusy(true);
     setAdminMessage('');
     try {
-      const response = await fetchAdminBillingLedger({
-        search: adminBillingLedgerSearch,
-        type: adminBillingLedgerType,
-        ...getAdminBillingLedgerDateRange(),
-        page: 1,
-        pageSize: Math.max(1, Math.min(5000, adminBillingLedgerTotal || 5000))
-      });
-      const header = ['流水ID', 'Email', '姓名', '类型', '积分', '金额USD', '项目', '备注', '兑换码', '时间'].join(',');
-      const rows = response.items.map((entry) =>
+      const response = await fetchAdminBillingUsers({ search: adminBillingLedgerSearch });
+      const header = ['Email', '姓名', '充值USD', '获得积分', '使用积分', '剩余积分', 'RunningHub次数', 'RunningHub成本USD', '利润USD', '项目数', '结果数'].join(',');
+      const rows = response.items.map((row) =>
         [
-          entry.id,
-          entry.userEmail,
-          entry.userDisplayName,
-          entry.type === 'charge' ? '扣费' : '入账',
-          `${entry.type === 'charge' ? '-' : '+'}${entry.points}`,
-          entry.amountUsd.toFixed(2),
-          entry.projectName,
-          entry.note,
-          entry.activationCode ?? entry.activationCodeLabel ?? '',
-          entry.createdAt
+          row.userEmail,
+          row.userDisplayName,
+          row.totalPaidUsd.toFixed(2),
+          row.totalGrantedPoints,
+          row.totalChargedPoints,
+          row.availablePoints,
+          row.runningHubRuns,
+          row.runningHubCostUsd.toFixed(2),
+          row.profitUsd.toFixed(2),
+          row.projectCount,
+          row.resultCount
         ].map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')
       );
-      downloadCSV(`metrovan-billing-ledger-${adminBillingLedgerType}-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
-      setAdminMessage(`已导出 ${response.items.length.toLocaleString()} 条账单流水。`);
+      downloadCSV(`metrovan-user-billing-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+      setAdminMessage(`已导出 ${response.items.length.toLocaleString()} 个用户账单汇总。`);
     } catch (error) {
-      setAdminMessage(getUserFacingErrorMessage(error, '账单流水导出失败。', locale));
+      setAdminMessage(getUserFacingErrorMessage(error, '用户账单汇总导出失败。', locale));
     } finally {
-      setAdminBillingLedgerBusy(false);
+      setAdminBillingUsersBusy(false);
     }
   }
 
@@ -6335,22 +6318,22 @@ function App() {
     const renderBillingLedgerPage = () => (
       <div className="page-content active">
         {adminPageTitle(
-          '账单流水',
-          <>全站积分扣费与入账 · 当前匹配 <span className="mono accent-text">{adminBillingLedgerTotal.toLocaleString()}</span> 条</>,
+          '用户账单',
+          <>按用户汇总充值、积分、RunningHub 成本和利润 · 当前匹配 <span className="mono accent-text">{adminBillingUserTotal.toLocaleString()}</span> 人</>,
           <>
-            <button className="btn btn-ghost" type="button" onClick={() => void exportAdminBillingLedgerCSV()} disabled={adminBillingLedgerBusy || !adminBillingLedgerTotal}>
+            <button className="btn btn-ghost" type="button" onClick={() => void exportAdminBillingUsersCSV()} disabled={adminBillingUsersBusy || !adminBillingUserTotal}>
               导出 CSV
             </button>
-            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadBillingLedger(1)} disabled={adminBillingLedgerBusy}>
-              {adminBillingLedgerBusy ? '处理中...' : '查询流水'}
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadBillingUsers()} disabled={adminBillingUsersBusy}>
+              {adminBillingUsersBusy ? '查询中...' : '查询用户账单'}
             </button>
           </>
         )}
         <div className="kpi-grid">
-          {kpi('扣费积分', <>{adminBillingLedgerTotals.chargePoints.toLocaleString()}<span className="unit">pts</span></>, <span>当前筛选</span>, adminBillingLedgerTotals.chargePoints ? 'down' : 'up')}
-          {kpi('入账积分', <>{adminBillingLedgerTotals.creditPoints.toLocaleString()}<span className="unit">pts</span></>, <span>当前筛选</span>)}
-          {kpi('入账金额', <>${adminBillingLedgerTotals.amountUsd.toFixed(2)}</>, <span>充值/补款</span>)}
-          {kpi('当前页', <>{adminBillingLedgerPage}<span className="unit">/ {adminBillingLedgerPageCount}</span></>, <span>每页 50 条</span>)}
+          {kpi('充值金额', <>${adminBillingUserTotals.totalPaidUsd.toFixed(2)}</>, <span>实收现金</span>)}
+          {kpi('RunningHub 成本', <>${adminBillingUserTotals.runningHubCostUsd.toFixed(2)}</>, <span>{adminBillingUserTotals.runningHubRuns.toLocaleString()} × ${adminBillingUserUnitUsd.toFixed(2)}</span>, adminBillingUserTotals.runningHubCostUsd ? 'down' : 'up')}
+          {kpi('当前利润', <>${adminBillingUserTotals.profitUsd.toFixed(2)}</>, <span>充值 - 成本</span>, adminBillingUserTotals.profitUsd < 0 ? 'down' : 'up')}
+          {kpi('剩余积分', <>{adminBillingUserTotals.availablePoints.toLocaleString()}<span className="unit">pts</span></>, <span>用户余额</span>)}
         </div>
         <div className="card">
           <div className="toolbar">
@@ -6358,119 +6341,67 @@ function App() {
               value={adminBillingLedgerSearch}
               onChange={(event) => {
                 setAdminBillingLedgerSearch(event.target.value);
-                setAdminBillingLedgerLoaded(false);
+                setAdminBillingUsersLoaded(false);
               }}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleAdminLoadBillingLedger(1);
+                if (event.key === 'Enter') void handleAdminLoadBillingUsers();
               }}
-              placeholder="搜索邮箱 / 用户名 / 项目名 / 备注 / 兑换码"
+              placeholder="搜索邮箱 / 用户名 / userKey"
             />
-            <select
-              value={adminBillingLedgerType}
-              onChange={(event) => {
-                setAdminBillingLedgerType(event.target.value as typeof adminBillingLedgerType);
-                setAdminBillingLedgerLoaded(false);
-              }}
-            >
-              <option value="charge">只看扣费</option>
-              <option value="credit">只看入账</option>
-              <option value="all">全部流水</option>
-            </select>
-            <select
-              value={adminBillingLedgerDatePreset}
-              onChange={(event) => {
-                setAdminBillingLedgerDatePreset(event.target.value as AdminBillingLedgerDatePreset);
-                setAdminBillingLedgerLoaded(false);
-              }}
-            >
-              <option value="30d">最近 30 天</option>
-              <option value="today">今天</option>
-              <option value="week">本周</option>
-              <option value="month">本月</option>
-              <option value="all">全部日期</option>
-              <option value="custom">自定义日期</option>
-            </select>
-            {adminBillingLedgerDatePreset === 'custom' ? (
-              <>
-                <input
-                  type="date"
-                  value={adminBillingLedgerStartDate}
-                  onChange={(event) => {
-                    setAdminBillingLedgerStartDate(event.target.value);
-                    setAdminBillingLedgerLoaded(false);
-                  }}
-                  aria-label="开始日期"
-                />
-                <input
-                  type="date"
-                  value={adminBillingLedgerEndDate}
-                  onChange={(event) => {
-                    setAdminBillingLedgerEndDate(event.target.value);
-                    setAdminBillingLedgerLoaded(false);
-                  }}
-                  aria-label="结束日期"
-                />
-              </>
-            ) : null}
           </div>
-          {adminBillingLedger.length ? (
-            <>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>用户</th>
-                      <th>类型</th>
-                      <th>积分</th>
-                      <th>金额</th>
-                      <th>项目 / 备注</th>
-                      <th>时间</th>
-                      <th>操作</th>
+          <div className="admin-health-ok">
+            利润按实际充值金额 - 当前 RunningHub 次数 × $0.07 计算；重试和重修都会增加成本，免费赠送积分不会算成收入。
+          </div>
+          {adminBillingUsers.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>用户</th>
+                    <th>充值</th>
+                    <th>积分</th>
+                    <th>RunningHub</th>
+                    <th>成本</th>
+                    <th>利润</th>
+                    <th>项目 / 结果</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminBillingUsers.map((row, index) => (
+                    <tr key={row.userId}>
+                      <td>
+                        <div className="user-cell">
+                          <div className={userAvatarClass(index)}>{getAdminInitials(row.userDisplayName || row.userEmail)}</div>
+                          <div>
+                            <div className="name">{row.userDisplayName}</div>
+                            <div className="email">{row.userEmail || row.userKey}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="mono">${row.totalPaidUsd.toFixed(2)}</td>
+                      <td>
+                        <div className="admin-status-stack">
+                          <span className="mono">剩 {row.availablePoints.toLocaleString()} pts</span>
+                          <small>获 {row.totalGrantedPoints.toLocaleString()} · 用 {row.totalChargedPoints.toLocaleString()}</small>
+                        </div>
+                      </td>
+                      <td className="mono">{row.runningHubRuns.toLocaleString()} 次 <span className="text-muted">({row.workflowRuns}+{row.regenerationRuns})</span></td>
+                      <td className="mono">${row.runningHubCostUsd.toFixed(2)}</td>
+                      <td className={row.profitUsd < 0 ? 'mono danger-text' : 'mono accent-text'}>${row.profitUsd.toFixed(2)}</td>
+                      <td className="mono">{row.projectCount} / {row.resultCount}</td>
+                      <td>
+                        <button className="tbl-icon tbl-icon-text" type="button" onClick={() => void handleAdminOpenUserBilling(row.userId)} title="查看用户明细">
+                          账
+                        </button>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {adminBillingLedger.map((entry, index) => (
-                      <tr key={entry.id}>
-                        <td>
-                          <div className="user-cell">
-                            <div className={userAvatarClass(index)}>{getAdminInitials(entry.userDisplayName || entry.userEmail)}</div>
-                            <div>
-                              <div className="name">{entry.userDisplayName}</div>
-                              <div className="email">{entry.userEmail}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td><span className={entry.type === 'charge' ? 'tag tag-red' : 'tag tag-green'}>{entry.type === 'charge' ? '扣费' : '入账'}</span></td>
-                        <td className="mono">{entry.type === 'charge' ? '-' : '+'}{entry.points.toLocaleString()} pts</td>
-                        <td className="mono">{entry.amountUsd > 0 ? `$${entry.amountUsd.toFixed(2)}` : '—'}</td>
-                        <td>
-                          <div className="admin-status-stack">
-                            <span>{getBillingEntryAdminLabel(entry)}</span>
-                            {entry.note && entry.note !== getBillingEntryAdminLabel(entry) ? <small>{entry.note}</small> : null}
-                          </div>
-                        </td>
-                        <td className="cell-id">{formatAdminDate(entry.createdAt)}</td>
-                        <td>
-                          <button className="tbl-icon tbl-icon-text" type="button" onClick={() => void handleAdminOpenUserBilling(entry.userId)} title="查看用户账单">
-                            账
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="pagination">
-                <span>显示 {adminBillingLedger.length} / {adminBillingLedgerTotal.toLocaleString()} 条 · 第 {adminBillingLedgerPage} / {adminBillingLedgerPageCount} 页</span>
-                <div className="page-btns">
-                  <button className="page-btn" type="button" onClick={() => void handleAdminLoadBillingLedger(Math.max(1, adminBillingLedgerPage - 1))} disabled={adminBillingLedgerBusy || adminBillingLedgerPage <= 1}>‹</button>
-                  <span className="page-btn active">{adminBillingLedgerPage}</span>
-                  <button className="page-btn" type="button" onClick={() => void handleAdminLoadBillingLedger(Math.min(adminBillingLedgerPageCount, adminBillingLedgerPage + 1))} disabled={adminBillingLedgerBusy || adminBillingLedgerPage >= adminBillingLedgerPageCount}>›</button>
-                </div>
-              </div>
-            </>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
-            <div className="empty-tip">{adminBillingLedgerBusy ? '正在查询账单流水...' : '没有匹配的账单流水。'}</div>
+            <div className="empty-tip">{adminBillingUsersBusy ? '正在查询用户账单...' : '没有匹配的用户账单。'}</div>
           )}
         </div>
       </div>

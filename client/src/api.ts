@@ -498,6 +498,40 @@ export interface AdminBillingLedgerPayload {
   items: AdminBillingLedgerRow[];
 }
 
+export interface AdminBillingUserSummaryRow {
+  userId: string;
+  userKey: string;
+  userEmail: string;
+  userDisplayName: string;
+  totalPaidUsd: number;
+  totalGrantedPoints: number;
+  totalChargedPoints: number;
+  availablePoints: number;
+  projectCount: number;
+  resultCount: number;
+  runningHubRuns: number;
+  workflowRuns: number;
+  regenerationRuns: number;
+  runningHubCostUsd: number;
+  profitUsd: number;
+  lastSeenAt: string;
+}
+
+export interface AdminBillingUserSummaryPayload {
+  unitCostUsd: number;
+  total: number;
+  totals: {
+    totalPaidUsd: number;
+    totalGrantedPoints: number;
+    totalChargedPoints: number;
+    availablePoints: number;
+    runningHubRuns: number;
+    runningHubCostUsd: number;
+    profitUsd: number;
+  };
+  items: AdminBillingUserSummaryRow[];
+}
+
 export interface AdminProjectCostRow {
   projectId: string;
   projectName: string;
@@ -1155,6 +1189,13 @@ export async function fetchAdminBillingLedger(query: {
   if (query.pageSize) params.set('pageSize', String(query.pageSize));
   const queryString = params.toString();
   return await jsonRequest<AdminBillingLedgerPayload>(`/api/admin/billing-ledger${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function fetchAdminBillingUsers(query: { search?: string } = {}) {
+  const params = new URLSearchParams();
+  if (query.search?.trim()) params.set('search', query.search.trim());
+  const queryString = params.toString();
+  return await jsonRequest<AdminBillingUserSummaryPayload>(`/api/admin/billing-users${queryString ? `?${queryString}` : ''}`);
 }
 
 export async function fetchAdminProjectCosts(query: {

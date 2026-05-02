@@ -216,6 +216,123 @@ app.get('/api/admin/billing-ledger', (req, res) => {
   });
 });
 
+app.get('/api/admin/billing-users', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const runningHubUnitCostUsd = 0.07;
+  const search = String(req.query.search ?? '').trim().toLowerCase();
+  const projects: ProjectRecord[] = listAllProjectsForAdmin();
+  type AdminBillingUserRow = {
+    userId: string;
+    userKey: string;
+    userEmail: string;
+    userDisplayName: string;
+    totalPaidUsd: number;
+    totalGrantedPoints: number;
+    totalChargedPoints: number;
+    availablePoints: number;
+    projectCount: number;
+    resultCount: number;
+    runningHubRuns: number;
+    workflowRuns: number;
+    regenerationRuns: number;
+    runningHubCostUsd: number;
+    profitUsd: number;
+    lastSeenAt: string;
+  };
+  const rows: AdminBillingUserRow[] = store
+    .listUsers()
+    .map((user: UserRecord) => {
+      const entries = store.listBillingEntries(user.userKey);
+      const totalPaidUsd = Number(
+        entries
+          .filter((entry: BillingEntry) => !entry.projectId && entry.amountUsd > 0)
+          .reduce((sum, entry) => sum + (entry.type === 'credit' ? entry.amountUsd : -entry.amountUsd), 0)
+          .toFixed(2)
+      );
+      const totalGrantedPoints = entries
+        .filter((entry: BillingEntry) => entry.type === 'credit' && !entry.projectId)
+        .reduce((sum, entry) => sum + entry.points, 0);
+      const totalChargedPoints = entries
+        .filter((entry: BillingEntry) => entry.type === 'charge')
+        .reduce((sum, entry) => sum + entry.points, 0);
+      const totalCreditedPoints = entries
+        .filter((entry: BillingEntry) => entry.type === 'credit')
+        .reduce((sum, entry) => sum + entry.points, 0);
+      const availablePoints = Math.max(0, totalCreditedPoints - totalChargedPoints);
+      const userProjects = projects.filter((project: ProjectRecord) => project.userKey === user.userKey);
+      const workflowRuns = userProjects.reduce((sum: number, project: ProjectRecord) => {
+        const recordedRuns = project.hdrItems.reduce((itemSum: number, item) => {
+          const count = Math.max(
+            item.workflow?.runningHubTaskId ? 1 : 0,
+            Math.round(Number(item.workflow?.runningHubRunCount ?? 0))
+          );
+          return itemSum + count;
+        }, 0);
+        return sum + Math.max(recordedRuns, project.resultAssets.length);
+      }, 0);
+      const regenerationRuns = userProjects.reduce(
+        (sum: number, project: ProjectRecord) =>
+          sum +
+          project.hdrItems.reduce((itemSum: number, item) => {
+            const count = Math.max(
+              item.regeneration?.taskId ? 1 : 0,
+              Math.round(Number(item.regeneration?.runningHubRunCount ?? 0))
+            );
+            return itemSum + count;
+          }, 0),
+        0
+      );
+      const runningHubRuns = workflowRuns + regenerationRuns;
+      const runningHubCostUsd = Number((runningHubRuns * runningHubUnitCostUsd).toFixed(2));
+      const profitUsd = Number((totalPaidUsd - runningHubCostUsd).toFixed(2));
+      return {
+        userId: user.id,
+        userKey: user.userKey,
+        userEmail: user.email,
+        userDisplayName: user.displayName,
+        totalPaidUsd,
+        totalGrantedPoints,
+        totalChargedPoints,
+        availablePoints,
+        projectCount: userProjects.length,
+        resultCount: userProjects.reduce((sum: number, project: ProjectRecord) => sum + project.resultAssets.length, 0),
+        runningHubRuns,
+        workflowRuns,
+        regenerationRuns,
+        runningHubCostUsd,
+        profitUsd,
+        lastSeenAt: user.lastLoginAt ?? user.updatedAt ?? user.createdAt
+      };
+    })
+    .filter((row: AdminBillingUserRow) => {
+      if (!search) return true;
+      return [row.userKey, row.userEmail, row.userDisplayName]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(search);
+    })
+    .sort((a: AdminBillingUserRow, b: AdminBillingUserRow) => b.totalPaidUsd - a.totalPaidUsd || b.runningHubCostUsd - a.runningHubCostUsd);
+
+  res.json({
+    unitCostUsd: runningHubUnitCostUsd,
+    total: rows.length,
+    totals: {
+      totalPaidUsd: Number(rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.totalPaidUsd, 0).toFixed(2)),
+      totalGrantedPoints: rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.totalGrantedPoints, 0),
+      totalChargedPoints: rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.totalChargedPoints, 0),
+      availablePoints: rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.availablePoints, 0),
+      runningHubRuns: rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.runningHubRuns, 0),
+      runningHubCostUsd: Number(rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.runningHubCostUsd, 0).toFixed(2)),
+      profitUsd: Number(rows.reduce((sum: number, row: AdminBillingUserRow) => sum + row.profitUsd, 0).toFixed(2))
+    },
+    items: rows.slice(0, 500)
+  });
+});
+
 app.get('/api/admin/project-costs', (req, res) => {
   if (!requireAdminApiAccess(req, res)) {
     return;
