@@ -525,6 +525,7 @@ export interface AdminProjectCostRow {
 
 export interface AdminProjectCostsPayload {
   unitCostUsd: number;
+  total: number;
   totals: {
     projects: number;
     revenueUsd: number;
@@ -1124,8 +1125,17 @@ export async function fetchAdminBillingLedger(query: {
   return await jsonRequest<AdminBillingLedgerPayload>(`/api/admin/billing-ledger${queryString ? `?${queryString}` : ''}`);
 }
 
-export async function fetchAdminProjectCosts() {
-  return await jsonRequest<AdminProjectCostsPayload>('/api/admin/project-costs');
+export async function fetchAdminProjectCosts(query: {
+  search?: string;
+  startDate?: string;
+  endDate?: string;
+} = {}) {
+  const params = new URLSearchParams();
+  if (query.search?.trim()) params.set('search', query.search.trim());
+  if (query.startDate?.trim()) params.set('startDate', query.startDate.trim());
+  if (query.endDate?.trim()) params.set('endDate', query.endDate.trim());
+  const queryString = params.toString();
+  return await jsonRequest<AdminProjectCostsPayload>(`/api/admin/project-costs${queryString ? `?${queryString}` : ''}`);
 }
 
 export async function fetchAdminOrderRefundPreview(orderId: string) {

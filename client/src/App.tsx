@@ -238,6 +238,7 @@ const STRIPE_RETURN_PROJECT_STORAGE_KEY = 'metrovanai_stripe_return_project_id';
 const ADMIN_PROJECT_PAGE_SIZE = 200;
 const ADMIN_FAILED_PHOTOS_PAGE_SIZE = 50;
 type AdminBillingLedgerDatePreset = 'all' | 'today' | 'week' | 'month' | '30d' | 'custom';
+type AdminProjectCostDatePreset = AdminBillingLedgerDatePreset;
 
 function isAdminBillingAdjustmentEntry(entry: BillingEntry) {
   return entry.amountUsd === 0 && !entry.projectId && !entry.projectName && entry.note.startsWith('Admin adjustment:');
@@ -351,6 +352,7 @@ function App() {
   const [adminBillingLedgerLoaded, setAdminBillingLedgerLoaded] = useState(false);
   const [adminBillingLedgerBusy, setAdminBillingLedgerBusy] = useState(false);
   const [adminProjectCosts, setAdminProjectCosts] = useState<AdminProjectCostRow[]>([]);
+  const [adminProjectCostTotal, setAdminProjectCostTotal] = useState(0);
   const [adminProjectCostTotals, setAdminProjectCostTotals] = useState<AdminProjectCostsPayload['totals']>({
     projects: 0,
     revenueUsd: 0,
@@ -362,6 +364,10 @@ function App() {
     netPoints: 0
   });
   const [adminProjectCostUnitUsd, setAdminProjectCostUnitUsd] = useState(0.07);
+  const [adminProjectCostSearch, setAdminProjectCostSearch] = useState('');
+  const [adminProjectCostDatePreset, setAdminProjectCostDatePreset] = useState<AdminProjectCostDatePreset>('30d');
+  const [adminProjectCostStartDate, setAdminProjectCostStartDate] = useState('');
+  const [adminProjectCostEndDate, setAdminProjectCostEndDate] = useState('');
   const [adminProjectCostsLoaded, setAdminProjectCostsLoaded] = useState(false);
   const [adminProjectCostsBusy, setAdminProjectCostsBusy] = useState(false);
   const [adminRefundOrder, setAdminRefundOrder] = useState<PaymentOrderRecord | null>(null);
@@ -2154,34 +2160,46 @@ function App() {
     }
   }
 
-  function getAdminBillingLedgerDateRange() {
+  function getAdminDateRange(
+    preset: AdminBillingLedgerDatePreset,
+    customStartDate: string,
+    customEndDate: string
+  ) {
     const today = new Date();
     const endDate = formatDateInputValue(today);
     const start = new Date(today);
-    if (adminBillingLedgerDatePreset === 'today') {
+    if (preset === 'today') {
       return { startDate: endDate, endDate };
     }
-    if (adminBillingLedgerDatePreset === 'week') {
+    if (preset === 'week') {
       const day = today.getDay();
       const daysFromMonday = day === 0 ? 6 : day - 1;
       start.setDate(today.getDate() - daysFromMonday);
       return { startDate: formatDateInputValue(start), endDate };
     }
-    if (adminBillingLedgerDatePreset === 'month') {
+    if (preset === 'month') {
       start.setDate(1);
       return { startDate: formatDateInputValue(start), endDate };
     }
-    if (adminBillingLedgerDatePreset === '30d') {
+    if (preset === '30d') {
       start.setDate(today.getDate() - 29);
       return { startDate: formatDateInputValue(start), endDate };
     }
-    if (adminBillingLedgerDatePreset === 'custom') {
+    if (preset === 'custom') {
       return {
-        startDate: adminBillingLedgerStartDate,
-        endDate: adminBillingLedgerEndDate
+        startDate: customStartDate,
+        endDate: customEndDate
       };
     }
     return { startDate: '', endDate: '' };
+  }
+
+  function getAdminBillingLedgerDateRange() {
+    return getAdminDateRange(adminBillingLedgerDatePreset, adminBillingLedgerStartDate, adminBillingLedgerEndDate);
+  }
+
+  function getAdminProjectCostDateRange() {
+    return getAdminDateRange(adminProjectCostDatePreset, adminProjectCostStartDate, adminProjectCostEndDate);
   }
 
   async function handleAdminLoadBillingLedger(page = 1) {
@@ -2224,12 +2242,16 @@ function App() {
     setAdminProjectCostsBusy(true);
     setAdminMessage('');
     try {
-      const response = await fetchAdminProjectCosts();
+      const response = await fetchAdminProjectCosts({
+        search: adminProjectCostSearch,
+        ...getAdminProjectCostDateRange()
+      });
       setAdminProjectCosts(response.items);
+      setAdminProjectCostTotal(response.total);
       setAdminProjectCostTotals(response.totals);
       setAdminProjectCostUnitUsd(response.unitCostUsd);
       setAdminProjectCostsLoaded(true);
-      setAdminMessage(`已载入 ${response.items.length.toLocaleString()} 个项目成本。`);
+      setAdminMessage(response.total ? `已载入 ${response.total.toLocaleString()} 个项目成本。` : '没有匹配的项目成本。');
     } catch (error) {
       setAdminProjectCostsLoaded(true);
       setAdminMessage(getUserFacingErrorMessage(error, '项目成本读取失败。', locale));
@@ -6408,9 +6430,9 @@ function App() {
       <div className="page-content active">
         {adminPageTitle(
           '成本利润',
-          <>RunningHub 单次成本 <span className="mono accent-text">${adminProjectCostUnitUsd.toFixed(2)}</span> · 重试按再次进入 RunningHub 计费</>,
+          <>当前匹配 <span className="mono accent-text">{adminProjectCostTotal.toLocaleString()}</span> 项 · RunningHub 单次成本 <span className="mono accent-text">${adminProjectCostUnitUsd.toFixed(2)}</span></>,
           <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadProjectCosts()} disabled={adminProjectCostsBusy}>
-            {adminProjectCostsBusy ? '刷新中...' : '刷新成本'}
+            {adminProjectCostsBusy ? '查询中...' : '查询成本'}
           </button>
         )}
         <div className="kpi-grid">
@@ -6421,6 +6443,55 @@ function App() {
           {kpi('估算利润', <>${adminProjectCostTotals.profitUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.projects.toLocaleString()} 项</span>, adminProjectCostTotals.profitUsd < 0 ? 'down' : 'up')}
         </div>
         <div className="card">
+          <div className="toolbar">
+            <input
+              value={adminProjectCostSearch}
+              onChange={(event) => {
+                setAdminProjectCostSearch(event.target.value);
+                setAdminProjectCostsLoaded(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleAdminLoadProjectCosts();
+              }}
+              placeholder="搜索用户 / 邮箱 / 项目名 / 项目ID"
+            />
+            <select
+              value={adminProjectCostDatePreset}
+              onChange={(event) => {
+                setAdminProjectCostDatePreset(event.target.value as AdminProjectCostDatePreset);
+                setAdminProjectCostsLoaded(false);
+              }}
+            >
+              <option value="30d">最近 30 天</option>
+              <option value="today">今天</option>
+              <option value="week">本周</option>
+              <option value="month">本月</option>
+              <option value="all">全部日期</option>
+              <option value="custom">自定义日期</option>
+            </select>
+            {adminProjectCostDatePreset === 'custom' ? (
+              <>
+                <input
+                  type="date"
+                  value={adminProjectCostStartDate}
+                  onChange={(event) => {
+                    setAdminProjectCostStartDate(event.target.value);
+                    setAdminProjectCostsLoaded(false);
+                  }}
+                  aria-label="成本开始日期"
+                />
+                <input
+                  type="date"
+                  value={adminProjectCostEndDate}
+                  onChange={(event) => {
+                    setAdminProjectCostEndDate(event.target.value);
+                    setAdminProjectCostsLoaded(false);
+                  }}
+                  aria-label="成本结束日期"
+                />
+              </>
+            ) : null}
+          </div>
           <div className="admin-health-ok">
             实收估算按用户已充值金额 / 非项目到账积分的平均点价计算，后台赠送和重修退回会摊低点价；扣点标价按 $0.25/pt 显示。
           </div>
