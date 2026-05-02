@@ -207,8 +207,22 @@ app.post('/api/auth/email-verification/confirm', async (req, res) => {
     return;
   }
 
-  const verificationToken = store.getEmailVerificationTokenByHash(hashSessionToken(parsed.data.token));
+  const verificationTokenHash = hashSessionToken(parsed.data.token);
+  const verificationToken = store.getEmailVerificationTokenByHash(verificationTokenHash);
   if (!verificationToken) {
+    const existingToken = store.getEmailVerificationTokenRecordByHash(verificationTokenHash);
+    const existingUser = existingToken ? store.getUserById(existingToken.userId) : null;
+    if (existingUser?.emailVerifiedAt && !isUserDisabled(existingUser)) {
+      const token = createSessionToken();
+      const csrfToken = createSessionToken();
+      const secureCookies = shouldUseSecureCookies(req);
+      store.markUserLoggedIn(existingUser.id);
+      store.createSession(existingUser.id, hashSessionToken(token), AUTH_SESSION_TTL_MS, hashSessionToken(csrfToken));
+      appendSetCookie(res, buildSessionCookie(token, secureCookies));
+      res.json({ session: buildAuthSessionResponse(store.getUserById(existingUser.id) ?? existingUser, csrfToken) });
+      return;
+    }
+
     res.status(400).json({ error: '该验证链接无效或已过期，请重新发送验证邮件。' });
     return;
   }
@@ -269,7 +283,7 @@ app.post('/api/auth/email-verification/resend', async (req, res) => {
   const user = store.getUserByEmail(email);
   if (user && !isUserDisabled(user) && !user.emailVerifiedAt) {
     try {
-      await sendVerificationForUser(req, user);
+      await sendVerificationForUser(req, user, { force: true });
     } catch (error) {
       console.error('Email verification resend failed:', error);
     }

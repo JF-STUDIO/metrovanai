@@ -144,6 +144,24 @@ assertIncludes(
   'Trial-only accounts must receive restricted single-image result downloads.'
 );
 
+assertIncludes(
+  'server/src/index.ts',
+  'getActiveEmailVerificationTokenForUser(user.id)',
+  'Login/register email verification must reuse an active verification token instead of repeatedly sending new emails.'
+);
+
+assertIncludes(
+  'server/src/routes/auth.ts',
+  'sendVerificationForUser(req, user, { force: true })',
+  'Only the explicit resend endpoint should force a fresh verification email.'
+);
+
+assertIncludes(
+  'server/src/routes/auth.ts',
+  'getEmailVerificationTokenRecordByHash(verificationTokenHash)',
+  'Already-used verification links for verified accounts must remain idempotent.'
+);
+
 for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',

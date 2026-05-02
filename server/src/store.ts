@@ -983,6 +983,18 @@ export class LocalStore {
     return token;
   }
 
+  getEmailVerificationTokenRecordByHash(tokenHash: string) {
+    return this.loadDb().emailVerificationTokens.find((item) => item.tokenHash === tokenHash) ?? null;
+  }
+
+  getActiveEmailVerificationTokenForUser(userId: string) {
+    return (
+      this.loadDb().emailVerificationTokens.find(
+        (token) => token.userId === userId && token.usedAt === null && !this.isEmailVerificationTokenExpired(token)
+      ) ?? null
+    );
+  }
+
   markEmailVerificationTokenUsed(tokenId: string) {
     const db = this.loadDb();
     const index = db.emailVerificationTokens.findIndex((token) => token.id === tokenId);

@@ -545,9 +545,21 @@ function checkDirectUploadTargetLimits(files: Array<{ size: number }>) {
   }
 }
 
-async function sendVerificationForUser(req: express.Request, user: NonNullable<ReturnType<typeof store.getUserById>>) {
+async function sendVerificationForUser(
+  req: express.Request,
+  user: NonNullable<ReturnType<typeof store.getUserById>>,
+  options: { force?: boolean } = {}
+) {
   if (user.emailVerifiedAt) {
     return null;
+  }
+
+  const existingToken = store.getActiveEmailVerificationTokenForUser(user.id);
+  if (existingToken && !options.force) {
+    return {
+      verificationToken: existingToken,
+      delivery: { sent: true, reason: 'active_token_reused' }
+    };
   }
 
   const rawToken = createSessionToken();

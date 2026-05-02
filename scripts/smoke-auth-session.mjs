@@ -71,6 +71,19 @@ function hasStoredEmailVerificationToken(rawToken) {
   return Array.isArray(db.emailVerificationTokens) && db.emailVerificationTokens.some((item) => item.tokenHash === hashed);
 }
 
+function countEmailVerificationTokensForUser(userEmail) {
+  const dbPath = path.join(runtimeRoot, 'db.json');
+  if (!fs.existsSync(dbPath)) {
+    return 0;
+  }
+  const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+  const user = Array.isArray(db.users) ? db.users.find((item) => item.email === userEmail) : null;
+  if (!user || !Array.isArray(db.emailVerificationTokens)) {
+    return 0;
+  }
+  return db.emailVerificationTokens.filter((item) => item.userId === user.id).length;
+}
+
 class ApiClient {
   constructor() {
     this.cookies = new Map();
@@ -183,6 +196,7 @@ async function main() {
       DATABASE_URL: '',
       POSTGRES_URL: ''
     },
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
@@ -227,10 +241,12 @@ async function main() {
       return { status: response.status };
     });
 
+    let verificationToken = '';
     await withStep('email_verification_confirms_session', async () => {
       const token = extractTokenFromLogs('verify', email);
       assert(token, 'Could not find email verification token in local server logs.');
       assert(hasStoredEmailVerificationToken(token), `Extracted verification token was not found in local metadata. length=${token.length}`);
+      verificationToken = token;
       const response = await client.request('POST', '/api/auth/email-verification/confirm', { token });
       assert(
         response.status === 200,
@@ -239,6 +255,29 @@ async function main() {
       assert(response.payload?.session?.user?.email === email, 'Verified session email mismatch.');
       assert(response.payload?.session?.csrfToken, 'Verified session missing CSRF token.');
       return { sessionEmail: response.payload.session.user.email };
+    });
+
+    await withStep('email_verification_confirm_is_idempotent_after_success', async () => {
+      const repeatClient = new ApiClient();
+      const response = await repeatClient.request('POST', '/api/auth/email-verification/confirm', { token: verificationToken });
+      assert(
+        response.status === 200,
+        `Expected repeated email verification 200, got ${response.status}: ${JSON.stringify(response.payload)}`
+      );
+      assert(response.payload?.session?.user?.email === email, 'Repeated verification session email mismatch.');
+      assert(response.payload?.session?.user?.emailVerifiedAt, 'Repeated verification did not return verified user state.');
+      return { sessionEmail: response.payload.session.user.email };
+    });
+
+    await withStep('verified_login_does_not_create_extra_verification_email', async () => {
+      const beforeCount = countEmailVerificationTokensForUser(email);
+      const verifiedClient = new ApiClient();
+      const response = await verifiedClient.request('POST', '/api/auth/login', { email, password });
+      assert(response.status === 200, `Expected verified login 200, got ${response.status}: ${JSON.stringify(response.payload)}`);
+      assert(response.payload?.session?.user?.emailVerifiedAt, 'Verified login did not include emailVerifiedAt.');
+      const afterCount = countEmailVerificationTokensForUser(email);
+      assert(afterCount === beforeCount, `Verified login created extra verification token: ${beforeCount} -> ${afterCount}`);
+      return { verificationTokenCount: afterCount };
     });
 
     await withStep('session_endpoint_reports_user', async () => {
@@ -349,8 +388,21 @@ async function main() {
 
     console.log(JSON.stringify({ ok: true, results: results.length }));
   } finally {
-    child.kill('SIGTERM');
+    if (child.pid) {
+      try {
+        process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGTERM');
+      } catch {
+        child.kill('SIGTERM');
+      }
+    }
     await sleep(250);
+    if (child.exitCode === null && child.pid) {
+      try {
+        process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    }
     fs.rmSync(runtimeRoot, { recursive: true, force: true });
   }
 }
