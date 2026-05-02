@@ -20,6 +20,9 @@ const users = Math.max(1, Math.min(100, Number(args.get('users') ?? process.env.
 const filesPerUser = Math.max(1, Math.min(100, Number(args.get('files') ?? process.env.METROVAN_LOAD_FILES_PER_USER ?? 3)));
 const pollCount = Math.max(1, Math.min(20, Number(args.get('polls') ?? process.env.METROVAN_LOAD_POLLS ?? 4)));
 const sourceDir = String(args.get('source-dir') ?? process.env.METROVAN_LOAD_SOURCE_DIR ?? '').trim();
+const startProcessing = args.has('start-processing') || process.env.METROVAN_LOAD_START_PROCESSING === 'true';
+const processingWaitMs = Math.max(30_000, Math.min(30 * 60_000, Number(args.get('processing-wait-ms') ?? process.env.METROVAN_LOAD_PROCESSING_WAIT_MS ?? 10 * 60_000)));
+const processingPollMs = Math.max(2_000, Math.min(60_000, Number(args.get('processing-poll-ms') ?? process.env.METROVAN_LOAD_PROCESSING_POLL_MS ?? 10_000)));
 const port = Number(process.env.METROVAN_LOAD_TEST_PORT || 21000 + Math.floor(Math.random() * 1000));
 const apiRoot = `http://127.0.0.1:${port}`;
 const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metrovan-load-upload-'));
@@ -36,6 +39,7 @@ const requiredObjectStorageEnv = [
 ];
 let serverOutput = '';
 const uploadedStorageKeys = new Set();
+const testProjects = [];
 const RAW_EXTENSIONS = new Set(['.arw', '.cr2', '.cr3', '.crw', '.nef', '.nrw', '.raf', '.dng', '.rw2', '.rwl', '.orf', '.srw', '.3fr', '.fff', '.iiq', '.pef']);
 const JPG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 
@@ -269,6 +273,7 @@ async function runUser(index) {
       studioFeatureId: 'hdr-true-color'
     });
     if (response.status !== 201) throw new Error(`project ${response.status}`);
+    testProjects.push({ client, projectId: response.payload.project.id });
     return response.payload.project.id;
   });
 
@@ -331,13 +336,38 @@ async function runUser(index) {
     if (response.status !== 200) throw new Error(`layout ${response.status}`);
   });
 
-  await step('poll', async () => {
-    for (let poll = 0; poll < pollCount; poll += 1) {
-      const response = await client.request('GET', `/api/projects/${projectId}`);
-      if (response.status !== 200) throw new Error(`poll ${response.status}`);
-      await sleep(250);
-    }
-  });
+  const processing = startProcessing
+    ? await step('processing', async () => {
+        const start = await client.request('POST', `/api/projects/${projectId}/start`, {});
+        if (start.status !== 200) throw new Error(`start ${start.status}: ${JSON.stringify(start.payload).slice(0, 500)}`);
+
+        const deadline = Date.now() + processingWaitMs;
+        let latestProject = start.payload.project;
+        while (Date.now() < deadline) {
+          const response = await client.request('GET', `/api/projects/${projectId}`);
+          if (response.status !== 200) throw new Error(`processing-poll ${response.status}`);
+          latestProject = response.payload.project;
+          if (latestProject?.status === 'completed' || latestProject?.status === 'failed') {
+            break;
+          }
+          await sleep(processingPollMs);
+        }
+        return {
+          status: latestProject?.status ?? 'unknown',
+          jobStatus: latestProject?.job?.status ?? null,
+          jobPhase: latestProject?.job?.phase ?? null,
+          resultCount: latestProject?.resultAssets?.length ?? 0,
+          failedCount: latestProject?.hdrItems?.filter((item) => item.status === 'error').length ?? 0
+        };
+      })
+    : await step('poll', async () => {
+        for (let poll = 0; poll < pollCount; poll += 1) {
+          const response = await client.request('GET', `/api/projects/${projectId}`);
+          if (response.status !== 200) throw new Error(`poll ${response.status}`);
+          await sleep(250);
+        }
+        return null;
+      });
 
   return {
     ok: true,
@@ -345,8 +375,29 @@ async function runUser(index) {
     projectId,
     files: filesPerUser,
     totalMs: Math.round(performance.now() - started),
-    timings
+    timings,
+    processing
   };
+}
+
+async function cleanupProjects() {
+  let deleted = 0;
+  let failed = 0;
+  for (const project of testProjects) {
+    try {
+      const response = await project.client.request('DELETE', `/api/projects/${project.projectId}`);
+      if (response.status === 200) {
+        deleted += 1;
+        continue;
+      }
+      failed += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  if (testProjects.length) {
+    console.log(JSON.stringify({ projectCleanup: { deleted, failed } }));
+  }
 }
 
 function cleanupUploadedObjects() {
@@ -415,22 +466,43 @@ async function main() {
     const fulfilled = results.filter((item) => item.status === 'fulfilled').map((item) => item.value);
     const rejected = results.filter((item) => item.status === 'rejected').map((item) => item.reason);
     const totals = fulfilled.map((item) => item.totalMs);
+    const processingResults = fulfilled.map((item) => item.processing).filter(Boolean);
+    const processingStatuses = processingResults.reduce((counts, item) => {
+      counts[item.status] = (counts[item.status] ?? 0) + 1;
+      return counts;
+    }, {});
+    const processingIncomplete = startProcessing
+      ? processingResults.filter((item) => item.status !== 'completed')
+      : [];
     const summary = {
-      ok: rejected.length === 0,
+      ok: rejected.length === 0 && processingIncomplete.length === 0,
       users,
       filesPerUser,
       totalFiles: users * filesPerUser,
       succeeded: fulfilled.length,
       failed: rejected.length,
+      processing: startProcessing
+        ? {
+            statuses: processingStatuses,
+            completedProjects: processingStatuses.completed ?? 0,
+            incompleteProjects: processingIncomplete.length,
+            resultCount: processingResults.reduce((sum, item) => sum + Number(item.resultCount ?? 0), 0),
+            failedItems: processingResults.reduce((sum, item) => sum + Number(item.failedCount ?? 0), 0)
+          }
+        : null,
       totalMs: Math.round(performance.now() - started),
       p50Ms: percentile(totals, 0.5),
       p95Ms: percentile(totals, 0.95),
       maxMs: totals.length ? Math.max(...totals) : 0,
-      errors: rejected.slice(0, 5).map((error) => (error instanceof Error ? error.message : String(error)))
+      errors: [
+        ...rejected.slice(0, 5).map((error) => (error instanceof Error ? error.message : String(error))),
+        ...processingIncomplete.slice(0, 5).map((item) => `processing ${item.status} phase=${item.jobPhase ?? 'unknown'}`)
+      ]
     };
     console.log(JSON.stringify(summary, null, 2));
     if (rejected.length) process.exitCode = 1;
   } finally {
+    await cleanupProjects();
     cleanupUploadedObjects();
     child.kill('SIGTERM');
     fs.rmSync(runtimeRoot, { recursive: true, force: true });
