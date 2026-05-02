@@ -45,6 +45,7 @@ import {
   createAdminActivationCode,
   createGroup,
   createProject,
+  deleteAdminProject,
   deleteAdminUser,
   deleteHdrItem,
   deleteProject,
@@ -2420,6 +2421,45 @@ function App() {
     }
   }
 
+  async function handleAdminDeleteProject(projectId: string) {
+    const targetProject =
+      adminProjects.find((project) => project.id === projectId) ??
+      adminDetailProjects.find((project) => project.id === projectId) ??
+      adminSelectedProject;
+    if (!targetProject) {
+      setAdminMessage('找不到要删除的项目。');
+      return;
+    }
+
+    const typed = window.prompt(
+      `确认删除项目 ${targetProject.name}？\n\n此操作会从用户端移除该项目，并删除 R2 中对应的原片、预览、处理中间文件、结果图和下载包引用。\n如需继续，请输入项目名称。`
+    );
+    if (typed !== targetProject.name) {
+      setAdminMessage('已取消删除项目。');
+      return;
+    }
+
+    setAdminActionBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await deleteAdminProject(projectId, { name: targetProject.name });
+      setAdminProjects((current) => current.filter((project) => project.id !== response.deletedProjectId));
+      setAdminDetailProjects((current) => current.filter((project) => project.id !== response.deletedProjectId));
+      setAdminProjectsTotal((current) => Math.max(0, current - 1));
+      setAdminSelectedProjectId((current) => (current === response.deletedProjectId ? null : current));
+      setAdminMessage(
+        response.cloudCleanup.failed
+          ? `项目已删除，但有 ${response.cloudCleanup.failed} 个 R2 对象未能删除，请查看维护报告。`
+          : `项目已删除，已清理 ${response.cloudCleanup.deleted.toLocaleString()} 个 R2 对象。`
+      );
+      void handleAdminLoadOpsHealth();
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '删除项目失败。', locale));
+    } finally {
+      setAdminActionBusy(false);
+    }
+  }
+
   async function handleAdminRecoverSelectedProject() {
     if (!adminSelectedProject) {
       return;
@@ -2660,7 +2700,10 @@ function App() {
     try {
       const response = await deleteAdminUser(userId, { email: confirmationText });
       setAdminUsers((current) => current.filter((user) => user.id !== response.deletedUserId));
+      setAdminProjects((current) => current.filter((project) => project.userKey !== targetUser?.userKey));
+      setAdminDetailProjects((current) => current.filter((project) => project.userKey !== targetUser?.userKey));
       setAdminTotalUsers((current) => Math.max(0, current - 1));
+      setAdminProjectsTotal((current) => Math.max(0, current - response.removed.projects));
       if (adminSelectedUser?.id === response.deletedUserId) {
         setAdminSelectedUser(null);
         setAdminSelectedUserId('');
@@ -2670,7 +2713,9 @@ function App() {
       setAdminMessage(
         response.archiveErrors.length
           ? `用户已删除，但有 ${response.archiveErrors.length} 个项目文件未能归档，请检查服务器日志。`
-          : '用户已删除。'
+          : response.cloudCleanup.failed.length
+            ? `用户已删除，但有 ${response.cloudCleanup.failed.length} 个 R2 对象未能删除，请查看维护报告。`
+            : `用户已删除，已清理 ${response.cloudCleanup.deleted.toLocaleString()} 个 R2 对象。`
       );
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '删除用户失败。', locale));
@@ -5759,6 +5804,15 @@ function App() {
                             >
                               {user.accountStatus === 'active' ? '禁' : '启'}
                             </button>
+                            <button
+                              className="tbl-icon tbl-icon-text"
+                              type="button"
+                              onClick={() => void handleAdminDeleteUser(user.id)}
+                              disabled={adminActionBusy}
+                              title="删除用户"
+                            >
+                              删
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -6164,6 +6218,9 @@ function App() {
                 </button>
                 <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminRunDeepHealth()} disabled={adminDeepHealthBusy}>
                   {adminDeepHealthBusy ? '巡检中...' : '深度巡检'}
+                </button>
+                <button className="btn btn-ghost btn-xs danger" type="button" onClick={() => void handleAdminDeleteProject(adminSelectedProject.id)} disabled={adminActionBusy}>
+                  删除项目
                 </button>
               </div>
             </div>

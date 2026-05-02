@@ -1161,6 +1161,26 @@ export async function fetchAdminProjectDetail(projectId: string) {
   return await jsonRequest<{ project: ProjectRecord }>(`/api/admin/projects/${encodeURIComponent(projectId)}`);
 }
 
+export async function deleteAdminProject(projectId: string, confirmation: { name: string }) {
+  return await jsonRequest<{
+    ok: true;
+    deletedProjectId: string;
+    deletedProjectName: string;
+    pendingCleanup: boolean;
+    cloudCleanup: {
+      deleted: number;
+      failed: number;
+    };
+  }>(`/api/admin/projects/${encodeURIComponent(projectId)}`, {
+    method: 'DELETE',
+    body: JSON.stringify({
+      confirm: true,
+      confirmProjectId: projectId,
+      confirmProjectName: confirmation.name
+    })
+  });
+}
+
 export async function fetchAdminFailedPhotos(query: { page?: number; pageSize?: number; search?: string; cause?: string } = {}) {
   const params = new URLSearchParams();
   if (query.page) params.set('page', String(query.page));
@@ -1341,6 +1361,10 @@ export async function deleteAdminUser(userId: string, confirmation: { email: str
       auditLogs: number;
     };
     archiveErrors: Array<{ projectId: string; error: string }>;
+    cloudCleanup: {
+      deleted: number;
+      failed: string[];
+    };
   }>(`/api/admin/users/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
     body: JSON.stringify({

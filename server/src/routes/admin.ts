@@ -867,6 +867,69 @@ app.get('/api/admin/projects/:id', (req, res) => {
   });
 });
 
+app.delete('/api/admin/projects/:id', async (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  const parsed = adminConfirmSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const project = store.getProject(String(req.params.id ?? ''));
+  if (!project) {
+    res.status(404).json({ error: '找不到该项目。' });
+    return;
+  }
+
+  const confirmProjectId = String(req.body?.confirmProjectId ?? '').trim();
+  const confirmProjectName = String(req.body?.confirmProjectName ?? '').trim();
+  if (confirmProjectId !== project.id || confirmProjectName !== project.name) {
+    res.status(400).json({ error: '删除确认信息与项目不匹配。' });
+    return;
+  }
+
+  const cloudCleanup = await deleteProjectObjectStorage(project);
+  const deletion = store.deleteProject(project.id);
+  if (!deletion) {
+    res.status(404).json({ error: '找不到该项目。' });
+    return;
+  }
+
+  writeAdminAuditLog(req, actor, {
+    action: 'admin.project.delete',
+    targetProjectId: project.id,
+    targetUserId: store.listUsers().find((user: UserRecord) => user.userKey === project.userKey)?.id ?? null,
+    details: {
+      projectName: project.name,
+      userKey: project.userKey,
+      userDisplayName: project.userDisplayName,
+      photoCount: project.photoCount,
+      hdrItems: project.hdrItems.length,
+      resultAssets: project.resultAssets.length,
+      archive: deletion.archive,
+      cloudCleanup: {
+        deleted: cloudCleanup.deleted,
+        failed: cloudCleanup.failed
+      }
+    }
+  });
+
+  res.json({
+    ok: true,
+    deletedProjectId: project.id,
+    deletedProjectName: project.name,
+    pendingCleanup: Boolean(deletion.archive?.pending),
+    cloudCleanup: {
+      deleted: cloudCleanup.deleted,
+      failed: cloudCleanup.failed.length
+    }
+  });
+});
+
 app.get('/api/admin/ops/health', (req, res) => {
   if (!requireAdminApiAccess(req, res)) {
     return;
