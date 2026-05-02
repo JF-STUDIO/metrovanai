@@ -3077,6 +3077,45 @@ function App() {
     downloadCSV(`metrovan-orders-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
   }
 
+  async function exportAdminBillingLedgerCSV() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminBillingLedgerBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminBillingLedger({
+        search: adminBillingLedgerSearch,
+        type: adminBillingLedgerType,
+        page: 1,
+        pageSize: Math.max(1, Math.min(5000, adminBillingLedgerTotal || 5000))
+      });
+      const header = ['流水ID', 'Email', '姓名', '类型', '积分', '金额USD', '项目', '备注', '兑换码', '时间'].join(',');
+      const rows = response.items.map((entry) =>
+        [
+          entry.id,
+          entry.userEmail,
+          entry.userDisplayName,
+          entry.type === 'charge' ? '扣费' : '入账',
+          `${entry.type === 'charge' ? '-' : '+'}${entry.points}`,
+          entry.amountUsd.toFixed(2),
+          entry.projectName,
+          entry.note,
+          entry.activationCode ?? entry.activationCodeLabel ?? '',
+          entry.createdAt
+        ].map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')
+      );
+      downloadCSV(`metrovan-billing-ledger-${adminBillingLedgerType}-${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+      setAdminMessage(`已导出 ${response.items.length.toLocaleString()} 条账单流水。`);
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '账单流水导出失败。', locale));
+    } finally {
+      setAdminBillingLedgerBusy(false);
+    }
+  }
+
   function closeDownloadDialog(force = false) {
     if (downloadBusy && !force) {
       return;
@@ -6134,9 +6173,14 @@ function App() {
         {adminPageTitle(
           '账单流水',
           <>全站积分扣费与入账 · 当前匹配 <span className="mono accent-text">{adminBillingLedgerTotal.toLocaleString()}</span> 条</>,
-          <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadBillingLedger(1)} disabled={adminBillingLedgerBusy}>
-            {adminBillingLedgerBusy ? '查询中...' : '查询流水'}
-          </button>
+          <>
+            <button className="btn btn-ghost" type="button" onClick={() => void exportAdminBillingLedgerCSV()} disabled={adminBillingLedgerBusy || !adminBillingLedgerTotal}>
+              导出 CSV
+            </button>
+            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadBillingLedger(1)} disabled={adminBillingLedgerBusy}>
+              {adminBillingLedgerBusy ? '处理中...' : '查询流水'}
+            </button>
+          </>
         )}
         <div className="kpi-grid">
           {kpi('扣费积分', <>{adminBillingLedgerTotals.chargePoints.toLocaleString()}<span className="unit">pts</span></>, <span>当前筛选</span>, adminBillingLedgerTotals.chargePoints ? 'down' : 'up')}
