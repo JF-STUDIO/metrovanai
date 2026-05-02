@@ -93,6 +93,17 @@ function buildRequestHeaders(init?: RequestInit): HeadersInit {
   return headers;
 }
 
+function isCsrfVerificationError(error: ApiRequestError) {
+  return (
+    error.status === 403 &&
+    (
+      error.message.includes('CSRF token is required') ||
+      error.message.includes('请求验证失败') ||
+      error.message.includes('Refresh and try again')
+    )
+  );
+}
+
 export interface RegisterEmailPayload {
   session?: AuthSessionPayload;
   verificationRequired?: boolean;
@@ -810,7 +821,20 @@ function parseRetryAfterMs(value: string | null) {
   return null;
 }
 
-async function jsonRequest<T>(requestPath: string, init?: RequestInit): Promise<T> {
+async function refreshCsrfToken() {
+  const response = await fetch(`${API_ROOT}/api/auth/session`, {
+    credentials: 'include',
+    headers: buildRequestHeaders({ method: 'GET' })
+  });
+  if (!response.ok) {
+    throw new ApiRequestError(await readErrorMessage(response), response.status, parseRetryAfterMs(response.headers.get('Retry-After')));
+  }
+  const payload = (await response.json()) as { session: AuthSessionPayload | null };
+  captureCsrfToken(payload);
+  return payload;
+}
+
+async function jsonRequest<T>(requestPath: string, init?: RequestInit, options: { retryCsrf?: boolean } = {}): Promise<T> {
   const response = await fetch(`${API_ROOT}${requestPath}`, {
     credentials: 'include',
     ...init,
@@ -818,7 +842,18 @@ async function jsonRequest<T>(requestPath: string, init?: RequestInit): Promise<
   });
 
   if (!response.ok) {
-    throw new ApiRequestError(await readErrorMessage(response), response.status, parseRetryAfterMs(response.headers.get('Retry-After')));
+    const error = new ApiRequestError(await readErrorMessage(response), response.status, parseRetryAfterMs(response.headers.get('Retry-After')));
+    const method = init?.method?.toUpperCase() ?? 'GET';
+    if (
+      options.retryCsrf !== false &&
+      isCsrfVerificationError(error) &&
+      method !== 'GET' &&
+      !requestPath.startsWith('/api/auth/')
+    ) {
+      await refreshCsrfToken();
+      return await jsonRequest<T>(requestPath, init, { retryCsrf: false });
+    }
+    throw error;
   }
 
   const payload = (await response.json()) as T;

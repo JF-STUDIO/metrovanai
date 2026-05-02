@@ -210,6 +210,24 @@ assertNotIncludes(
   'Admin feature card toggle must not read currentTarget inside a state updater.'
 );
 
+assertIncludes(
+  'client/src/api.ts',
+  'isCsrfVerificationError(error)',
+  'API requests must detect stale CSRF failures.'
+);
+
+assertIncludes(
+  'client/src/api.ts',
+  "await refreshCsrfToken();",
+  'API requests must refresh the CSRF token before retrying a stale-token mutation.'
+);
+
+assertIncludes(
+  'client/src/api.ts',
+  "return await jsonRequest<T>(requestPath, init, { retryCsrf: false });",
+  'CSRF retry must only happen once per request.'
+);
+
 for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',
