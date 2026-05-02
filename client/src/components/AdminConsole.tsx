@@ -190,22 +190,18 @@ export function AdminConsole({
           {targetNavButton('logs', '操作日志')}
           {targetNavButton('settings', '系统设置')}
         </div>
-        <button className="sidebar-footer" type="button" onClick={() => onSetPage('settings')}>
+        <div className="sidebar-footer">
+          <button className="sidebar-account-button" type="button" onClick={() => onSetPage('settings')}>
           <div className="avatar">{initials}</div>
           <div className="info">
             <div className="name">{adminName}</div>
             <div className="role">{session?.role === 'admin' ? '超级管理员' : '未授权'}</div>
           </div>
-          <span
-            className="logout"
-            onClick={(event) => {
-              event.stopPropagation();
-              onSignOut();
-            }}
-          >
+          </button>
+          <button className="logout" type="button" onClick={onSignOut} aria-label="退出后台">
             ⏻
-          </span>
-        </button>
+          </button>
+        </div>
       </aside>
       <section className="main">
         <header className="topbar">

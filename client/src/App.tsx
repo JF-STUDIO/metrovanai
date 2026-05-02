@@ -5204,11 +5204,7 @@ function App() {
                 <h3>营收 & 调用趋势</h3>
                 <div className="card-sub">最近 30 天</div>
               </div>
-              <div className="chart-tabs">
-                <span className="chart-tab">7 天</span>
-                <span className="chart-tab active">30 天</span>
-                <span className="chart-tab">90 天</span>
-              </div>
+              <span className="chart-range-label">固定展示最近 30 天</span>
             </div>
             <div className="card-body">
               <div className="chart-area" aria-hidden="true">
@@ -5403,11 +5399,10 @@ function App() {
                                   accountStatus: user.accountStatus === 'active' ? 'disabled' : 'active'
                                 })
                               }
-                              title={user.accountStatus === 'active' ? '封禁' : '启用'}
+                              title={user.accountStatus === 'active' ? '封禁账号' : '启用账号'}
                             >
-                              ✎
+                              {user.accountStatus === 'active' ? '禁' : '启'}
                             </button>
-                            <button className="tbl-icon" type="button" onClick={() => void handleAdminSelectUser(user.id)} title="更多">⋯</button>
                           </div>
                         </td>
                       </tr>
@@ -5700,7 +5695,7 @@ function App() {
                 继续载入
               </button>
             ) : null}
-            <button className="btn btn-primary" type="button" onClick={() => setAdminConsolePage('content')}>+ 添加精选</button>
+            <button className="btn btn-primary" type="button" onClick={() => setAdminConsolePage('content')}>管理功能卡片</button>
           </>
         )}
         <div className="kpi-grid">
@@ -6104,7 +6099,7 @@ function App() {
         <div className="card">
           <div className="card-header">
             <h3>套餐转化漏斗</h3>
-            <div className="chart-tabs"><span className="chart-tab">7 天</span><span className="chart-tab active">30 天</span></div>
+            <span className="chart-range-label">固定展示最近 30 天</span>
           </div>
           <div className="admin-console-metrics card-body">
             <div><span>访问 Plans</span><strong>{(adminTotals.users * 2 || 0).toLocaleString()}</strong></div>

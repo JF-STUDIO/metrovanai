@@ -1934,6 +1934,19 @@
   text-align: left;
 }
 
+.admin-prototype .sidebar-account-button {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
 .admin-prototype .sidebar-footer .avatar,
 .admin-prototype .topbar-avatar {
   width: 32px;
@@ -1968,8 +1981,22 @@
 }
 
 .admin-prototype .sidebar-footer .logout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(245, 247, 251, 0.1);
+  border-radius: 8px;
+  background: rgba(245, 247, 251, 0.04);
   color: var(--text-mute);
   font-size: 14px;
+  cursor: pointer;
+}
+
+.admin-prototype .sidebar-footer .logout:hover,
+.admin-prototype .sidebar-account-button:hover .name {
+  color: var(--accent);
 }
 
 .admin-prototype .main {
@@ -2321,24 +2348,21 @@
   margin-bottom: 20px;
 }
 
-.admin-prototype .chart-tabs,
 .admin-prototype .filter-pills {
   display: flex;
   gap: 6px;
 }
 
-.admin-prototype .chart-tab {
-  border: 1px solid transparent;
+.admin-prototype .chart-range-label {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(245, 247, 251, 0.1);
   border-radius: 6px;
   padding: 5px 10px;
+  background: rgba(245, 247, 251, 0.05);
   color: var(--text-dim);
   font-size: 11px;
-}
-
-.admin-prototype .chart-tab.active {
-  border-color: var(--line-strong);
-  background: rgba(124, 232, 255, 0.1);
-  color: var(--accent);
+  font-weight: 600;
 }
 
 .admin-prototype .chart-area {
