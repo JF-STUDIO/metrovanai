@@ -5461,6 +5461,97 @@ function App() {
           <div className="card">
             <div className="card-header">
               <div>
+                <h3>处理队列</h3>
+                <div className="card-sub">上传 → RunPod → RunningHub → 回传</div>
+              </div>
+              <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminLoadOpsHealth()} disabled={adminOpsBusy}>
+                {adminOpsBusy ? '刷新中...' : '刷新'}
+              </button>
+            </div>
+            <div className="mini-metrics-grid">
+              {[
+                ['上传中', adminOpsHealth?.queueStages?.uploadingProjects ?? 0],
+                ['排队项目', adminOpsHealth?.queueStages?.queuedProjects ?? 0],
+                ['处理中', adminOpsHealth?.queueStages?.processingProjects ?? 0],
+                ['RunPod', adminOpsHealth?.queueStages?.runpodItems ?? 0],
+                ['RunningHub', adminOpsHealth?.queueStages?.runningHubItems ?? 0],
+                ['回传完成', adminOpsHealth?.queueStages?.completedReturnItems ?? 0],
+                ['失败', adminOpsHealth?.queueStages?.failedItems ?? 0]
+              ].map(([label, value]) => (
+                <div className="mini-metric" key={label}>
+                  <span>{label}</span>
+                  <strong>{Number(value).toLocaleString()}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>下载队列</h3>
+                <div className="card-sub">ZIP 打包 worker 与排队状态</div>
+              </div>
+              <span className="tag tag-cyan">{adminOpsHealth?.downloadQueue?.activeWorkers ?? 0} / {adminOpsHealth?.downloadQueue?.maxWorkers ?? 3} workers</span>
+            </div>
+            <div className="mini-metrics-grid">
+              {[
+                ['等待打包', adminOpsHealth?.downloadQueue?.queued ?? 0],
+                ['内存任务', adminOpsHealth?.downloadQueue?.inMemoryJobs ?? 0],
+                ['活跃请求', adminOpsHealth?.downloadQueue?.activeRequests ?? 0],
+                ['Ready', adminOpsHealth?.downloadQueue?.statuses?.ready ?? 0],
+                ['Failed', adminOpsHealth?.downloadQueue?.statuses?.failed ?? 0],
+                ['Packaging', adminOpsHealth?.downloadQueue?.statuses?.packaging ?? 0]
+              ].map(([label, value]) => (
+                <div className="mini-metric" key={label}>
+                  <span>{label}</span>
+                  <strong>{Number(value).toLocaleString()}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        {adminOpsHealth?.alerts.length || adminOpsHealth?.recentAuditSignals?.length ? (
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>关键监控</h3>
+                <div className="card-sub">接口异常、回传恢复、下载、退款和维护动作</div>
+              </div>
+              <span className={adminOpsHealth?.alerts.length ? 'tag tag-orange' : 'tag tag-cyan'}>
+                {adminOpsHealth?.alerts.length ?? 0} 个告警
+              </span>
+            </div>
+            {adminOpsHealth?.alerts.length ? (
+              <div className="admin-priority-list">
+                {adminOpsHealth.alerts.map((alert) => (
+                  <div className="admin-priority-row" key={alert.code}>
+                    <span className={alert.level === 'error' ? 'tag tag-red' : 'tag tag-orange'}>{alert.level}</span>
+                    <strong>{alert.code}</strong>
+                    <small>当前 {typeof alert.value === 'number' ? alert.value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : alert.value} · 阈值 {alert.threshold}</small>
+                    <em>{formatAdminShortDate(adminOpsHealth.generatedAt)}</em>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="admin-health-ok">当前没有运维告警。</div>
+            )}
+            {adminOpsHealth?.recentAuditSignals?.length ? (
+              <div className="admin-signal-list">
+                {adminOpsHealth.recentAuditSignals.slice(0, 8).map((signal) => (
+                  <div className="admin-signal-row" key={signal.id}>
+                    <strong>{signal.action}</strong>
+                    <span>{signal.actorEmail || signal.targetUserId || signal.targetProjectId || 'system'}</span>
+                    <em>{formatAdminShortDate(signal.createdAt)}</em>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="dashboard-grid">
+          <div className="card">
+            <div className="card-header">
+              <div>
                 <h3>营收 & 调用趋势</h3>
                 <div className="card-sub">最近 30 天</div>
               </div>

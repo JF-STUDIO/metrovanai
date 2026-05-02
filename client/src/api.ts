@@ -436,6 +436,33 @@ export interface AdminOpsHealthPayload {
     runningHubSuccessRate: number;
     resultReturnFailureRate: number;
   };
+  queueStages?: {
+    queuedProjects: number;
+    uploadingProjects: number;
+    processingProjects: number;
+    runpodItems: number;
+    runningHubItems: number;
+    workflowUploadItems: number;
+    workflowRunningItems: number;
+    completedReturnItems: number;
+    failedItems: number;
+  };
+  downloadQueue?: {
+    maxWorkers: number;
+    activeWorkers: number;
+    queued: number;
+    inMemoryJobs: number;
+    activeRequests: number;
+    statuses: Record<string, number>;
+  };
+  recentAuditSignals?: Array<{
+    id: string;
+    action: string;
+    actorEmail: string | null;
+    targetProjectId: string | null;
+    targetUserId: string | null;
+    createdAt: string;
+  }>;
   samples: {
     resultRecoveryProjectIds: string[];
     creditMismatchProjectIds: string[];

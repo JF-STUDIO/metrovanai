@@ -18,6 +18,7 @@
     "smoke:r2-direct-upload": "node ./scripts/smoke-r2-direct-upload.mjs",
     "smoke:stripe-webhook": "node ./scripts/smoke-stripe-webhook.mjs",
     "smoke:auth-billing": "node ./scripts/smoke-auth-billing.mjs",
+    "load:upload-poll": "node ./scripts/load-upload-poll.mjs",
     "check:commercial": "node ./scripts/check-commercial-readiness.mjs"
   },
   "devDependencies": {

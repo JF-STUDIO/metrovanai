@@ -2348,6 +2348,71 @@
   margin-bottom: 20px;
 }
 
+.mini-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mini-metric {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.mini-metric span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-mute);
+  font-size: 11px;
+}
+
+.mini-metric strong {
+  display: block;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.admin-signal-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.admin-signal-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(140px, 0.8fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-signal-row strong,
+.admin-signal-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-signal-row strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.admin-signal-row span,
+.admin-signal-row em {
+  color: var(--text-mute);
+  font-size: 11px;
+  font-style: normal;
+}
+
 .admin-prototype .filter-pills {
   display: flex;
   gap: 6px;

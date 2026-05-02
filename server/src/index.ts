@@ -43,6 +43,7 @@ import {
   configureDownloadJobs,
   enqueueDownloadJob,
   getDownloadJob,
+  getDownloadJobStats,
   recoverInterruptedDownloadJobsAfterRestart
 } from './download-jobs.js';
 import { buildHdrItemsFromFrontendLayout } from './importer.js';
@@ -1150,6 +1151,40 @@ function buildAdminOpsHealthPayload() {
   const runningHubSuccessRate = runningHubItems.length ? runningHubCompletedItems.length / runningHubItems.length : 1;
   const resultReturnFailureRate = runningHubItems.length ? resultRecoveryProjects.length / runningHubItems.length : 0;
   const failedItemRate = items.length ? failedItems.length / items.length : 0;
+  const queueStages = {
+    queuedProjects: projects.filter((project) => project.job?.status === 'queued').length,
+    uploadingProjects: projects.filter((project) => project.status === 'uploading').length,
+    processingProjects: projects.filter((project) => project.status === 'processing').length,
+    runpodItems: items.filter(({ item }) => item.workflow?.stage === 'runpod').length,
+    runningHubItems: items.filter(({ item }) => item.workflow?.stage === 'runninghub').length,
+    workflowUploadItems: items.filter(({ item }) => item.status === 'workflow-upload').length,
+    workflowRunningItems: items.filter(({ item }) => item.status === 'workflow-running').length,
+    completedReturnItems: completedItems.length,
+    failedItems: failedItems.length
+  };
+  const recentAuditSignals = store
+    .listAuditLogs({ limit: 200 })
+    .filter((entry) => {
+      const action = entry.action.toLowerCase();
+      return (
+        action.includes('failed') ||
+        action.includes('refund') ||
+        action.includes('webhook') ||
+        action.includes('repair') ||
+        action.includes('recover') ||
+        action.includes('download')
+      );
+    })
+    .slice(0, 20)
+    .map((entry) => ({
+      id: entry.id,
+      action: entry.action,
+      actorEmail: entry.actorEmail,
+      targetProjectId: entry.targetProjectId,
+      targetUserId: entry.targetUserId,
+      createdAt: entry.createdAt
+    }));
+  const downloadQueue = getDownloadJobStats();
   const alerts = [
     failedItemRate > 0.05
       ? { level: 'warning', code: 'item-failure-rate', value: failedItemRate, threshold: 0.05 }
@@ -1165,6 +1200,9 @@ function buildAdminOpsHealthPayload() {
       : null,
     stalledProcessingProjects.length > 0
       ? { level: 'warning', code: 'stalled-processing-projects', value: stalledProcessingProjects.length, threshold: 0 }
+      : null,
+    downloadQueue.queued > downloadQueue.maxWorkers * 2
+      ? { level: 'warning', code: 'download-queue-depth', value: downloadQueue.queued, threshold: downloadQueue.maxWorkers * 2 }
       : null
   ].filter(Boolean);
 
@@ -1185,6 +1223,9 @@ function buildAdminOpsHealthPayload() {
       runningHubSuccessRate,
       resultReturnFailureRate
     },
+    queueStages,
+    downloadQueue,
+    recentAuditSignals,
     samples: {
       resultRecoveryProjectIds: resultRecoveryProjects.slice(0, 10).map((project) => project.id),
       creditMismatchProjectIds: creditMismatchProjects.slice(0, 10).map((project) => project.id),

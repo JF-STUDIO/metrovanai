@@ -379,14 +379,29 @@ async function main() {
       return { hdrItems: response.payload.project.hdrItems.length, storageKey };
     });
 
-    await withStep('project_start_without_points_rejected_after_r2_upload', async () => {
+    await withStep('trial_credits_allow_project_start_after_r2_upload', async () => {
       const before = await client.request('GET', '/api/billing');
       assert(before.status === 200, `Expected billing 200 before start, got ${before.status}`);
+      assert(
+        before.payload?.summary?.availablePoints >= 1,
+        `Expected trial credits before start, got ${before.payload?.summary?.availablePoints}`
+      );
       const response = await client.request('POST', `/api/projects/${projectId}/start`, {});
-      assert(response.status === 402, `Expected start 402 without points, got ${response.status}: ${JSON.stringify(response.payload)}`);
+      assert(response.status === 200, `Expected start 200 with trial points, got ${response.status}: ${JSON.stringify(response.payload)}`);
+      assert(
+        response.payload?.project?.status === 'processing',
+        `Expected processing status after start, got ${response.payload?.project?.status}`
+      );
       const after = await client.request('GET', '/api/billing');
-      assert(after.payload?.summary?.availablePoints === before.payload?.summary?.availablePoints, 'Billing points changed after rejected start.');
-      return { status: response.status, availablePoints: after.payload.summary.availablePoints };
+      assert(
+        after.payload?.summary?.availablePoints <= before.payload?.summary?.availablePoints,
+        'Billing points increased after project start.'
+      );
+      return {
+        status: response.status,
+        beforePoints: before.payload.summary.availablePoints,
+        afterPoints: after.payload.summary.availablePoints
+      };
     });
 
     await withStep('delete_project_cleans_r2_object', async () => {

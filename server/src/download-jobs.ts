@@ -53,6 +53,22 @@ export function configureDownloadJobs(store: DownloadJobStore) {
   jobStore = store;
 }
 
+export function getDownloadJobStats() {
+  const statuses = new Map<ProjectDownloadJobStatus, number>();
+  for (const job of jobs.values()) {
+    statuses.set(job.status, (statuses.get(job.status) ?? 0) + 1);
+  }
+
+  return {
+    maxWorkers: MAX_DOWNLOAD_JOB_WORKERS,
+    activeWorkers,
+    queued: queue.filter((job) => job.status === 'queued').length,
+    inMemoryJobs: jobs.size,
+    activeRequests: activeByRequest.size,
+    statuses: Object.fromEntries(statuses.entries())
+  };
+}
+
 export function recoverInterruptedDownloadJobsAfterRestart() {
   return jobStore?.markInterruptedDownloadJobsFailed('Server restarted before download completion.') ?? 0;
 }
