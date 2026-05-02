@@ -302,6 +302,18 @@ app.get('/api/admin/project-costs', (req, res) => {
     return value;
   };
 
+  const isProjectRegenerationBillingEntry = (project: ProjectRecord, entry: BillingEntry) => {
+    if (entry.projectId || entry.projectName !== project.name) {
+      return false;
+    }
+    const note = entry.note.toLowerCase();
+    return (
+      note.includes('regeneration') ||
+      note.includes('重新生成') ||
+      note.includes('free quota')
+    );
+  };
+
   const rows: AdminProjectCostRow[] = projects
     .filter((project: ProjectRecord) => {
       const updatedTime = Date.parse(project.updatedAt);
@@ -324,7 +336,7 @@ app.get('/api/admin/project-costs', (req, res) => {
     })
     .map((project: ProjectRecord) => {
       const projectEntries = getUserBillingEntries(project.userKey).filter(
-        (entry: BillingEntry) => entry.projectId === project.id
+        (entry: BillingEntry) => entry.projectId === project.id || isProjectRegenerationBillingEntry(project, entry)
       );
       const chargedPoints = projectEntries
         .filter((entry: BillingEntry) => entry.type === 'charge')
