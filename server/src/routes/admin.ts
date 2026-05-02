@@ -13,6 +13,7 @@ import { captureServerError } from '../observability.js';
 import { ensureDir, sanitizeSegment } from '../utils.js';
 import type { RouteContext } from './context.js';
 import type { BillingEntry, ProjectRecord, ProjectDownloadJobRecord, UserRecord } from '../types.js';
+import { POINT_PRICE_USD } from '../billing-packages.js';
 
 export function createAdminRouter(ctx: RouteContext) {
   const app = express.Router();
@@ -234,6 +235,9 @@ app.get('/api/admin/project-costs', (req, res) => {
     refundedPoints: number;
     netPoints: number;
     revenueUsd: number;
+    listRevenueUsd: number;
+    cashRevenueUsd: number;
+    blendedPointPriceUsd: number;
     runningHubRuns: number;
     workflowRuns: number;
     regenerationRuns: number;
@@ -244,16 +248,55 @@ app.get('/api/admin/project-costs', (req, res) => {
   type AdminProjectCostTotals = {
     projects: number;
     revenueUsd: number;
+    listRevenueUsd: number;
+    cashRevenueUsd: number;
     runningHubRuns: number;
     runningHubCostUsd: number;
     profitUsd: number;
     netPoints: number;
   };
+  const userBillingCache = new Map<string, BillingEntry[]>();
+  const userPointValueCache = new Map<string, number>();
+
+  const getUserBillingEntries = (userKey: string) => {
+    const cached = userBillingCache.get(userKey);
+    if (cached) {
+      return cached;
+    }
+    const entries = store.listBillingEntries(userKey);
+    userBillingCache.set(userKey, entries);
+    return entries;
+  };
+
+  const getUserBlendedPointPriceUsd = (userKey: string) => {
+    const cached = userPointValueCache.get(userKey);
+    if (typeof cached === 'number') {
+      return cached;
+    }
+    const entries = getUserBillingEntries(userKey).filter((entry) => !entry.projectId && entry.amountUsd > 0);
+    const paid = entries.reduce(
+      (sum, entry) => {
+        const sign = entry.type === 'credit' ? 1 : -1;
+        return {
+          points: sum.points + sign * entry.points,
+          amountUsd: sum.amountUsd + sign * entry.amountUsd
+        };
+      },
+      { points: 0, amountUsd: 0 }
+    );
+    const pointPrice =
+      paid.points > 0 && paid.amountUsd > 0
+        ? Number((paid.amountUsd / paid.points).toFixed(4))
+        : POINT_PRICE_USD;
+    userPointValueCache.set(userKey, pointPrice);
+    return pointPrice;
+  };
+
   const rows: AdminProjectCostRow[] = projects.map((project: ProjectRecord) => {
-    const projectEntries = store
-      .listBillingEntries(project.userKey)
-      .filter((entry: BillingEntry) => entry.projectId === project.id);
-    const revenueUsd = Number(
+    const projectEntries = getUserBillingEntries(project.userKey).filter(
+      (entry: BillingEntry) => entry.projectId === project.id
+    );
+    const listRevenueUsd = Number(
       projectEntries
         .reduce((sum, entry) => sum + (entry.type === 'charge' ? entry.amountUsd : -entry.amountUsd), 0)
         .toFixed(2)
@@ -264,6 +307,10 @@ app.get('/api/admin/project-costs', (req, res) => {
     const refundedPoints = projectEntries
       .filter((entry: BillingEntry) => entry.type === 'credit')
       .reduce((sum, entry) => sum + entry.points, 0);
+    const netPoints = chargedPoints - refundedPoints;
+    const blendedPointPriceUsd = getUserBlendedPointPriceUsd(project.userKey);
+    const cashRevenueUsd = Number((netPoints * blendedPointPriceUsd).toFixed(2));
+    const revenueUsd = cashRevenueUsd;
     const workflowRuns = project.hdrItems.reduce((sum, item) => {
       const count = Math.max(
         item.workflow?.runningHubTaskId ? 1 : 0,
@@ -291,8 +338,11 @@ app.get('/api/admin/project-costs', (req, res) => {
       resultCount: project.resultAssets.length,
       chargedPoints,
       refundedPoints,
-      netPoints: chargedPoints - refundedPoints,
+      netPoints,
       revenueUsd,
+      listRevenueUsd,
+      cashRevenueUsd,
+      blendedPointPriceUsd,
       runningHubRuns,
       workflowRuns,
       regenerationRuns,
@@ -306,12 +356,23 @@ app.get('/api/admin/project-costs', (req, res) => {
     (sum: AdminProjectCostTotals, row: AdminProjectCostRow) => ({
       projects: sum.projects + 1,
       revenueUsd: sum.revenueUsd + row.revenueUsd,
+      listRevenueUsd: sum.listRevenueUsd + row.listRevenueUsd,
+      cashRevenueUsd: sum.cashRevenueUsd + row.cashRevenueUsd,
       runningHubRuns: sum.runningHubRuns + row.runningHubRuns,
       runningHubCostUsd: sum.runningHubCostUsd + row.runningHubCostUsd,
       profitUsd: sum.profitUsd + row.profitUsd,
       netPoints: sum.netPoints + row.netPoints
     }),
-    { projects: 0, revenueUsd: 0, runningHubRuns: 0, runningHubCostUsd: 0, profitUsd: 0, netPoints: 0 }
+    {
+      projects: 0,
+      revenueUsd: 0,
+      listRevenueUsd: 0,
+      cashRevenueUsd: 0,
+      runningHubRuns: 0,
+      runningHubCostUsd: 0,
+      profitUsd: 0,
+      netPoints: 0
+    }
   );
 
   res.json({
@@ -319,6 +380,8 @@ app.get('/api/admin/project-costs', (req, res) => {
     totals: {
       ...totals,
       revenueUsd: Number(totals.revenueUsd.toFixed(2)),
+      listRevenueUsd: Number(totals.listRevenueUsd.toFixed(2)),
+      cashRevenueUsd: Number(totals.cashRevenueUsd.toFixed(2)),
       runningHubCostUsd: Number(totals.runningHubCostUsd.toFixed(2)),
       profitUsd: Number(totals.profitUsd.toFixed(2))
     },

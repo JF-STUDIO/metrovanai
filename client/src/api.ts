@@ -510,6 +510,9 @@ export interface AdminProjectCostRow {
   refundedPoints: number;
   netPoints: number;
   revenueUsd: number;
+  listRevenueUsd: number;
+  cashRevenueUsd: number;
+  blendedPointPriceUsd: number;
   runningHubRuns: number;
   workflowRuns: number;
   regenerationRuns: number;
@@ -523,6 +526,8 @@ export interface AdminProjectCostsPayload {
   totals: {
     projects: number;
     revenueUsd: number;
+    listRevenueUsd: number;
+    cashRevenueUsd: number;
     runningHubRuns: number;
     runningHubCostUsd: number;
     profitUsd: number;

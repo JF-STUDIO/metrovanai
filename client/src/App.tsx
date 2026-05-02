@@ -354,6 +354,8 @@ function App() {
   const [adminProjectCostTotals, setAdminProjectCostTotals] = useState<AdminProjectCostsPayload['totals']>({
     projects: 0,
     revenueUsd: 0,
+    listRevenueUsd: 0,
+    cashRevenueUsd: 0,
     runningHubRuns: 0,
     runningHubCostUsd: 0,
     profitUsd: 0,
@@ -6412,12 +6414,16 @@ function App() {
           </button>
         )}
         <div className="kpi-grid">
-          {kpi('项目收入', <>${adminProjectCostTotals.revenueUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.netPoints.toLocaleString()} pts</span>)}
+          {kpi('实收估算', <>${adminProjectCostTotals.cashRevenueUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.netPoints.toLocaleString()} pts</span>)}
+          {kpi('扣点标价', <>${adminProjectCostTotals.listRevenueUsd.toFixed(2)}</>, <span>$0.25 / pt</span>)}
           {kpi('RunningHub 次数', <>{adminProjectCostTotals.runningHubRuns.toLocaleString()}<span className="unit">次</span></>, <span>含重试/重修</span>)}
           {kpi('RunningHub 成本', <>${adminProjectCostTotals.runningHubCostUsd.toFixed(2)}</>, <span>$0.07 / 次</span>, adminProjectCostTotals.runningHubCostUsd ? 'down' : 'up')}
           {kpi('估算利润', <>${adminProjectCostTotals.profitUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.projects.toLocaleString()} 项</span>, adminProjectCostTotals.profitUsd < 0 ? 'down' : 'up')}
         </div>
         <div className="card">
+          <div className="admin-health-ok">
+            实收估算按用户已充值金额 / 到账积分的平均点价计算；扣点标价按 $0.25/pt 显示。没有充值记录时按标价兜底。
+          </div>
           <div className="admin-health-ok">
             新任务会记录每次 RunningHub 进入次数；历史项目若早期没有保存尝试次数，会按当前可见 task 计算最低成本。
           </div>
@@ -6429,7 +6435,7 @@ function App() {
                     <th>项目</th>
                     <th>用户</th>
                     <th>照片 / 结果</th>
-                    <th>收入</th>
+                    <th>实收 / 标价</th>
                     <th>RunningHub</th>
                     <th>成本</th>
                     <th>利润</th>
@@ -6452,7 +6458,12 @@ function App() {
                         </div>
                       </td>
                       <td className="mono">{row.photoCount} / {row.resultCount}</td>
-                      <td className="mono">${row.revenueUsd.toFixed(2)} · {row.netPoints} pts</td>
+                      <td>
+                        <div className="admin-status-stack">
+                          <span className="mono">${row.cashRevenueUsd.toFixed(2)} · {row.netPoints} pts</span>
+                          <small>${row.listRevenueUsd.toFixed(2)} 标价 · ${row.blendedPointPriceUsd.toFixed(4)}/pt</small>
+                        </div>
+                      </td>
                       <td className="mono">{row.runningHubRuns} 次 <span className="text-muted">({row.workflowRuns}+{row.regenerationRuns})</span></td>
                       <td className="mono">${row.runningHubCostUsd.toFixed(2)}</td>
                       <td className={row.profitUsd < 0 ? 'mono danger-text' : 'mono accent-text'}>${row.profitUsd.toFixed(2)}</td>
