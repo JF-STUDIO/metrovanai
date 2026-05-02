@@ -236,6 +236,15 @@ function isAdminBillingAdjustmentEntry(entry: BillingEntry) {
   return entry.amountUsd === 0 && !entry.projectId && !entry.projectName && entry.note.startsWith('Admin adjustment:');
 }
 
+function getBillingEntryAdminLabel(entry: BillingEntry) {
+  if (entry.projectName) return entry.projectName;
+  if (entry.activationCodeLabel) return entry.activationCodeLabel;
+  if (entry.activationCode) return `兑换码 ${entry.activationCode}`;
+  if (isAdminBillingAdjustmentEntry(entry)) return entry.type === 'credit' ? '管理员补积分' : '管理员扣积分';
+  if (entry.note) return entry.note;
+  return entry.type === 'credit' ? '积分入账' : '积分扣费';
+}
+
 function App() {
   const isDemoMode = isDemoModeEnabled();
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => getRouteFromPath());
@@ -5498,16 +5507,42 @@ function App() {
                 ))}
                 {!adminDetailProjects.length && <p>暂无项目。</p>}
               </div>
-              <div className="admin-mini-table">
-                <div className="admin-mini-head"><strong>积分流水</strong><span>{adminDetailBillingEntries.length} 条</span></div>
-                {adminDetailBillingEntries.slice(0, 6).map((entry) => (
-                  <div key={entry.id} className="admin-mini-row">
-                    <span>{entry.note || entry.projectName || entry.activationCodeLabel || entry.type}</span>
-                    <small>{entry.type === 'credit' ? '+' : '-'}{entry.points} pts · {formatAdminDate(entry.createdAt)}</small>
-                  </div>
-                ))}
-                {!adminDetailBillingEntries.length && <p>暂无积分流水。</p>}
-              </div>
+              {(() => {
+                const chargeEntries = adminDetailBillingEntries.filter((entry) => entry.type === 'charge');
+                const creditEntries = adminDetailBillingEntries.filter((entry) => entry.type === 'credit');
+                return (
+                  <>
+                    <div className="admin-mini-table admin-billing-ledger">
+                      <div className="admin-mini-head">
+                        <strong>扣费记录</strong>
+                        <span>{chargeEntries.length} 条 · {chargeEntries.reduce((sum, entry) => sum + entry.points, 0).toLocaleString()} pts</span>
+                      </div>
+                      {chargeEntries.map((entry) => (
+                        <div key={entry.id} className="admin-mini-row billing-entry-row charge">
+                          <span>{getBillingEntryAdminLabel(entry)}</span>
+                          <small>-{entry.points} pts · {formatAdminDate(entry.createdAt)}</small>
+                          {entry.note && entry.note !== getBillingEntryAdminLabel(entry) ? <em>{entry.note}</em> : null}
+                        </div>
+                      ))}
+                      {!chargeEntries.length && <p>暂无扣费记录。</p>}
+                    </div>
+                    <div className="admin-mini-table admin-billing-ledger">
+                      <div className="admin-mini-head">
+                        <strong>入账记录</strong>
+                        <span>{creditEntries.length} 条 · {creditEntries.reduce((sum, entry) => sum + entry.points, 0).toLocaleString()} pts</span>
+                      </div>
+                      {creditEntries.map((entry) => (
+                        <div key={entry.id} className="admin-mini-row billing-entry-row credit">
+                          <span>{getBillingEntryAdminLabel(entry)}</span>
+                          <small>+{entry.points} pts · {formatAdminDate(entry.createdAt)}</small>
+                          {entry.amountUsd > 0 ? <em>${entry.amountUsd.toFixed(2)}</em> : null}
+                        </div>
+                      ))}
+                      {!creditEntries.length && <p>暂无入账记录。</p>}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         ) : null}

@@ -3889,6 +3889,34 @@
   color: var(--text-mute);
 }
 
+.admin-prototype .admin-billing-ledger {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.admin-prototype .billing-entry-row span {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.admin-prototype .billing-entry-row small {
+  color: var(--text-mute);
+}
+
+.admin-prototype .billing-entry-row em {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.admin-prototype .billing-entry-row.charge small {
+  color: var(--danger);
+}
+
+.admin-prototype .billing-entry-row.credit small {
+  color: var(--success);
+}
+
 .admin-prototype .empty-tip {
   padding: 40px;
   color: var(--text-mute);
