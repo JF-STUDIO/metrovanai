@@ -1281,6 +1281,79 @@ export function getProjectProgress(project: ProjectRecord, uploadPercent: number
   return project.hdrItems.length ? 40 : 0;
 }
 
+export function getProjectProcessingStageCopy(project: ProjectRecord, locale: UiLocale) {
+  const job = project.job;
+  const returned = Number(job?.metrics?.returned ?? 0);
+  const failed = Number(job?.metrics?.failed ?? 0);
+  const total = Number(job?.metrics?.total ?? project.hdrItems.length ?? 0);
+  const completed = Math.min(total, Math.max(0, returned + failed));
+  const progressText =
+    total > 0
+      ? locale === 'en'
+        ? `${completed} / ${total} photos updated`
+        : `${completed} / ${total} 张已更新`
+      : '';
+  const busyQueue = Number(job?.metrics?.queuePosition ?? 0) > 0;
+
+  if (project.status === 'uploading' || project.status === 'importing' || job?.phase === 'uploading') {
+    return {
+      title: locale === 'en' ? 'Uploading originals' : '正在上传原片',
+      detail: locale === 'en' ? 'Keep this page open until upload finishes.' : '请保持页面打开，上传完成后会进入处理。'
+    };
+  }
+
+  if (job?.phase === 'queued' || busyQueue) {
+    return {
+      title: locale === 'en' ? 'Waiting for processing capacity' : '等待处理资源',
+      detail: locale === 'en'
+        ? 'Your project is safely queued and will continue automatically.'
+        : '项目已安全排队，资源空出后会自动继续。'
+    };
+  }
+
+  if (job?.phase === 'grouping' || job?.phase === 'hdr_merging') {
+    return {
+      title: locale === 'en' ? 'Preparing photos' : '正在准备照片',
+      detail: locale === 'en' ? 'We are organizing your groups before cloud processing.' : '正在整理照片分组并生成处理输入。'
+    };
+  }
+
+  if (job?.phase === 'workflow_uploading') {
+    return {
+      title: locale === 'en' ? 'Submitting for processing' : '正在提交处理',
+      detail: locale === 'en' ? 'Your photos are being sent to the cloud processing queue.' : '照片正在进入云端处理队列。'
+    };
+  }
+
+  if (job?.phase === 'workflow_running') {
+    return {
+      title: locale === 'en' ? 'Cloud processing' : '云端处理中',
+      detail: progressText || (locale === 'en' ? 'Processing is running. Results will return automatically.' : '处理正在进行，结果会自动回传。')
+    };
+  }
+
+  if (job?.phase === 'result_returning') {
+    return {
+      title: locale === 'en' ? 'Returning results' : '正在回传结果',
+      detail: progressText || (locale === 'en' ? 'Finished photos are being saved to your project.' : '完成的照片正在保存到项目。')
+    };
+  }
+
+  if (job?.phase === 'regenerating') {
+    return {
+      title: locale === 'en' ? 'Regenerating photo' : '正在重新生成',
+      detail: locale === 'en' ? 'The selected photo is being regenerated.' : '选中的照片正在重新处理。'
+    };
+  }
+
+  return {
+    title: job?.label || (locale === 'en' ? 'Processing' : '处理中'),
+    detail: locale === 'en'
+      ? 'The project will continue automatically.'
+      : '项目会自动继续，请稍后查看结果。'
+  };
+}
+
 export function getProgressWidthClass(value: number, minimum = 0) {
   const clamped = Math.max(minimum, Math.min(100, Number.isFinite(value) ? value : 0));
   return `progress-width-${Math.round(clamped / 5) * 5}`;

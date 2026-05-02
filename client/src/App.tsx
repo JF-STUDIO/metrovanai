@@ -193,6 +193,7 @@ import {
   getMaxNavigableStep,
   getPasswordResetTokenFromQuery,
   getPathForRoute,
+  getProjectProcessingStageCopy,
   getProjectStatusLabel,
   getRouteFromPath,
   getResultCropFrame,
@@ -738,18 +739,19 @@ function App() {
   const hasActiveProcessingItems = workspaceHdrItems.some((item) => isHdrItemProcessing(item.status));
   const jobActivelyProcessing = isProjectJobActivelyProcessing(currentProject?.job);
   const jobFailedWhileItemsActive = Boolean(currentProject?.job?.status === 'failed' && (hasActiveProcessingItems || jobActivelyProcessing));
+  const processingStageCopy = currentProject ? getProjectProcessingStageCopy(currentProject, locale) : null;
   const showRetryProcessingAction =
     Boolean(currentProject && hasFailedResultHdrItems && !hasActiveProcessingItems && !jobActivelyProcessing) && !uploadActive;
   const processingPanelTitle = showProcessingUploadProgress
     ? copy.uploadOriginalsTitle
     : jobFailedWhileItemsActive
       ? copy.processingGroupsTitle
-    : currentProject?.job?.label || copy.waitingProcessing;
+    : processingStageCopy?.title || copy.waitingProcessing;
   const processingPanelDetail = showProcessingUploadProgress
     ? uploadProgressLabel
     : jobFailedWhileItemsActive
       ? copy.processingGroupsHint
-    : currentProject?.job?.detail || copy.waitingProcessingHint;
+    : processingStageCopy?.detail || copy.waitingProcessingHint;
   const showResultsStepContent = currentWorkspaceStep === 4 && (hasResultContent || hasMissingResultHdrItems);
   const adminTotals = useMemo(
     () => ({
@@ -2438,13 +2440,13 @@ function App() {
       }
       setAdminMessage(
         response.summary.recovered > 0
-          ? `已恢复 ${response.summary.recovered} 张 RunningHub 结果。`
+          ? `已恢复 ${response.summary.recovered} 张云端结果。`
           : response.summary.status === 'idle'
-            ? '这个项目没有需要恢复的 RunningHub 结果。'
+            ? '这个项目没有需要恢复的云端结果。'
             : '暂时没有恢复到结果，后台会继续自动重试。'
       );
     } catch (error) {
-      setAdminMessage(getUserFacingErrorMessage(error, 'RunningHub 结果恢复失败。', locale));
+      setAdminMessage(getUserFacingErrorMessage(error, '云端结果恢复失败。', locale));
     } finally {
       setAdminActionBusy(false);
     }
@@ -2908,7 +2910,7 @@ function App() {
     if (!feature.titleZh.trim() || !feature.titleEn.trim()) issues.push('中英文名称');
     if (!feature.descriptionZh.trim() || !feature.descriptionEn.trim()) issues.push('中英文描述');
     if (!feature.beforeImageUrl.trim() || !feature.afterImageUrl.trim()) issues.push('Before / After 对比图');
-    if (!workflowDisplay.workflowId.trim()) issues.push('Workflow ID');
+    if (!workflowDisplay.workflowId.trim()) issues.push('流程 ID');
     if (!workflowDisplay.inputNodeId.trim()) issues.push('输入节点');
     if (!workflowDisplay.outputNodeId.trim()) issues.push('输出节点');
     if (!Number.isFinite(feature.pointsPerPhoto) || feature.pointsPerPhoto <= 0) issues.push('每张积分');
@@ -2931,7 +2933,7 @@ function App() {
       runningHubMaxInFlight < MIN_RUNNINGHUB_MAX_IN_FLIGHT ||
       runningHubMaxInFlight > MAX_RUNNINGHUB_MAX_IN_FLIGHT
     ) {
-      setAdminMessage(`RunningHub 并发数量必须是 ${MIN_RUNNINGHUB_MAX_IN_FLIGHT} 到 ${MAX_RUNNINGHUB_MAX_IN_FLIGHT}。`);
+      setAdminMessage(`精修并发数量必须是 ${MIN_RUNNINGHUB_MAX_IN_FLIGHT} 到 ${MAX_RUNNINGHUB_MAX_IN_FLIGHT}。`);
       return;
     }
     const invalidPublishedFeature = adminFeatureDrafts.find((feature) => feature.enabled && getAdminFeaturePublishIssues(feature).length > 0);
@@ -3239,7 +3241,7 @@ function App() {
     setAdminMessage('');
     try {
       const response = await fetchAdminBillingUsers({ search: adminBillingLedgerSearch });
-      const header = ['Email', '姓名', '充值USD', '获得积分', '使用积分', '剩余积分', 'RunningHub次数', 'RunningHub成本USD', '剩余积分成本USD', '利润USD', '项目数', '结果数'].join(',');
+      const header = ['Email', '姓名', '充值USD', '获得积分', '使用积分', '剩余积分', '云端调用次数', '云端处理成本USD', '剩余积分成本USD', '利润USD', '项目数', '结果数'].join(',');
       const rows = response.items.map((row) =>
         [
           row.userEmail,
@@ -5462,7 +5464,7 @@ function App() {
             <div className="card-header">
               <div>
                 <h3>处理队列</h3>
-                <div className="card-sub">上传 → RunPod → RunningHub → 回传</div>
+                <div className="card-sub">上传 → 基础处理 → 精修处理 → 回传</div>
               </div>
               <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminLoadOpsHealth()} disabled={adminOpsBusy}>
                 {adminOpsBusy ? '刷新中...' : '刷新'}
@@ -5473,8 +5475,8 @@ function App() {
                 ['上传中', adminOpsHealth?.queueStages?.uploadingProjects ?? 0],
                 ['排队项目', adminOpsHealth?.queueStages?.queuedProjects ?? 0],
                 ['处理中', adminOpsHealth?.queueStages?.processingProjects ?? 0],
-                ['RunPod', adminOpsHealth?.queueStages?.runpodItems ?? 0],
-                ['RunningHub', adminOpsHealth?.queueStages?.runningHubItems ?? 0],
+                ['基础处理', adminOpsHealth?.queueStages?.runpodItems ?? 0],
+                ['精修处理', adminOpsHealth?.queueStages?.runningHubItems ?? 0],
                 ['回传完成', adminOpsHealth?.queueStages?.completedReturnItems ?? 0],
                 ['失败', adminOpsHealth?.queueStages?.failedItems ?? 0]
               ].map(([label, value]) => (
@@ -5917,10 +5919,8 @@ function App() {
       return action;
     };
     const getAdminFailureProviderLabel = (provider: string | null | undefined, stage: string | null | undefined) => {
-      if (provider === 'runpod') return 'Runpod';
-      if (provider === 'runninghub') return 'RunningHub';
-      if (stage === 'runpod') return 'Runpod';
-      if (stage === 'runninghub') return 'RunningHub';
+      if (provider === 'runpod' || stage === 'runpod') return '基础处理';
+      if (provider === 'runninghub' || stage === 'runninghub') return '精修处理';
       if (stage === 'failed') return '处理阶段';
       return '未定位';
     };
@@ -5938,8 +5938,8 @@ function App() {
     };
 
     const renderFailuresPage = () => {
-      const runpodCount = adminFailedPhotoRows.filter((row) => row.diagnostic.provider === 'runpod' || row.diagnostic.stage === 'runpod').length;
-      const runningHubCount = adminFailedPhotoRows.filter((row) => row.diagnostic.provider === 'runninghub' || row.diagnostic.stage === 'runninghub').length;
+      const baseProcessingCount = adminFailedPhotoRows.filter((row) => row.diagnostic.provider === 'runpod' || row.diagnostic.stage === 'runpod').length;
+      const polishProcessingCount = adminFailedPhotoRows.filter((row) => row.diagnostic.provider === 'runninghub' || row.diagnostic.stage === 'runninghub').length;
       const sourceMissingCount = adminFailedPhotosCauseCounts['source-missing']?.count ?? 0;
 
       return (
@@ -5959,8 +5959,8 @@ function App() {
           <div className="kpi-grid">
             {kpi('失败照片', <>{adminFailedPhotosTotal}<span className="unit">张</span></>, <><span>服务端分页</span><span className="vs">当前筛选</span></>, adminFailedPhotosTotal ? 'down' : 'up')}
             {kpi('R2 原片缺失', <>{sourceMissingCount}<span className="unit">张</span></>, <><span>需重传/巡检</span><span className="vs">源文件</span></>, sourceMissingCount ? 'down' : 'up')}
-            {kpi('Runpod', <>{runpodCount}<span className="unit">张</span></>, <><span>本页</span><span className="vs">处理节点</span></>, runpodCount ? 'down' : 'up')}
-            {kpi('RunningHub', <>{runningHubCount}<span className="unit">张</span></>, <><span>本页</span><span className="vs">云端任务</span></>, runningHubCount ? 'down' : 'up')}
+            {kpi('基础处理', <>{baseProcessingCount}<span className="unit">张</span></>, <><span>本页</span><span className="vs">处理阶段</span></>, baseProcessingCount ? 'down' : 'up')}
+            {kpi('精修处理', <>{polishProcessingCount}<span className="unit">张</span></>, <><span>本页</span><span className="vs">云端阶段</span></>, polishProcessingCount ? 'down' : 'up')}
           </div>
           <div className="card admin-failure-board">
             <div className="toolbar">
@@ -6160,7 +6160,7 @@ function App() {
               <div className="admin-inline-actions">
                 <span className={tagClassForStatus(adminSelectedProject.status)}>{getProjectStatusLabel(adminSelectedProject, locale)}</span>
                 <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminRecoverSelectedProject()} disabled={adminActionBusy}>
-                  {adminActionBusy ? '恢复中...' : '恢复 RunningHub 结果'}
+                  {adminActionBusy ? '恢复中...' : '恢复云端结果'}
                 </button>
                 <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminRunDeepHealth()} disabled={adminDeepHealthBusy}>
                   {adminDeepHealthBusy ? '巡检中...' : '深度巡检'}
@@ -6412,7 +6412,7 @@ function App() {
       <div className="page-content active">
         {adminPageTitle(
           '用户账单',
-          <>按用户汇总充值、积分、RunningHub 成本和利润 · 当前匹配 <span className="mono accent-text">{adminBillingUserTotal.toLocaleString()}</span> 人</>,
+          <>按用户汇总充值、积分、云端处理成本和利润 · 当前匹配 <span className="mono accent-text">{adminBillingUserTotal.toLocaleString()}</span> 人</>,
           <>
             <button className="btn btn-ghost" type="button" onClick={() => void exportAdminBillingUsersCSV()} disabled={adminBillingUsersBusy || !adminBillingUserTotal}>
               导出 CSV
@@ -6424,7 +6424,7 @@ function App() {
         )}
         <div className="kpi-grid">
           {kpi('充值金额', <>${adminBillingUserTotals.totalPaidUsd.toFixed(2)}</>, <span>实收现金</span>)}
-          {kpi('RunningHub 成本', <>${adminBillingUserTotals.runningHubCostUsd.toFixed(2)}</>, <span>{adminBillingUserTotals.runningHubRuns.toLocaleString()} × ${adminBillingUserUnitUsd.toFixed(2)}</span>, adminBillingUserTotals.runningHubCostUsd ? 'down' : 'up')}
+          {kpi('云端处理成本', <>${adminBillingUserTotals.runningHubCostUsd.toFixed(2)}</>, <span>{adminBillingUserTotals.runningHubRuns.toLocaleString()} × ${adminBillingUserUnitUsd.toFixed(2)}</span>, adminBillingUserTotals.runningHubCostUsd ? 'down' : 'up')}
           {kpi('剩余积分成本', <>${adminBillingUserTotals.remainingCreditCostUsd.toFixed(2)}</>, <span>{adminBillingUserTotals.availablePoints.toLocaleString()} × ${adminBillingUserUnitUsd.toFixed(2)}</span>, adminBillingUserTotals.remainingCreditCostUsd ? 'down' : 'up')}
           {kpi('保守利润', <>${adminBillingUserTotals.profitUsd.toFixed(2)}</>, <span>充值 - 已用成本 - 剩余成本</span>, adminBillingUserTotals.profitUsd < 0 ? 'down' : 'up')}
         </div>
@@ -6443,7 +6443,7 @@ function App() {
             />
           </div>
           <div className="admin-health-ok">
-            保守利润按实际充值金额 - 当前 RunningHub 次数 × $0.07 - 剩余积分 × $0.07 计算；重试和重修会继续增加实际成本。
+            保守利润按实际充值金额 - 当前云端调用次数 × $0.07 - 剩余积分 × $0.07 计算；重试和重修会继续增加实际成本。
           </div>
           {adminBillingUsers.length ? (
             <div className="table-wrap">
@@ -6453,7 +6453,7 @@ function App() {
                     <th>用户</th>
                     <th>充值</th>
                     <th>积分</th>
-                    <th>RunningHub</th>
+                    <th>云端调用</th>
                     <th>成本</th>
                     <th>剩余成本</th>
                     <th>利润</th>
@@ -6506,7 +6506,7 @@ function App() {
       <div className="page-content active">
         {adminPageTitle(
           '成本利润',
-          <>当前匹配 <span className="mono accent-text">{adminProjectCostTotal.toLocaleString()}</span> 项 · RunningHub 单次成本 <span className="mono accent-text">${adminProjectCostUnitUsd.toFixed(2)}</span></>,
+          <>当前匹配 <span className="mono accent-text">{adminProjectCostTotal.toLocaleString()}</span> 项 · 云端单次成本 <span className="mono accent-text">${adminProjectCostUnitUsd.toFixed(2)}</span></>,
           <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadProjectCosts()} disabled={adminProjectCostsBusy}>
             {adminProjectCostsBusy ? '查询中...' : '查询成本'}
           </button>
@@ -6514,8 +6514,8 @@ function App() {
         <div className="kpi-grid">
           {kpi('实收估算', <>${adminProjectCostTotals.cashRevenueUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.netPoints.toLocaleString()} pts</span>)}
           {kpi('扣点标价', <>${adminProjectCostTotals.listRevenueUsd.toFixed(2)}</>, <span>$0.25 / pt</span>)}
-          {kpi('RunningHub 次数', <>{adminProjectCostTotals.runningHubRuns.toLocaleString()}<span className="unit">次</span></>, <span>含重试/重修</span>)}
-          {kpi('RunningHub 成本', <>${adminProjectCostTotals.runningHubCostUsd.toFixed(2)}</>, <span>$0.07 / 次</span>, adminProjectCostTotals.runningHubCostUsd ? 'down' : 'up')}
+          {kpi('云端调用次数', <>{adminProjectCostTotals.runningHubRuns.toLocaleString()}<span className="unit">次</span></>, <span>含重试/重修</span>)}
+          {kpi('云端处理成本', <>${adminProjectCostTotals.runningHubCostUsd.toFixed(2)}</>, <span>$0.07 / 次</span>, adminProjectCostTotals.runningHubCostUsd ? 'down' : 'up')}
           {kpi('估算利润', <>${adminProjectCostTotals.profitUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.projects.toLocaleString()} 项</span>, adminProjectCostTotals.profitUsd < 0 ? 'down' : 'up')}
         </div>
         <div className="card">
@@ -6572,7 +6572,7 @@ function App() {
             实收估算按用户已充值金额 / 非项目到账积分的平均点价计算，后台赠送和重修退回会摊低点价；扣点标价按 $0.25/pt 显示。
           </div>
           <div className="admin-health-ok">
-            新任务会记录每次 RunningHub 进入次数；历史项目若早期没有保存尝试次数，会按当前可见 task 计算最低成本。
+            新任务会记录每次云端处理进入次数；历史项目若早期没有保存尝试次数，会按当前可见任务计算最低成本。
           </div>
           {adminProjectCosts.length ? (
             <div className="table-wrap">
@@ -6583,7 +6583,7 @@ function App() {
                     <th>用户</th>
                     <th>照片 / 结果</th>
                     <th>实收 / 标价</th>
-                    <th>RunningHub</th>
+                    <th>云端调用</th>
                     <th>成本</th>
                     <th>利润</th>
                     <th>更新</th>
@@ -7001,7 +7001,7 @@ function App() {
           {kpi('总引擎数', <>{enabledWorkflowCount}<span className="unit">/ {Math.max(enabledWorkflowCount, 1)}</span></>, <span className="vs">{adminWorkflowSummary?.active ?? '未加载'}</span>)}
           {kpi('本月调用', totalProjectPhotos.toLocaleString(), <span>▲ 实时项目</span>)}
           {kpi('本月成本', `$${(totalProjectPhotos * 0.04).toFixed(0)}`, <span>▲ 估算</span>, 'down')}
-          {kpi('Runpod 批量', <>{adminSystemSettings?.runpodHdrBatchSize ?? 0}<span className="unit">组/批</span></>, <span>▼ 批量设置</span>)}
+          {kpi('处理批量', <>{adminSystemSettings?.runpodHdrBatchSize ?? 0}<span className="unit">组/批</span></>, <span>▼ 批量设置</span>)}
         </div>
         <div className="engine-grid">
           {workflowItems.length ? workflowItems.map((item, index) => {
@@ -7021,7 +7021,7 @@ function App() {
                 <div className="engine-icon">{['✨', '☁️', '🛋️', '🌿', '🧹', '🌅'][index % 6]}</div>
                 <div>
                   <div className="engine-title">{item.name}</div>
-                  <div className="engine-sub">workflow: {item.workflowId ?? '未配置'} · type: {item.type}</div>
+                  <div className="engine-sub">流程 ID: {item.workflowId ?? '未配置'} · 类型: {item.type}</div>
                 </div>
                 {statusTag}
               </div>
@@ -7044,7 +7044,7 @@ function App() {
       <div className="page-content active">
         {adminPageTitle(
           'Prompt 模板',
-          '只读配置索引 · 当前后台展示 Prompt 节点和 Workflow ID',
+          '只读配置索引 · 当前后台展示 Prompt 节点和流程 ID',
           <>
             <span className="tag tag-gray">只读</span>
             <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>{adminWorkflowBusy ? '刷新中...' : '刷新模板'}</button>
@@ -7057,7 +7057,7 @@ function App() {
                 <span className="tag tag-purple">{item.type}</span>
                 <h3>{item.name}</h3>
                 <p>Prompt Node: <span className="mono">{item.promptNodeId ?? '未配置'}</span></p>
-                <p>Workflow ID: <span className="mono">{item.workflowId ?? '未配置'}</span></p>
+                <p>流程 ID: <span className="mono">{item.workflowId ?? '未配置'}</span></p>
               </article>
             )) : <div className="empty-tip">暂无 Prompt 模板数据</div>}
           </div>
@@ -7197,7 +7197,7 @@ function App() {
                   <textarea value={feature.descriptionEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionEn: event.target.value })} placeholder="英文描述" />
                   <textarea value={feature.detailZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { detailZh: event.target.value })} placeholder="中文详情" />
                   <textarea value={feature.detailEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { detailEn: event.target.value })} placeholder="英文详情" />
-                  <input value={feature.workflowId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })} placeholder="Workflow ID" />
+                  <input value={feature.workflowId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })} placeholder="流程 ID" />
                   <input value={feature.inputNodeId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { inputNodeId: event.target.value })} placeholder="输入节点" />
                   <input value={feature.outputNodeId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { outputNodeId: event.target.value })} placeholder="输出节点" />
                   <input value={feature.pointsPerPhoto} onChange={(event) => updateAdminFeatureDraft(feature.id, { pointsPerPhoto: Number(event.target.value) || 0 })} inputMode="numeric" placeholder="每张积分" />
@@ -7375,14 +7375,14 @@ function App() {
           <div className="card">
             <div className="card-body">
               <div className="settings-row">
-                <div className="label-side"><div className="name">云处理 HDR 批量</div><div className="desc">每个 Runpod 任务包含的 HDR 组数，支持 {MIN_RUNPOD_HDR_BATCH_SIZE}–{MAX_RUNPOD_HDR_BATCH_SIZE}，新任务即时生效</div></div>
+                <div className="label-side"><div className="name">云处理 HDR 批量</div><div className="desc">每个基础处理任务包含的 HDR 组数，支持 {MIN_RUNPOD_HDR_BATCH_SIZE}–{MAX_RUNPOD_HDR_BATCH_SIZE}，新任务即时生效</div></div>
                 <div className="admin-inline-form">
                   <input value={adminSystemDraft.runpodHdrBatchSize} onChange={(event) => setAdminSystemDraft((current) => ({ ...current, runpodHdrBatchSize: event.target.value }))} inputMode="numeric" min={MIN_RUNPOD_HDR_BATCH_SIZE} max={MAX_RUNPOD_HDR_BATCH_SIZE} />
                   <button className="btn btn-primary" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy}>{adminSystemBusy ? '保存中...' : '保存'}</button>
                 </div>
               </div>
               <div className="settings-row">
-                <div className="label-side"><div className="name">RunningHub 并发</div><div className="desc">后续修图工作流同时提交的照片数，建议 48；支持 {MIN_RUNNINGHUB_MAX_IN_FLIGHT}–{MAX_RUNNINGHUB_MAX_IN_FLIGHT}，新任务即时生效</div></div>
+                <div className="label-side"><div className="name">精修并发</div><div className="desc">后续修图工作流同时提交的照片数，建议 48；支持 {MIN_RUNNINGHUB_MAX_IN_FLIGHT}–{MAX_RUNNINGHUB_MAX_IN_FLIGHT}，新任务即时生效</div></div>
                 <div className="admin-inline-form">
                   <input value={adminSystemDraft.runningHubMaxInFlight} onChange={(event) => setAdminSystemDraft((current) => ({ ...current, runningHubMaxInFlight: event.target.value }))} inputMode="numeric" min={MIN_RUNNINGHUB_MAX_IN_FLIGHT} max={MAX_RUNNINGHUB_MAX_IN_FLIGHT} />
                   <button className="btn btn-primary" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy}>{adminSystemBusy ? '保存中...' : '保存'}</button>
@@ -7391,8 +7391,8 @@ function App() {
               <div className="settings-row">
                 <div className="label-side"><div className="name">当前生效设置</div><div className="desc">最近从服务器读取的批量和并发值</div></div>
                 <div>
-                  <span className="tag tag-cyan">{adminSystemSettings?.runpodHdrBatchSize ?? '未读取'} 组 / Runpod 批</span>
-                  <span className="tag tag-gray admin-inline-gap">{adminSystemSettings?.runningHubMaxInFlight ?? '未读取'} 张 / RunningHub 并发</span>
+                  <span className="tag tag-cyan">{adminSystemSettings?.runpodHdrBatchSize ?? '未读取'} 组 / 基础处理批量</span>
+                  <span className="tag tag-gray admin-inline-gap">{adminSystemSettings?.runningHubMaxInFlight ?? '未读取'} 张 / 精修并发</span>
                 </div>
               </div>
               <div className="settings-row">
@@ -7410,12 +7410,12 @@ function App() {
           <div className="card">
             <div className="card-body">
               <div className="settings-row">
-                <div className="label-side"><div className="name">API 密钥状态</div><div className="desc">Runpod / ComfyUI 工作流 API 配置</div></div>
+                <div className="label-side"><div className="name">API 密钥状态</div><div className="desc">云端处理和工作流 API 配置</div></div>
                 <div><span className={adminWorkflowSummary?.apiKeyConfigured ? 'tag tag-green' : 'tag tag-orange'}>{adminWorkflowSummary?.apiKeyConfigured ? '已配置' : '未配置'}</span></div>
               </div>
               <div className="settings-row">
-                <div className="label-side"><div className="name">执行器</div><div className="desc">当前 AI 工作流引擎提供商</div></div>
-                <div><span className="tag tag-cyan">{adminWorkflowSummary?.executor.provider ?? '未读取'}</span></div>
+                <div className="label-side"><div className="name">执行器</div><div className="desc">当前 AI 工作流执行状态</div></div>
+                <div><span className="tag tag-cyan">{adminWorkflowSummary?.executor.provider ? '已连接' : '未读取'}</span></div>
               </div>
               <div className="settings-row">
                 <div className="label-side"><div className="name">当前主流程</div><div className="desc">活跃的工作流名称</div></div>
