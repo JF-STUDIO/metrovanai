@@ -539,6 +539,38 @@ export interface AdminProjectCostsPayload {
   items: AdminProjectCostRow[];
 }
 
+export interface AdminRegenerationAuditRow {
+  projectId: string;
+  projectName: string;
+  userKey: string;
+  userDisplayName: string;
+  userEmail: string;
+  resultCount: number;
+  regenerationRuns: number;
+  completedRuns: number;
+  failedRuns: number;
+  freeLimit: number;
+  expectedChargedPoints: number;
+  billedChargePoints: number;
+  billedRefundPoints: number;
+  actualChargedPoints: number;
+  deltaPoints: number;
+  status: 'ok' | 'overcharged' | 'undercharged';
+  updatedAt: string;
+}
+
+export interface AdminRegenerationAuditPayload {
+  total: number;
+  totals: {
+    projects: number;
+    overchargedProjects: number;
+    underchargedProjects: number;
+    overchargedPoints: number;
+    underchargedPoints: number;
+  };
+  items: AdminRegenerationAuditRow[];
+}
+
 export interface AdminActivationCode {
   id: string;
   code: string;
@@ -1136,6 +1168,17 @@ export async function fetchAdminProjectCosts(query: {
   if (query.endDate?.trim()) params.set('endDate', query.endDate.trim());
   const queryString = params.toString();
   return await jsonRequest<AdminProjectCostsPayload>(`/api/admin/project-costs${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function fetchAdminRegenerationAudit(query: {
+  search?: string;
+  mode?: 'all' | 'mismatch' | 'overcharged' | 'undercharged';
+} = {}) {
+  const params = new URLSearchParams();
+  if (query.search?.trim()) params.set('search', query.search.trim());
+  if (query.mode && query.mode !== 'mismatch') params.set('mode', query.mode);
+  const queryString = params.toString();
+  return await jsonRequest<AdminRegenerationAuditPayload>(`/api/admin/regeneration-audit${queryString ? `?${queryString}` : ''}`);
 }
 
 export async function fetchAdminOrderRefundPreview(orderId: string) {

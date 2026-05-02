@@ -432,6 +432,150 @@ app.get('/api/admin/project-costs', (req, res) => {
   });
 });
 
+app.get('/api/admin/regeneration-audit', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const search = String(req.query.search ?? '').trim().toLowerCase();
+  const mode = String(req.query.mode ?? 'mismatch');
+  const usersByKey = new Map<string, UserRecord>(store.listUsers().map((user: UserRecord) => [user.userKey, user]));
+  const billingCache = new Map<string, BillingEntry[]>();
+  type AdminRegenerationAuditRow = {
+    projectId: string;
+    projectName: string;
+    userKey: string;
+    userDisplayName: string;
+    userEmail: string;
+    resultCount: number;
+    regenerationRuns: number;
+    completedRuns: number;
+    failedRuns: number;
+    freeLimit: number;
+    expectedChargedPoints: number;
+    billedChargePoints: number;
+    billedRefundPoints: number;
+    actualChargedPoints: number;
+    deltaPoints: number;
+    status: 'ok' | 'overcharged' | 'undercharged';
+    updatedAt: string;
+  };
+
+  const getUserBillingEntries = (userKey: string) => {
+    const cached = billingCache.get(userKey);
+    if (cached) {
+      return cached;
+    }
+    const entries = store.listBillingEntries(userKey);
+    billingCache.set(userKey, entries);
+    return entries;
+  };
+
+  const isRegenerationBillingEntry = (project: ProjectRecord, entry: BillingEntry) => {
+    if (entry.projectId || entry.projectName !== project.name) {
+      return false;
+    }
+    const note = entry.note.toLowerCase();
+    return (
+      note.includes('regeneration') ||
+      note.includes('重新生成') ||
+      note.includes('free quota')
+    );
+  };
+
+  const rows: AdminRegenerationAuditRow[] = listAllProjectsForAdmin()
+    .map((project: ProjectRecord) => {
+      const user = usersByKey.get(project.userKey);
+      const regenerationItems = project.hdrItems.filter((item) => item.regeneration?.taskId);
+      const completedRuns = regenerationItems.filter((item) => item.regeneration?.status === 'completed').length;
+      const failedRuns = regenerationItems.filter((item) => item.regeneration?.status === 'failed').length;
+      const freeLimit = Math.max(0, Math.round(Number(project.regenerationUsage?.freeLimit ?? 10)));
+      const expectedChargedPoints = Math.max(0, completedRuns - freeLimit);
+      const entries = getUserBillingEntries(project.userKey).filter((entry) =>
+        isRegenerationBillingEntry(project, entry)
+      );
+      const chargedPoints = entries
+        .filter((entry) => entry.type === 'charge')
+        .reduce((sum, entry) => sum + entry.points, 0);
+      const refundedPoints = entries
+        .filter((entry) => entry.type === 'credit')
+        .reduce((sum, entry) => sum + entry.points, 0);
+      const actualChargedPoints = chargedPoints - refundedPoints;
+      const deltaPoints = actualChargedPoints - expectedChargedPoints;
+      const status = deltaPoints > 0 ? 'overcharged' : deltaPoints < 0 ? 'undercharged' : 'ok';
+      return {
+        projectId: project.id,
+        projectName: project.name,
+        userKey: project.userKey,
+        userDisplayName: project.userDisplayName,
+        userEmail: user?.email ?? '',
+        resultCount: project.resultAssets.length,
+        regenerationRuns: regenerationItems.length,
+        completedRuns,
+        failedRuns,
+        freeLimit,
+        expectedChargedPoints,
+        billedChargePoints: chargedPoints,
+        billedRefundPoints: refundedPoints,
+        actualChargedPoints,
+        deltaPoints,
+        status,
+        updatedAt: project.updatedAt
+      };
+    })
+    .filter((row: AdminRegenerationAuditRow) => {
+      if (mode === 'mismatch' && row.deltaPoints === 0) {
+        return false;
+      }
+      if (mode === 'overcharged' && row.deltaPoints <= 0) {
+        return false;
+      }
+      if (mode === 'undercharged' && row.deltaPoints >= 0) {
+        return false;
+      }
+      if (!search) {
+        return true;
+      }
+      const haystack = [
+        row.projectId,
+        row.projectName,
+        row.userKey,
+        row.userDisplayName,
+        row.userEmail
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(search);
+    })
+    .sort((a: AdminRegenerationAuditRow, b: AdminRegenerationAuditRow) => {
+      const severity = Math.abs(b.deltaPoints) - Math.abs(a.deltaPoints);
+      if (severity !== 0) {
+        return severity;
+      }
+      return a.updatedAt < b.updatedAt ? 1 : -1;
+    })
+    .slice(0, 500);
+
+  res.json({
+    total: rows.length,
+    totals: {
+      projects: rows.length,
+      overchargedProjects: rows.filter((row: AdminRegenerationAuditRow) => row.deltaPoints > 0).length,
+      underchargedProjects: rows.filter((row: AdminRegenerationAuditRow) => row.deltaPoints < 0).length,
+      overchargedPoints: rows
+        .filter((row: AdminRegenerationAuditRow) => row.deltaPoints > 0)
+        .reduce((sum: number, row: AdminRegenerationAuditRow) => sum + row.deltaPoints, 0),
+      underchargedPoints: Math.abs(
+        rows
+          .filter((row: AdminRegenerationAuditRow) => row.deltaPoints < 0)
+          .reduce((sum: number, row: AdminRegenerationAuditRow) => sum + row.deltaPoints, 0)
+      )
+    },
+    items: rows
+  });
+});
+
 app.get('/api/admin/audit-logs', (req, res) => {
   if (!requireAdminApiAccess(req, res)) {
     return;

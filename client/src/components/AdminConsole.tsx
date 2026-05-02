@@ -84,6 +84,13 @@ function adminNavIcon(page: AdminConsolePage) {
         <path d="m7 15 3-3 3 2 5-7" />
       </>
     ),
+    regenerationAudit: (
+      <>
+        <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+        <path d="M21 4v6h-6" />
+        <path d="m9 12 2 2 4-5" />
+      </>
+    ),
     plans: (
       <>
         <path d="M12 2 4 7v10l8 5 8-5V7z" />
@@ -192,6 +199,7 @@ export function AdminConsole({
           {targetNavButton('orders', '订单管理')}
           {targetNavButton('billing', '账单流水')}
           {targetNavButton('costs', '成本利润')}
+          {targetNavButton('regenerationAudit', '重修审计')}
           {targetNavButton('plans', '套餐配置')}
           {targetNavButton('codes', '兑换码')}
         </div>

@@ -58,6 +58,7 @@ import {
   fetchAdminOrderRefundPreview,
   fetchAdminOrders,
   fetchAdminProjectCosts,
+  fetchAdminRegenerationAudit,
   fetchAdminMaintenanceReports,
   fetchAdminProjectDetail,
   fetchAdminProjects,
@@ -109,6 +110,8 @@ import type {
   AdminOpsHealthPayload,
   AdminProjectCostsPayload,
   AdminProjectCostRow,
+  AdminRegenerationAuditPayload,
+  AdminRegenerationAuditRow,
   AdminProjectRepairAction,
   AdminSystemSettings,
   AdminUserListQuery,
@@ -370,6 +373,19 @@ function App() {
   const [adminProjectCostEndDate, setAdminProjectCostEndDate] = useState('');
   const [adminProjectCostsLoaded, setAdminProjectCostsLoaded] = useState(false);
   const [adminProjectCostsBusy, setAdminProjectCostsBusy] = useState(false);
+  const [adminRegenerationAudit, setAdminRegenerationAudit] = useState<AdminRegenerationAuditRow[]>([]);
+  const [adminRegenerationAuditTotals, setAdminRegenerationAuditTotals] = useState<AdminRegenerationAuditPayload['totals']>({
+    projects: 0,
+    overchargedProjects: 0,
+    underchargedProjects: 0,
+    overchargedPoints: 0,
+    underchargedPoints: 0
+  });
+  const [adminRegenerationAuditTotal, setAdminRegenerationAuditTotal] = useState(0);
+  const [adminRegenerationAuditSearch, setAdminRegenerationAuditSearch] = useState('');
+  const [adminRegenerationAuditMode, setAdminRegenerationAuditMode] = useState<'all' | 'mismatch' | 'overcharged' | 'undercharged'>('mismatch');
+  const [adminRegenerationAuditLoaded, setAdminRegenerationAuditLoaded] = useState(false);
+  const [adminRegenerationAuditBusy, setAdminRegenerationAuditBusy] = useState(false);
   const [adminRefundOrder, setAdminRefundOrder] = useState<PaymentOrderRecord | null>(null);
   const [adminRefundPreview, setAdminRefundPreview] = useState<PaymentOrderRefundPreview | null>(null);
   const [adminRefundBusy, setAdminRefundBusy] = useState(false);
@@ -1125,6 +1141,14 @@ function App() {
 
     void handleAdminLoadProjectCosts();
   }, [activeRoute, adminConsolePage, adminProjectCostsLoaded, hasAdminSession]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || adminConsolePage !== 'regenerationAudit' || !hasAdminSession || adminRegenerationAuditLoaded) {
+      return;
+    }
+
+    void handleAdminLoadRegenerationAudit();
+  }, [activeRoute, adminConsolePage, adminRegenerationAuditLoaded, hasAdminSession]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || !hasAdminSession || adminMaintenanceLoaded) {
@@ -2257,6 +2281,32 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '项目成本读取失败。', locale));
     } finally {
       setAdminProjectCostsBusy(false);
+    }
+  }
+
+  async function handleAdminLoadRegenerationAudit() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminRegenerationAuditBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminRegenerationAudit({
+        search: adminRegenerationAuditSearch,
+        mode: adminRegenerationAuditMode
+      });
+      setAdminRegenerationAudit(response.items);
+      setAdminRegenerationAuditTotals(response.totals);
+      setAdminRegenerationAuditTotal(response.total);
+      setAdminRegenerationAuditLoaded(true);
+      setAdminMessage(response.total ? `已载入 ${response.total.toLocaleString()} 个重修审计项目。` : '没有匹配的重修审计项目。');
+    } catch (error) {
+      setAdminRegenerationAuditLoaded(true);
+      setAdminMessage(getUserFacingErrorMessage(error, '重修审计读取失败。', locale));
+    } finally {
+      setAdminRegenerationAuditBusy(false);
     }
   }
 
@@ -6552,6 +6602,104 @@ function App() {
       </div>
     );
 
+    const renderRegenerationAuditPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '重修审计',
+          <>检查每项目前 10 次免费重修是否和账单一致 · 当前匹配 <span className="mono accent-text">{adminRegenerationAuditTotal.toLocaleString()}</span> 项</>,
+          <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadRegenerationAudit()} disabled={adminRegenerationAuditBusy}>
+            {adminRegenerationAuditBusy ? '查询中...' : '查询审计'}
+          </button>
+        )}
+        <div className="kpi-grid">
+          {kpi('异常项目', <>{adminRegenerationAuditTotals.projects.toLocaleString()}<span className="unit">项</span></>, <span>当前筛选</span>, adminRegenerationAuditTotals.projects ? 'down' : 'up')}
+          {kpi('多扣项目', <>{adminRegenerationAuditTotals.overchargedProjects.toLocaleString()}<span className="unit">项</span></>, <span>{adminRegenerationAuditTotals.overchargedPoints.toLocaleString()} pts</span>, adminRegenerationAuditTotals.overchargedProjects ? 'down' : 'up')}
+          {kpi('少扣项目', <>{adminRegenerationAuditTotals.underchargedProjects.toLocaleString()}<span className="unit">项</span></>, <span>{adminRegenerationAuditTotals.underchargedPoints.toLocaleString()} pts</span>)}
+          {kpi('免费规则', <>10<span className="unit">次</span></>, <span>每个项目</span>)}
+        </div>
+        <div className="card">
+          <div className="toolbar">
+            <input
+              value={adminRegenerationAuditSearch}
+              onChange={(event) => {
+                setAdminRegenerationAuditSearch(event.target.value);
+                setAdminRegenerationAuditLoaded(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleAdminLoadRegenerationAudit();
+              }}
+              placeholder="搜索用户 / 邮箱 / 项目名 / 项目ID"
+            />
+            <select
+              value={adminRegenerationAuditMode}
+              onChange={(event) => {
+                setAdminRegenerationAuditMode(event.target.value as typeof adminRegenerationAuditMode);
+                setAdminRegenerationAuditLoaded(false);
+              }}
+            >
+              <option value="mismatch">只看异常</option>
+              <option value="overcharged">只看多扣</option>
+              <option value="undercharged">只看少扣</option>
+              <option value="all">全部项目</option>
+            </select>
+          </div>
+          <div className="admin-health-ok">
+            应收费 = max(已完成重修次数 - 免费次数, 0)。实际收费 = 重修扣费 - 重修退款。差额为正表示多扣，负数表示少扣。
+          </div>
+          {adminRegenerationAudit.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>项目</th>
+                    <th>用户</th>
+                    <th>重修</th>
+                    <th>应收费</th>
+                    <th>实际收费</th>
+                    <th>差额</th>
+                    <th>状态</th>
+                    <th>更新</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminRegenerationAudit.map((row, index) => (
+                    <tr key={row.projectId}>
+                      <td>
+                        <div className="admin-status-stack">
+                          <span>{row.projectName}</span>
+                          <small>{row.resultCount} 结果 · {row.projectId}</small>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="user-cell">
+                          <div className={userAvatarClass(index)}>{getAdminInitials(row.userDisplayName || row.userKey)}</div>
+                          <div><div className="name">{row.userDisplayName}</div><div className="email">{row.userEmail || row.userKey}</div></div>
+                        </div>
+                      </td>
+                      <td className="mono">{row.regenerationRuns} 次 <span className="text-muted">({row.completedRuns} 成功 / {row.failedRuns} 失败)</span></td>
+                      <td className="mono">{row.expectedChargedPoints} pts <span className="text-muted">免费 {row.freeLimit}</span></td>
+                      <td className="mono">{row.actualChargedPoints} pts <span className="text-muted">扣 {row.billedChargePoints} / 退 {row.billedRefundPoints}</span></td>
+                      <td className={row.deltaPoints > 0 ? 'mono danger-text' : row.deltaPoints < 0 ? 'mono accent-text' : 'mono'}>
+                        {row.deltaPoints > 0 ? '+' : ''}{row.deltaPoints} pts
+                      </td>
+                      <td>
+                        <span className={row.status === 'overcharged' ? 'tag tag-red' : row.status === 'undercharged' ? 'tag tag-gray' : 'tag tag-green'}>
+                          {row.status === 'overcharged' ? '多扣' : row.status === 'undercharged' ? '少扣' : '正常'}
+                        </span>
+                      </td>
+                      <td className="cell-id">{formatAdminShortDate(row.updatedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty-tip">{adminRegenerationAuditBusy ? '正在读取重修审计...' : '暂无重修审计异常。'}</div>
+          )}
+        </div>
+      </div>
+    );
+
     const renderPlansPage = () => (
       <div className="page-content active">
         {adminPageTitle(
@@ -7300,6 +7448,8 @@ function App() {
           return renderBillingLedgerPage();
         case 'costs':
           return renderProjectCostsPage();
+        case 'regenerationAudit':
+          return renderRegenerationAuditPage();
         case 'plans':
           return renderPlansPage();
         case 'codes':
