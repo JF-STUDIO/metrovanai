@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+
 type AuthMode = 'signin' | 'signup' | 'reset-request' | 'reset-confirm' | 'verify-email';
 
 interface AuthFormState {
@@ -68,9 +70,29 @@ export function AuthModal({
   onToggleMode,
   onSubmit
 }: AuthModalProps) {
+  const startedOnBackdropRef = useRef(false);
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card auth-card" onClick={(event) => event.stopPropagation()}>
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        startedOnBackdropRef.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        if (startedOnBackdropRef.current && event.target === event.currentTarget) {
+          onClose();
+        }
+        startedOnBackdropRef.current = false;
+      }}
+    >
+      <div
+        className="modal-card auth-card"
+        onMouseDown={(event) => {
+          event.stopPropagation();
+          startedOnBackdropRef.current = false;
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="auth-chip">Metrovan AI Access</div>
         <div className="modal-head">
           <div className="auth-copy">
