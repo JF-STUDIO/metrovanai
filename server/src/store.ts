@@ -200,6 +200,7 @@ function createEmptyRegenerationState() {
     colorCardNo: null,
     workflowName: null,
     taskId: null,
+    runningHubRunCount: 0,
     startedAt: null,
     completedAt: null,
     errorMessage: null
@@ -213,6 +214,7 @@ function createEmptyWorkflowState(): HdrItemWorkflowState {
     runpodBatchJobId: null,
     runningHubTaskId: null,
     runningHubWorkflowName: null,
+    runningHubRunCount: 0,
     lastTaskId: null,
     lastTaskProvider: null,
     submittedAt: null,
@@ -234,6 +236,10 @@ function normalizeWorkflowState(workflow: Partial<HdrItemWorkflowState> | null |
     normalized.lastTaskProvider === 'runpod' || normalized.lastTaskProvider === 'runninghub'
       ? normalized.lastTaskProvider
       : null;
+  normalized.runningHubRunCount = Math.max(
+    normalized.runningHubTaskId ? 1 : 0,
+    Math.round(Number(normalized.runningHubRunCount ?? 0))
+  );
   return normalized;
 }
 

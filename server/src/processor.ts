@@ -658,23 +658,31 @@ export class ProjectProcessor {
         (update) => {
           this.store.setHdrItemState(projectId, hdrItemId, (item) => ({
             ...item,
-            regeneration: {
-              ...(item.regeneration ?? {
+            regeneration: (() => {
+              const previous = item.regeneration ?? {
                 freeUsed: false,
                 status: 'idle',
                 colorCardNo,
                 workflowName: null,
                 taskId: null,
+                runningHubRunCount: 0,
                 startedAt: null,
                 completedAt: null,
                 errorMessage: null
-              }),
-              status: 'running',
-              colorCardNo,
-              workflowName: update.workflowName,
-              taskId: update.taskId,
-              errorMessage: null
-            }
+              };
+              return {
+                ...previous,
+                status: 'running',
+                colorCardNo,
+                workflowName: update.workflowName,
+                taskId: update.taskId,
+                runningHubRunCount:
+                  update.stage === 'runninghub' && update.taskId && update.taskId !== previous.taskId
+                    ? Math.max(0, Math.round(Number(previous.runningHubRunCount ?? 0))) + 1
+                    : Math.max(0, Math.round(Number(previous.runningHubRunCount ?? 0))),
+                errorMessage: null
+              };
+            })()
           }));
           this.store.setJobState(projectId, (job) => ({
             ...job,
@@ -1372,31 +1380,41 @@ export class ProjectProcessor {
         ...entry,
         status: 'workflow-running',
         statusText: createProcessingText('workflow-running'),
-        workflow: {
-          ...createEmptyWorkflowState(),
-          ...(entry.workflow ?? {}),
-          stage: update.stage ?? entry.workflow?.stage ?? 'runninghub',
-          runpodJobId:
-            update.stage === 'runpod' && targetItems.length === 1
-              ? update.taskId
-              : entry.workflow?.runpodJobId ?? null,
-          runpodBatchJobId:
-            update.stage === 'runpod' && targetItems.length > 1
-              ? update.taskId
-              : entry.workflow?.runpodBatchJobId ?? null,
-          runningHubTaskId:
-            update.stage === 'runninghub' ? update.taskId : entry.workflow?.runningHubTaskId ?? null,
-          runningHubWorkflowName:
-            update.stage === 'runninghub'
-              ? update.workflowName
-              : entry.workflow?.runningHubWorkflowName ?? null,
-          lastTaskId: update.taskId,
-          lastTaskProvider: update.stage ?? entry.workflow?.lastTaskProvider ?? null,
-          submittedAt: entry.workflow?.submittedAt ?? now,
-          updatedAt: now,
-          completedAt: null,
-          errorMessage: null
-        }
+        workflow: (() => {
+          const previous = {
+            ...createEmptyWorkflowState(),
+            ...(entry.workflow ?? {})
+          };
+          const nextRunningHubTaskId = update.stage === 'runninghub' ? update.taskId : previous.runningHubTaskId ?? null;
+          const nextRunningHubRunCount =
+            update.stage === 'runninghub' && update.taskId && update.taskId !== previous.runningHubTaskId
+              ? Math.max(0, Math.round(Number(previous.runningHubRunCount ?? 0))) + 1
+              : Math.max(0, Math.round(Number(previous.runningHubRunCount ?? 0)));
+          return {
+            ...previous,
+            stage: update.stage ?? previous.stage ?? 'runninghub',
+            runpodJobId:
+              update.stage === 'runpod' && targetItems.length === 1
+                ? update.taskId
+                : previous.runpodJobId ?? null,
+            runpodBatchJobId:
+              update.stage === 'runpod' && targetItems.length > 1
+                ? update.taskId
+                : previous.runpodBatchJobId ?? null,
+            runningHubTaskId: nextRunningHubTaskId,
+            runningHubWorkflowName:
+              update.stage === 'runninghub'
+                ? update.workflowName
+                : previous.runningHubWorkflowName ?? null,
+            runningHubRunCount: nextRunningHubRunCount,
+            lastTaskId: update.taskId,
+            lastTaskProvider: update.stage ?? previous.lastTaskProvider ?? null,
+            submittedAt: previous.submittedAt ?? now,
+            updatedAt: now,
+            completedAt: null,
+            errorMessage: null
+          };
+        })()
       }));
     }
 

@@ -74,6 +74,7 @@ export interface HdrItemWorkflowState {
   runpodBatchJobId: string | null;
   runningHubTaskId: string | null;
   runningHubWorkflowName: string | null;
+  runningHubRunCount?: number;
   lastTaskId: string | null;
   lastTaskProvider: 'runpod' | 'runninghub' | null;
   submittedAt: string | null;
@@ -90,6 +91,7 @@ export interface ResultRegenerationState {
   colorCardNo: string | null;
   workflowName: string | null;
   taskId: string | null;
+  runningHubRunCount?: number;
   startedAt: string | null;
   completedAt: string | null;
   errorMessage: string | null;

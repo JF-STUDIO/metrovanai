@@ -498,6 +498,39 @@ export interface AdminBillingLedgerPayload {
   items: AdminBillingLedgerRow[];
 }
 
+export interface AdminProjectCostRow {
+  projectId: string;
+  projectName: string;
+  userKey: string;
+  userDisplayName: string;
+  status: ProjectRecord['status'];
+  photoCount: number;
+  resultCount: number;
+  chargedPoints: number;
+  refundedPoints: number;
+  netPoints: number;
+  revenueUsd: number;
+  runningHubRuns: number;
+  workflowRuns: number;
+  regenerationRuns: number;
+  runningHubCostUsd: number;
+  profitUsd: number;
+  updatedAt: string;
+}
+
+export interface AdminProjectCostsPayload {
+  unitCostUsd: number;
+  totals: {
+    projects: number;
+    revenueUsd: number;
+    runningHubRuns: number;
+    runningHubCostUsd: number;
+    profitUsd: number;
+    netPoints: number;
+  };
+  items: AdminProjectCostRow[];
+}
+
 export interface AdminActivationCode {
   id: string;
   code: string;
@@ -1082,6 +1115,10 @@ export async function fetchAdminBillingLedger(query: {
   if (query.pageSize) params.set('pageSize', String(query.pageSize));
   const queryString = params.toString();
   return await jsonRequest<AdminBillingLedgerPayload>(`/api/admin/billing-ledger${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function fetchAdminProjectCosts() {
+  return await jsonRequest<AdminProjectCostsPayload>('/api/admin/project-costs');
 }
 
 export async function fetchAdminOrderRefundPreview(orderId: string) {

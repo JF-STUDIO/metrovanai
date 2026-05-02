@@ -77,6 +77,13 @@ function adminNavIcon(page: AdminConsolePage) {
         <path d="M8 16h5" />
       </>
     ),
+    costs: (
+      <>
+        <path d="M4 19V5" />
+        <path d="M4 19h16" />
+        <path d="m7 15 3-3 3 2 5-7" />
+      </>
+    ),
     plans: (
       <>
         <path d="M12 2 4 7v10l8 5 8-5V7z" />
@@ -184,6 +191,7 @@ export function AdminConsole({
           {targetNavButton('failures', '失败照片')}
           {targetNavButton('orders', '订单管理')}
           {targetNavButton('billing', '账单流水')}
+          {targetNavButton('costs', '成本利润')}
           {targetNavButton('plans', '套餐配置')}
           {targetNavButton('codes', '兑换码')}
         </div>

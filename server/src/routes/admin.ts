@@ -215,6 +215,117 @@ app.get('/api/admin/billing-ledger', (req, res) => {
   });
 });
 
+app.get('/api/admin/project-costs', (req, res) => {
+  if (!requireAdminApiAccess(req, res)) {
+    return;
+  }
+
+  const runningHubUnitCostUsd = 0.07;
+  const projects = listAllProjectsForAdmin();
+  type AdminProjectCostRow = {
+    projectId: string;
+    projectName: string;
+    userKey: string;
+    userDisplayName: string;
+    status: ProjectRecord['status'];
+    photoCount: number;
+    resultCount: number;
+    chargedPoints: number;
+    refundedPoints: number;
+    netPoints: number;
+    revenueUsd: number;
+    runningHubRuns: number;
+    workflowRuns: number;
+    regenerationRuns: number;
+    runningHubCostUsd: number;
+    profitUsd: number;
+    updatedAt: string;
+  };
+  type AdminProjectCostTotals = {
+    projects: number;
+    revenueUsd: number;
+    runningHubRuns: number;
+    runningHubCostUsd: number;
+    profitUsd: number;
+    netPoints: number;
+  };
+  const rows: AdminProjectCostRow[] = projects.map((project: ProjectRecord) => {
+    const projectEntries = store
+      .listBillingEntries(project.userKey)
+      .filter((entry: BillingEntry) => entry.projectId === project.id);
+    const revenueUsd = Number(
+      projectEntries
+        .reduce((sum, entry) => sum + (entry.type === 'charge' ? entry.amountUsd : -entry.amountUsd), 0)
+        .toFixed(2)
+    );
+    const chargedPoints = projectEntries
+      .filter((entry: BillingEntry) => entry.type === 'charge')
+      .reduce((sum, entry) => sum + entry.points, 0);
+    const refundedPoints = projectEntries
+      .filter((entry: BillingEntry) => entry.type === 'credit')
+      .reduce((sum, entry) => sum + entry.points, 0);
+    const workflowRuns = project.hdrItems.reduce((sum, item) => {
+      const count = Math.max(
+        item.workflow?.runningHubTaskId ? 1 : 0,
+        Math.round(Number(item.workflow?.runningHubRunCount ?? 0))
+      );
+      return sum + count;
+    }, 0);
+    const regenerationRuns = project.hdrItems.reduce((sum, item) => {
+      const count = Math.max(
+        item.regeneration?.taskId ? 1 : 0,
+        Math.round(Number(item.regeneration?.runningHubRunCount ?? 0))
+      );
+      return sum + count;
+    }, 0);
+    const runningHubRuns = workflowRuns + regenerationRuns;
+    const runningHubCostUsd = Number((runningHubRuns * runningHubUnitCostUsd).toFixed(2));
+    const profitUsd = Number((revenueUsd - runningHubCostUsd).toFixed(2));
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      userKey: project.userKey,
+      userDisplayName: project.userDisplayName,
+      status: project.status,
+      photoCount: project.photoCount,
+      resultCount: project.resultAssets.length,
+      chargedPoints,
+      refundedPoints,
+      netPoints: chargedPoints - refundedPoints,
+      revenueUsd,
+      runningHubRuns,
+      workflowRuns,
+      regenerationRuns,
+      runningHubCostUsd,
+      profitUsd,
+      updatedAt: project.updatedAt
+    };
+  });
+
+  const totals = rows.reduce(
+    (sum: AdminProjectCostTotals, row: AdminProjectCostRow) => ({
+      projects: sum.projects + 1,
+      revenueUsd: sum.revenueUsd + row.revenueUsd,
+      runningHubRuns: sum.runningHubRuns + row.runningHubRuns,
+      runningHubCostUsd: sum.runningHubCostUsd + row.runningHubCostUsd,
+      profitUsd: sum.profitUsd + row.profitUsd,
+      netPoints: sum.netPoints + row.netPoints
+    }),
+    { projects: 0, revenueUsd: 0, runningHubRuns: 0, runningHubCostUsd: 0, profitUsd: 0, netPoints: 0 }
+  );
+
+  res.json({
+    unitCostUsd: runningHubUnitCostUsd,
+    totals: {
+      ...totals,
+      revenueUsd: Number(totals.revenueUsd.toFixed(2)),
+      runningHubCostUsd: Number(totals.runningHubCostUsd.toFixed(2)),
+      profitUsd: Number(totals.profitUsd.toFixed(2))
+    },
+    items: rows.sort((a: AdminProjectCostRow, b: AdminProjectCostRow) => (a.updatedAt < b.updatedAt ? 1 : -1)).slice(0, 500)
+  });
+});
+
 app.get('/api/admin/audit-logs', (req, res) => {
   if (!requireAdminApiAccess(req, res)) {
     return;

@@ -57,6 +57,7 @@ import {
   fetchAdminOpsHealth,
   fetchAdminOrderRefundPreview,
   fetchAdminOrders,
+  fetchAdminProjectCosts,
   fetchAdminMaintenanceReports,
   fetchAdminProjectDetail,
   fetchAdminProjects,
@@ -106,6 +107,8 @@ import type {
   AdminBillingLedgerRow,
   AdminMaintenanceReportSummary,
   AdminOpsHealthPayload,
+  AdminProjectCostsPayload,
+  AdminProjectCostRow,
   AdminProjectRepairAction,
   AdminSystemSettings,
   AdminUserListQuery,
@@ -347,6 +350,18 @@ function App() {
   const [adminBillingLedgerEndDate, setAdminBillingLedgerEndDate] = useState('');
   const [adminBillingLedgerLoaded, setAdminBillingLedgerLoaded] = useState(false);
   const [adminBillingLedgerBusy, setAdminBillingLedgerBusy] = useState(false);
+  const [adminProjectCosts, setAdminProjectCosts] = useState<AdminProjectCostRow[]>([]);
+  const [adminProjectCostTotals, setAdminProjectCostTotals] = useState<AdminProjectCostsPayload['totals']>({
+    projects: 0,
+    revenueUsd: 0,
+    runningHubRuns: 0,
+    runningHubCostUsd: 0,
+    profitUsd: 0,
+    netPoints: 0
+  });
+  const [adminProjectCostUnitUsd, setAdminProjectCostUnitUsd] = useState(0.07);
+  const [adminProjectCostsLoaded, setAdminProjectCostsLoaded] = useState(false);
+  const [adminProjectCostsBusy, setAdminProjectCostsBusy] = useState(false);
   const [adminRefundOrder, setAdminRefundOrder] = useState<PaymentOrderRecord | null>(null);
   const [adminRefundPreview, setAdminRefundPreview] = useState<PaymentOrderRefundPreview | null>(null);
   const [adminRefundBusy, setAdminRefundBusy] = useState(false);
@@ -1094,6 +1109,14 @@ function App() {
 
     void handleAdminLoadBillingLedger(1);
   }, [activeRoute, adminBillingLedgerLoaded, adminConsolePage, hasAdminSession]);
+
+  useEffect(() => {
+    if (activeRoute !== 'admin' || adminConsolePage !== 'costs' || !hasAdminSession || adminProjectCostsLoaded) {
+      return;
+    }
+
+    void handleAdminLoadProjectCosts();
+  }, [activeRoute, adminConsolePage, adminProjectCostsLoaded, hasAdminSession]);
 
   useEffect(() => {
     if (activeRoute !== 'admin' || !hasAdminSession || adminMaintenanceLoaded) {
@@ -2187,6 +2210,29 @@ function App() {
       setAdminMessage(getUserFacingErrorMessage(error, '账单流水读取失败。', locale));
     } finally {
       setAdminBillingLedgerBusy(false);
+    }
+  }
+
+  async function handleAdminLoadProjectCosts() {
+    if (!hasAdminSession) {
+      setAdminMessage('请先用管理员账号登录。');
+      return;
+    }
+
+    setAdminProjectCostsBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await fetchAdminProjectCosts();
+      setAdminProjectCosts(response.items);
+      setAdminProjectCostTotals(response.totals);
+      setAdminProjectCostUnitUsd(response.unitCostUsd);
+      setAdminProjectCostsLoaded(true);
+      setAdminMessage(`已载入 ${response.items.length.toLocaleString()} 个项目成本。`);
+    } catch (error) {
+      setAdminProjectCostsLoaded(true);
+      setAdminMessage(getUserFacingErrorMessage(error, '项目成本读取失败。', locale));
+    } finally {
+      setAdminProjectCostsBusy(false);
     }
   }
 
@@ -6356,6 +6402,73 @@ function App() {
       </div>
     );
 
+    const renderProjectCostsPage = () => (
+      <div className="page-content active">
+        {adminPageTitle(
+          '成本利润',
+          <>RunningHub 单次成本 <span className="mono accent-text">${adminProjectCostUnitUsd.toFixed(2)}</span> · 重试按再次进入 RunningHub 计费</>,
+          <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadProjectCosts()} disabled={adminProjectCostsBusy}>
+            {adminProjectCostsBusy ? '刷新中...' : '刷新成本'}
+          </button>
+        )}
+        <div className="kpi-grid">
+          {kpi('项目收入', <>${adminProjectCostTotals.revenueUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.netPoints.toLocaleString()} pts</span>)}
+          {kpi('RunningHub 次数', <>{adminProjectCostTotals.runningHubRuns.toLocaleString()}<span className="unit">次</span></>, <span>含重试/重修</span>)}
+          {kpi('RunningHub 成本', <>${adminProjectCostTotals.runningHubCostUsd.toFixed(2)}</>, <span>$0.07 / 次</span>, adminProjectCostTotals.runningHubCostUsd ? 'down' : 'up')}
+          {kpi('估算利润', <>${adminProjectCostTotals.profitUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.projects.toLocaleString()} 项</span>, adminProjectCostTotals.profitUsd < 0 ? 'down' : 'up')}
+        </div>
+        <div className="card">
+          <div className="admin-health-ok">
+            新任务会记录每次 RunningHub 进入次数；历史项目若早期没有保存尝试次数，会按当前可见 task 计算最低成本。
+          </div>
+          {adminProjectCosts.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>项目</th>
+                    <th>用户</th>
+                    <th>照片 / 结果</th>
+                    <th>收入</th>
+                    <th>RunningHub</th>
+                    <th>成本</th>
+                    <th>利润</th>
+                    <th>更新</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminProjectCosts.map((row, index) => (
+                    <tr key={row.projectId}>
+                      <td>
+                        <div className="admin-status-stack">
+                          <span>{row.projectName}</span>
+                          <small>{row.status} · {row.projectId}</small>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="user-cell">
+                          <div className={userAvatarClass(index)}>{getAdminInitials(row.userDisplayName || row.userKey)}</div>
+                          <div><div className="name">{row.userDisplayName}</div><div className="email">{row.userKey}</div></div>
+                        </div>
+                      </td>
+                      <td className="mono">{row.photoCount} / {row.resultCount}</td>
+                      <td className="mono">${row.revenueUsd.toFixed(2)} · {row.netPoints} pts</td>
+                      <td className="mono">{row.runningHubRuns} 次 <span className="text-muted">({row.workflowRuns}+{row.regenerationRuns})</span></td>
+                      <td className="mono">${row.runningHubCostUsd.toFixed(2)}</td>
+                      <td className={row.profitUsd < 0 ? 'mono danger-text' : 'mono accent-text'}>${row.profitUsd.toFixed(2)}</td>
+                      <td className="cell-id">{formatAdminShortDate(row.updatedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty-tip">{adminProjectCostsBusy ? '正在读取项目成本...' : '暂无项目成本数据。'}</div>
+          )}
+        </div>
+      </div>
+    );
+
     const renderPlansPage = () => (
       <div className="page-content active">
         {adminPageTitle(
@@ -7102,6 +7215,8 @@ function App() {
           return renderOrdersPage();
         case 'billing':
           return renderBillingLedgerPage();
+        case 'costs':
+          return renderProjectCostsPage();
         case 'plans':
           return renderPlansPage();
         case 'codes':

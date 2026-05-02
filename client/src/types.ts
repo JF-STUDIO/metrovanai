@@ -68,6 +68,7 @@ export interface ResultRegenerationState {
   colorCardNo: string | null;
   workflowName: string | null;
   taskId: string | null;
+  runningHubRunCount?: number;
   startedAt: string | null;
   completedAt: string | null;
   errorMessage: string | null;
