@@ -336,6 +336,31 @@ async function runUser(index) {
     if (response.status !== 200) throw new Error(`layout ${response.status}`);
   });
 
+  if (startProcessing) {
+    await step('credits', async () => {
+      let billing = await client.request('GET', '/api/billing');
+      if (billing.status !== 200) throw new Error(`billing ${billing.status}`);
+      let available = Number(billing.payload?.summary?.availablePoints ?? 0);
+      const required = filesPerUser;
+      while (available < required) {
+        const packages = Array.isArray(billing.payload?.packages) ? billing.payload.packages : [];
+        const sorted = [...packages].sort((left, right) => Number(left.points ?? 0) - Number(right.points ?? 0));
+        const selected =
+          sorted.find((item) => Number(item.points ?? 0) >= required - available) ??
+          sorted[sorted.length - 1] ??
+          null;
+        if (!selected?.id) {
+          throw new Error(`No billing package available for ${required - available} point shortfall.`);
+        }
+        const topUp = await client.request('POST', '/api/billing/top-up', { packageId: selected.id });
+        if (topUp.status !== 201) throw new Error(`top-up ${topUp.status}: ${JSON.stringify(topUp.payload).slice(0, 500)}`);
+        billing = topUp;
+        available = Number(billing.payload?.summary?.availablePoints ?? 0);
+      }
+      return { availablePoints: available, requiredPoints: required };
+    });
+  }
+
   const processing = startProcessing
     ? await step('processing', async () => {
         const start = await client.request('POST', `/api/projects/${projectId}/start`, {});
@@ -444,6 +469,7 @@ async function main() {
       METROVAN_DISABLE_RESULT_AUTO_RECOVERY: 'true',
       METROVAN_DIRECT_UPLOAD_ENABLED: 'true',
       METROVAN_DIRECT_UPLOAD_STAGE_LOCAL: 'true',
+      METROVAN_ALLOW_INTERNAL_TOP_UP: 'true',
       AUTH_EMAIL_LOG_DELIVERY: 'true',
       AUTH_EMAIL_LOG_LINKS: 'true',
       SMTP_HOST: '',
