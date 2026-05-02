@@ -429,6 +429,7 @@ function App() {
   const resultCanvasRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
+  const adminBillingLedgerRef = useRef<HTMLDivElement | null>(null);
   const uploadAbortControllerRef = useRef<AbortController | null>(null);
   const uploadPausedRef = useRef(false);
   const uploadPauseResolversRef = useRef<Array<() => void>>([]);
@@ -2180,6 +2181,13 @@ function App() {
     } finally {
       setAdminDetailBusy(false);
     }
+  }
+
+  async function handleAdminOpenUserBilling(userId: string) {
+    await handleAdminSelectUser(userId);
+    window.setTimeout(() => {
+      adminBillingLedgerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
   }
 
   async function handleAdminSelectProject(projectId: string) {
@@ -5390,6 +5398,9 @@ function App() {
                         <td>
                           <div className="tbl-actions">
                             <button className="tbl-icon" type="button" onClick={() => void handleAdminSelectUser(user.id)} title="查看">⌕</button>
+                            <button className="tbl-icon tbl-icon-text" type="button" onClick={() => void handleAdminOpenUserBilling(user.id)} title="查看账单">
+                              账
+                            </button>
                             {(!user.emailVerifiedAt || user.accountStatus !== 'active') ? (
                               <button
                                 className="tbl-icon"
@@ -5512,7 +5523,7 @@ function App() {
                 const creditEntries = adminDetailBillingEntries.filter((entry) => entry.type === 'credit');
                 return (
                   <>
-                    <div className="admin-mini-table admin-billing-ledger">
+                    <div className="admin-mini-table admin-billing-ledger" ref={adminBillingLedgerRef}>
                       <div className="admin-mini-head">
                         <strong>扣费记录</strong>
                         <span>{chargeEntries.length} 条 · {chargeEntries.reduce((sum, entry) => sum + entry.points, 0).toLocaleString()} pts</span>
