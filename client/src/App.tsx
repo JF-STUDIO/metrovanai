@@ -41,6 +41,7 @@ import {
   confirmPasswordReset,
   applyHdrLayout,
   createCheckoutSession,
+  allowAdminUserAccess,
   createAdminActivationCode,
   createGroup,
   createProject,
@@ -2337,6 +2338,27 @@ function App() {
       setAdminMessage('用户状态已更新。');
     } catch (error) {
       setAdminMessage(getUserFacingErrorMessage(error, '用户状态更新失败。', locale));
+    } finally {
+      setAdminActionBusy(false);
+    }
+  }
+
+  async function handleAdminAllowUserAccess(userId: string) {
+    const targetUser = adminUsers.find((user) => user.id === userId) ?? adminSelectedUser;
+    if (!window.confirm(`确认允许 ${targetUser?.email ?? '这个用户'} 访问？系统会将账号设为正常，并把邮箱标记为已验证。`)) {
+      return;
+    }
+
+    setAdminActionBusy(true);
+    setAdminMessage('');
+    try {
+      const response = await allowAdminUserAccess(userId);
+      mergeAdminUser(response.user);
+      setAdminAuditLogs(response.auditLogs);
+      await handleAdminSelectUser(userId);
+      setAdminMessage('已允许访问：账号正常，邮箱已验证。');
+    } catch (error) {
+      setAdminMessage(getUserFacingErrorMessage(error, '允许访问失败。', locale));
     } finally {
       setAdminActionBusy(false);
     }
@@ -5275,8 +5297,8 @@ function App() {
               }}
             >
               <option value="all">邮箱验证：全部</option>
-              <option value="yes">已验证</option>
-              <option value="no">未验证</option>
+              <option value="verified">已验证</option>
+              <option value="unverified">未验证</option>
             </select>
           </div>
           {adminUsers.length ? (
@@ -5292,6 +5314,7 @@ function App() {
                       <th>修图次数</th>
                       <th>注册时间</th>
                       <th>状态</th>
+                      <th>登录状态</th>
                       <th>操作</th>
                     </tr>
                   </thead>
@@ -5312,10 +5335,33 @@ function App() {
                         <td className="mono">${user.billingSummary.totalTopUpUsd.toFixed(0)}</td>
                         <td className="mono">{user.photoCount.toLocaleString()}</td>
                         <td className="cell-id">{formatAdminDate(user.createdAt)}</td>
-                        <td><span className={tagClassForStatus(user.accountStatus)}>{user.accountStatus === 'active' ? '正常' : '已封禁'}</span></td>
+                        <td>
+                          <div className="admin-status-stack">
+                            <span className={tagClassForStatus(user.accountStatus)}>{user.accountStatus === 'active' ? '正常' : '已封禁'}</span>
+                            <span className={user.emailVerifiedAt ? 'tag tag-green' : 'tag tag-orange'}>{user.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="admin-status-stack">
+                            <span className={user.activeSessionCount > 0 ? 'tag tag-green' : 'tag tag-gray'}>
+                              {user.activeSessionCount > 0 ? `在线 ${user.activeSessionCount}` : '离线'}
+                            </span>
+                            <small>{user.lastSeenAt ? `最近 ${formatAdminDate(user.lastSeenAt)}` : '暂无访问记录'}</small>
+                          </div>
+                        </td>
                         <td>
                           <div className="tbl-actions">
                             <button className="tbl-icon" type="button" onClick={() => void handleAdminSelectUser(user.id)} title="查看">⌕</button>
+                            {(!user.emailVerifiedAt || user.accountStatus !== 'active') ? (
+                              <button
+                                className="tbl-icon"
+                                type="button"
+                                onClick={() => void handleAdminAllowUserAccess(user.id)}
+                                title="允许访问"
+                              >
+                                ✓
+                              </button>
+                            ) : null}
                             <button
                               className="tbl-icon"
                               type="button"
@@ -5355,11 +5401,37 @@ function App() {
               <h3>{adminSelectedUser.displayName} · 积分与项目</h3>
               <div className="admin-page-actions">
                 <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSelectUser(adminSelectedUser.id)} disabled={adminDetailBusy}>刷新详情</button>
+                {(!adminSelectedUser.emailVerifiedAt || adminSelectedUser.accountStatus !== 'active') ? (
+                  <button className="btn btn-primary" type="button" onClick={() => void handleAdminAllowUserAccess(adminSelectedUser.id)} disabled={adminActionBusy}>允许访问</button>
+                ) : null}
                 <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLogoutUser(adminSelectedUser.id)} disabled={adminActionBusy}>踢下线</button>
                 <button className="btn btn-ghost" type="button" onClick={() => void handleAdminDeleteUser(adminSelectedUser.id)} disabled={adminActionBusy}>删除用户</button>
               </div>
             </div>
             <div className="admin-detail-grid">
+              <div className="settings-row admin-account-status-row">
+                <div className="label-side">
+                  <div className="name">账号实时状态</div>
+                  <div className="desc">用于排查用户登录、邮箱验证和会话状态。</div>
+                </div>
+                <div className="admin-status-panel">
+                  <span className={tagClassForStatus(adminSelectedUser.accountStatus)}>
+                    {adminSelectedUser.accountStatus === 'active' ? '账号正常' : '账号已封禁'}
+                  </span>
+                  <span className={adminSelectedUser.emailVerifiedAt ? 'tag tag-green' : 'tag tag-orange'}>
+                    {adminSelectedUser.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}
+                  </span>
+                  <span className={adminSelectedUser.activeSessionCount > 0 ? 'tag tag-green' : 'tag tag-gray'}>
+                    {adminSelectedUser.activeSessionCount > 0 ? `当前在线 ${adminSelectedUser.activeSessionCount}` : '当前离线'}
+                  </span>
+                  <small>最后登录：{adminSelectedUser.lastLoginAt ? formatAdminDate(adminSelectedUser.lastLoginAt) : '无记录'}</small>
+                  <small>最后活动：{adminSelectedUser.lastSeenAt ? formatAdminDate(adminSelectedUser.lastSeenAt) : '无记录'}</small>
+                  <small>登录方式：{[
+                    adminSelectedUser.auth.password ? '邮箱密码' : null,
+                    adminSelectedUser.auth.google ? 'Google' : null
+                  ].filter(Boolean).join(' / ') || '未绑定'}</small>
+                </div>
+              </div>
               <div className="settings-row">
                 <div className="label-side">
                   <div className="name">手动调整积分</div>

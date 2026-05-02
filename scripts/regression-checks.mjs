@@ -162,6 +162,30 @@ assertIncludes(
   'Already-used verification links for verified accounts must remain idempotent.'
 );
 
+assertIncludes(
+  'server/src/routes/admin.ts',
+  "app.post('/api/admin/users/:id/allow-access'",
+  'Admin must be able to manually allow access for verified-support recovery.'
+);
+
+assertIncludes(
+  'server/src/routes/admin.ts',
+  "action: 'admin.user.allow_access'",
+  'Manual user access recovery must be audited.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '账号实时状态',
+  'Admin user detail must expose live account diagnostics.'
+);
+
+assertIncludes(
+  'client/src/App.tsx',
+  '<option value="verified">已验证</option>',
+  'Admin verified-user filter must use the backend verified value.'
+);
+
 for (const routeFile of [
   'server/src/routes/auth.ts',
   'server/src/routes/billing.ts',

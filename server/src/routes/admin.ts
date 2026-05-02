@@ -23,6 +23,7 @@ export function createAdminRouter(ctx: RouteContext) {
     adminDeleteUserConfirmSchema,
     adminRefundConfirmSchema,
     adminSystemSettingsSchema,
+    adminUserAllowAccessSchema,
     adminUserUpdateSchema,
     buildAdminActivationCodePayload,
     buildAdminOpsHealthPayload,
@@ -1489,6 +1490,61 @@ app.patch('/api/admin/users/:id', (req, res) => {
   });
 
   res.json({ user: buildAdminUserRecord(updated) });
+});
+
+app.post('/api/admin/users/:id/allow-access', (req, res) => {
+  const actor = requireAdminApiAccess(req, res);
+  if (!actor) {
+    return;
+  }
+
+  const parsed = adminUserAllowAccessSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  const user = store.getUserById(String(req.params.id ?? ''));
+  if (!user) {
+    res.status(404).json({ error: '找不到该用户。' });
+    return;
+  }
+  if (parsed.data.confirmUserId !== user.id) {
+    res.status(400).json({ error: '允许访问确认信息与用户不匹配。' });
+    return;
+  }
+
+  const previous = buildAdminUserRecord(user);
+  const now = new Date().toISOString();
+  const updated = store.updateUser(user.id, (current) => ({
+    ...current,
+    accountStatus: 'active',
+    emailVerifiedAt: current.emailVerifiedAt ?? now
+  }));
+  if (!updated) {
+    res.status(404).json({ error: '找不到该用户。' });
+    return;
+  }
+
+  writeAdminAuditLog(req, actor, {
+    action: 'admin.user.allow_access',
+    targetUserId: updated.id,
+    details: {
+      before: {
+        accountStatus: previous.accountStatus,
+        emailVerifiedAt: previous.emailVerifiedAt
+      },
+      after: {
+        accountStatus: updated.accountStatus,
+        emailVerifiedAt: updated.emailVerifiedAt
+      }
+    }
+  });
+
+  res.json({
+    user: buildAdminUserRecord(updated),
+    auditLogs: store.listAuditLogs({ targetUserId: updated.id, limit: 100 })
+  });
 });
 
 app.delete('/api/admin/users/:id', async (req, res) => {

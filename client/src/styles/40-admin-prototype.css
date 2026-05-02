@@ -2586,6 +2586,20 @@
   gap: 4px;
 }
 
+.admin-prototype .admin-status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  min-width: 120px;
+}
+
+.admin-prototype .admin-status-stack small {
+  color: var(--text-mute);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .admin-prototype .tbl-icon {
   width: 28px;
   height: 28px;
@@ -3625,6 +3639,23 @@
 .admin-prototype .settings-row:last-child {
   border-bottom: 0;
   padding-bottom: 0;
+}
+
+.admin-prototype .admin-account-status-row {
+  grid-column: 1 / -1;
+}
+
+.admin-prototype .admin-status-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.admin-prototype .admin-status-panel small {
+  color: var(--text-mute);
+  font-size: 12px;
 }
 
 .admin-prototype .admin-refund-card {

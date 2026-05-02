@@ -1050,6 +1050,16 @@ export async function updateAdminUser(
   });
 }
 
+export async function allowAdminUserAccess(userId: string) {
+  return await jsonRequest<{ user: AdminUserSummary; auditLogs: AdminAuditLogEntry[] }>(
+    `/api/admin/users/${encodeURIComponent(userId)}/allow-access`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true, confirmUserId: userId })
+    }
+  );
+}
+
 export async function adjustAdminUserBilling(
   userId: string,
   input: { type: 'credit' | 'charge'; points: number; note: string }

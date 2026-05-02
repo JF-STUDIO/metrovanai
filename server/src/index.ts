@@ -2391,6 +2391,10 @@ const adminUserUpdateSchema = z.object({
   accountStatus: z.enum(['active', 'disabled']).optional(),
   confirm: z.literal(true)
 });
+const adminUserAllowAccessSchema = z.object({
+  confirm: z.literal(true),
+  confirmUserId: z.string().trim().min(1).max(120)
+});
 
 const adminBillingAdjustmentSchema = z.object({
   type: z.enum(['credit', 'charge']),
@@ -2850,6 +2854,7 @@ app.use(createAdminRouter({
   adminDeleteUserConfirmSchema,
   adminRefundConfirmSchema,
   adminSystemSettingsSchema,
+  adminUserAllowAccessSchema,
   adminUserUpdateSchema,
   adminConfirmSchema,
   ADMIN_FEATURE_IMAGE_PREVIEW_DIR,
