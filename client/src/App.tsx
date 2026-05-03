@@ -12,6 +12,7 @@ import logoMark from './assets/metrovan-logo-mark.webp';
 import { isDemoModeEnabled } from './demo-mode';
 import { useAuthFlow } from './hooks/useAuthFlow';
 import { useResultEditor } from './hooks/useResultEditor';
+import { useUploadControls } from './hooks/useUploadControls';
 import type { LocalExposureDraft, LocalHdrItemDraft, LocalImportDraft } from './local-import';
 import { UI_TEXT, type UiLocale } from './app-copy';
 import {
@@ -100,7 +101,6 @@ import type {
   AdminWorkflowSummary,
   FailedUploadFile,
   StudioFeatureConfig,
-  UploadPauseController,
   UploadedObjectReference,
   UploadProgressSnapshot
 } from './api';
@@ -233,12 +233,23 @@ function App() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [uploadActive, setUploadActive] = useState(false);
-  const [uploadMode, setUploadMode] = useState<'local' | 'originals' | null>(null);
-  const [uploadPercent, setUploadPercent] = useState(0);
-  const [uploadSnapshot, setUploadSnapshot] = useState<UploadProgressSnapshot | null>(null);
-  const [uploadPaused, setUploadPaused] = useState(false);
-  const [failedUploadFiles, setFailedUploadFiles] = useState<FailedUploadEntry[]>([]);
+  const uploadControls = useUploadControls();
+  const {
+    failedUploadFiles,
+    setFailedUploadFiles,
+    setUploadActive,
+    setUploadMode,
+    setUploadPercent,
+    setUploadSnapshot,
+    uploadAbortControllerRef,
+    uploadActive,
+    uploadMode,
+    uploadPauseControllerRef,
+    uploadPaused,
+    uploadPercent,
+    uploadSnapshot,
+    resetUploadPause
+  } = uploadControls;
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [resultThumbnailManifest, setResultThumbnailManifest] = useState<{ projectId: string; urls: Record<string, string> } | null>(null);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(() => (isDemoMode ? DEMO_BILLING_SUMMARY : null));
@@ -430,35 +441,6 @@ function App() {
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const adminBillingLedgerRef = useRef<HTMLDivElement | null>(null);
-  const uploadAbortControllerRef = useRef<AbortController | null>(null);
-  const uploadPausedRef = useRef(false);
-  const uploadPauseResolversRef = useRef<Array<() => void>>([]);
-  const uploadPauseControllerRef = useRef<UploadPauseController>({
-    isPaused: () => uploadPausedRef.current,
-    waitUntilResumed: (signal?: AbortSignal) =>
-      new Promise<void>((resolve, reject) => {
-        if (!uploadPausedRef.current) {
-          resolve();
-          return;
-        }
-
-        function cleanup() {
-          uploadPauseResolversRef.current = uploadPauseResolversRef.current.filter((resolver) => resolver !== resume);
-          signal?.removeEventListener('abort', abort);
-        }
-        const resume = () => {
-          cleanup();
-          resolve();
-        };
-        const abort = () => {
-          cleanup();
-          reject(new DOMException('Upload cancelled.', 'AbortError'));
-        };
-
-        uploadPauseResolversRef.current.push(resume);
-        signal?.addEventListener('abort', abort, { once: true });
-      })
-  });
   const checkoutHandledRef = useRef(false);
   const navigateToRouteRef = useRef<(nextRoute: AppRoute) => void>(() => undefined);
 
@@ -3628,40 +3610,20 @@ function App() {
     await handleUploadForProject(currentProject, files);
   }
 
-  function resolveUploadPauseWaiters() {
-    const resolvers = uploadPauseResolversRef.current.splice(0);
-    resolvers.forEach((resolve) => resolve());
-  }
-
-  function resetUploadPause() {
-    uploadPausedRef.current = false;
-    setUploadPaused(false);
-    resolveUploadPauseWaiters();
-  }
-
   function handlePauseUpload() {
-    if (!uploadActive) return;
-    uploadPausedRef.current = true;
-    setUploadPaused(true);
-    setUploadSnapshot((snapshot) => (snapshot ? { ...snapshot, stage: 'paused', offline: false } : snapshot));
-    if (currentProject) {
+    if (uploadControls.pauseUpload() && currentProject) {
       updateLocalImportDraft(currentProject.id, (draft) => ({ ...draft, uploadStatus: 'paused' }));
     }
   }
 
   function handleResumeUpload() {
-    if (!uploadPausedRef.current) return;
-    uploadPausedRef.current = false;
-    setUploadPaused(false);
-    resolveUploadPauseWaiters();
-    setUploadSnapshot((snapshot) => (snapshot?.stage === 'paused' ? { ...snapshot, stage: 'uploading', offline: false } : snapshot));
-    if (currentProject) {
+    if (uploadControls.resumeUpload() && currentProject) {
       updateLocalImportDraft(currentProject.id, (draft) => ({ ...draft, uploadStatus: 'uploading' }));
     }
   }
 
   function handleCancelUpload() {
-    uploadAbortControllerRef.current?.abort();
+    uploadControls.cancelUpload();
   }
 
   function triggerFilePicker() {
