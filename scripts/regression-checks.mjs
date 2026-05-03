@@ -295,7 +295,7 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/hooks/useProjectUploadImport.ts',
   'collectUploadedObjectReferencesFromProject',
   'Upload recovery must preserve already uploaded R2 objects when local draft state is rebuilt.'
 );
