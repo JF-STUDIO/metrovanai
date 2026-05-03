@@ -277,7 +277,7 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/hooks/useProjectProcessingFlow.ts',
   "inputComplete: true",
   'Local upload flow must finalize layout only after all originals are uploaded.'
 );
