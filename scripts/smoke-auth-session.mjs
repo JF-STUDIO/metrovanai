@@ -57,8 +57,23 @@ function extractTokenFromLogs(authMode, recipient) {
   return null;
 }
 
+function extractVerificationCodeFromLogs(recipient) {
+  const lines = serverOutput.split(/\r?\n/).filter((line) => line.includes(recipient)).reverse();
+  for (const line of lines) {
+    const codeMatch = line.match(/Verification code for [^:]+:\s*(\d{6})\b/);
+    if (codeMatch?.[1]) {
+      return codeMatch[1];
+    }
+  }
+  return null;
+}
+
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function hashVerificationCode(userEmail, code) {
+  return hashToken(`${userEmail.trim().toLowerCase()}:${code.trim()}`);
 }
 
 function hasStoredEmailVerificationToken(rawToken) {
@@ -68,6 +83,16 @@ function hasStoredEmailVerificationToken(rawToken) {
   }
   const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
   const hashed = hashToken(rawToken);
+  return Array.isArray(db.emailVerificationTokens) && db.emailVerificationTokens.some((item) => item.tokenHash === hashed);
+}
+
+function hasStoredEmailVerificationCode(userEmail, code) {
+  const dbPath = path.join(runtimeRoot, 'db.json');
+  if (!fs.existsSync(dbPath)) {
+    return false;
+  }
+  const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+  const hashed = hashVerificationCode(userEmail, code);
   return Array.isArray(db.emailVerificationTokens) && db.emailVerificationTokens.some((item) => item.tokenHash === hashed);
 }
 
@@ -241,13 +266,13 @@ async function main() {
       return { status: response.status };
     });
 
-    let verificationToken = '';
+    let verificationCode = '';
     await withStep('email_verification_confirms_session', async () => {
-      const token = extractTokenFromLogs('verify', email);
-      assert(token, 'Could not find email verification token in local server logs.');
-      assert(hasStoredEmailVerificationToken(token), `Extracted verification token was not found in local metadata. length=${token.length}`);
-      verificationToken = token;
-      const response = await client.request('POST', '/api/auth/email-verification/confirm', { token });
+      const code = extractVerificationCodeFromLogs(email);
+      assert(code, 'Could not find email verification code in local server logs.');
+      assert(hasStoredEmailVerificationCode(email, code), `Extracted verification code was not found in local metadata. code=${code}`);
+      verificationCode = code;
+      const response = await client.request('POST', '/api/auth/email-verification/confirm', { email, code });
       assert(
         response.status === 200,
         `Expected email verification 200, got ${response.status}: ${JSON.stringify(response.payload)}`
@@ -259,7 +284,7 @@ async function main() {
 
     await withStep('email_verification_confirm_is_idempotent_after_success', async () => {
       const repeatClient = new ApiClient();
-      const response = await repeatClient.request('POST', '/api/auth/email-verification/confirm', { token: verificationToken });
+      const response = await repeatClient.request('POST', '/api/auth/email-verification/confirm', { email, code: verificationCode });
       assert(
         response.status === 200,
         `Expected repeated email verification 200, got ${response.status}: ${JSON.stringify(response.payload)}`

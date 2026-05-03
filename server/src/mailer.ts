@@ -10,6 +10,7 @@ export interface PasswordResetEmailInput {
 export interface EmailVerificationEmailInput {
   to: string;
   displayName: string;
+  verificationCode: string;
   verificationUrl: string;
   expiresAt: string;
 }
@@ -69,10 +70,14 @@ function buildVerificationEmailHtml(input: EmailVerificationEmailInput) {
     <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111">
       <h2>Verify your Metrovan AI email</h2>
       <p>Hello ${escapeHtml(input.displayName || input.to)},</p>
-      <p>Use the button below to verify this email address. This link expires at ${escapeHtml(expiresAt)}.</p>
+      <p>Enter this verification code on Metrovan AI. This code expires at ${escapeHtml(expiresAt)}.</p>
+      <p style="font-size:30px;letter-spacing:8px;font-weight:700;background:#f4f4f4;border-radius:12px;padding:14px 18px;display:inline-block">
+        ${escapeHtml(input.verificationCode)}
+      </p>
+      <p>If the verification page is not open, you can open it here:</p>
       <p>
         <a href="${escapeHtml(input.verificationUrl)}" style="display:inline-block;background:#111;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">
-          Verify email
+          Open verification page
         </a>
       </p>
       <p>If you did not create a Metrovan AI account, you can ignore this email.</p>
@@ -148,7 +153,7 @@ export async function sendPasswordResetEmail(input: PasswordResetEmailInput): Pr
 
 export async function sendEmailVerificationEmail(input: EmailVerificationEmailInput): Promise<MailDeliveryResult> {
   if (shouldUseLocalLogDelivery()) {
-    console.warn(`[email-verification] Verification link for ${input.to}: ${input.verificationUrl}`);
+    console.warn(`[email-verification] Verification code for ${input.to}: ${input.verificationCode} ${input.verificationUrl}`);
     return { sent: true, reason: 'local_log_delivery' };
   }
 
@@ -156,7 +161,7 @@ export async function sendEmailVerificationEmail(input: EmailVerificationEmailIn
   const from = readEnv('SMTP_FROM');
   if (!host || !from) {
     if (shouldLogResetLinks()) {
-      console.warn(`[email-verification] Verification link for ${input.to}: ${input.verificationUrl}`);
+      console.warn(`[email-verification] Verification code for ${input.to}: ${input.verificationCode} ${input.verificationUrl}`);
     }
     return { sent: false, reason: 'smtp_not_configured' };
   }
@@ -182,10 +187,13 @@ export async function sendEmailVerificationEmail(input: EmailVerificationEmailIn
     text: [
       `Hello ${input.displayName || input.to},`,
       '',
-      'Use this link to verify your Metrovan AI account email:',
+      'Enter this verification code on Metrovan AI:',
+      input.verificationCode,
+      '',
+      'Open the verification page:',
       input.verificationUrl,
       '',
-      `This link expires at ${expiresAt}.`,
+      `This code expires at ${expiresAt}.`,
       'If you did not create a Metrovan AI account, you can ignore this email.'
     ].join('\n'),
     html: buildVerificationEmailHtml(input)

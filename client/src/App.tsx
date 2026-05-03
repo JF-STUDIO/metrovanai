@@ -290,7 +290,7 @@ function App() {
   const [authMode, setAuthMode] = useState<AuthMode>(() => getInitialAuthMode());
   const [googleAuthEnabled, setGoogleAuthEnabled] = useState<boolean | null>(null);
   const [authMessage, setAuthMessage] = useState('');
-  const [auth, setAuth] = useState({ email: '', name: '', password: '', confirmPassword: '' });
+  const [auth, setAuth] = useState({ email: '', name: '', password: '', confirmPassword: '', verificationCode: '' });
   const [message, setMessage] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1714,12 +1714,14 @@ function App() {
       return;
     }
 
+    const queryEmail = new URLSearchParams(window.location.search).get('email')?.trim() ?? '';
+    if (queryEmail) {
+      setAuth((current) => ({ ...current, email: current.email || queryEmail }));
+    }
+
     const verificationToken = getEmailVerificationTokenFromQuery();
     if (!verificationToken) {
-      const timer = window.setTimeout(() => {
-        setAuthMessage(copy.authVerifyTokenMissing);
-      }, 0);
-      return () => window.clearTimeout(timer);
+      return;
     }
 
     emailVerificationHandledRef.current = true;
@@ -1732,7 +1734,7 @@ function App() {
           setSession(response.session.user);
           setLocale(response.session.user.locale);
           setAuthOpen(false);
-          setAuth({ email: '', name: '', password: '', confirmPassword: '' });
+          setAuth({ email: '', name: '', password: '', confirmPassword: '', verificationCode: '' });
           setAuthMessage('');
           const nextPath = getPathForRoute('studio');
           const nextUrl = `${nextPath}${window.location.hash}`;
@@ -3430,7 +3432,7 @@ function App() {
       clearAuthTokenQuery();
     }
     setAuthOpen(false);
-    setAuth({ email: '', name: '', password: '', confirmPassword: '' });
+    setAuth({ email: '', name: '', password: '', confirmPassword: '', verificationCode: '' });
     setAuthMessage('');
   }
 
@@ -3525,6 +3527,38 @@ function App() {
       return;
     }
 
+    if (authMode === 'verify-email') {
+      const verificationCode = auth.verificationCode.trim();
+      if (!email || !/^\d{6}$/.test(verificationCode)) {
+        setAuthMessage(locale === 'zh' ? '请输入邮箱和 6 位验证码。' : 'Enter your email and 6-digit code.');
+        setMessage('');
+        return;
+      }
+
+      setAuthBusy(true);
+      setAuthMessage('');
+      try {
+        const response = await confirmEmailVerification({
+          email,
+          code: verificationCode
+        });
+        clearAuthTokenQuery();
+        setSession(response.session.user);
+        setLocale(response.session.user.locale);
+        setAuthOpen(false);
+        setAuth({ email: '', name: '', password: '', confirmPassword: '', verificationCode: '' });
+        setAuthMessage('');
+        navigateToRoute('studio');
+        setMessage(copy.authEmailVerifiedSuccess);
+      } catch (error) {
+        setAuthMessage(getAuthErrorMessage(error, authMode, locale));
+        setMessage('');
+      } finally {
+        setAuthBusy(false);
+      }
+      return;
+    }
+
     if (!email || !auth.password.trim()) {
       const nextMessage = copy.authMissingFields;
       setAuthMessage(nextMessage);
@@ -3565,11 +3599,12 @@ function App() {
         password: auth.password
       });
       if (response.verificationRequired) {
-        setAuthMode('signin');
+        setAuthMode('verify-email');
         setAuth((current) => ({
           ...current,
           password: '',
-          confirmPassword: ''
+          confirmPassword: '',
+          verificationCode: ''
         }));
         setAuthMessage(copy.authVerificationEmailSent);
         setMessage('');
@@ -3594,6 +3629,17 @@ function App() {
           password: '',
           confirmPassword: ''
         }));
+      }
+      if (authMode === 'signin' && nextMessage === copy.authEmailNotVerified) {
+        setAuthMode('verify-email');
+        setAuth((current) => ({
+          ...current,
+          email,
+          password: '',
+          confirmPassword: '',
+          verificationCode: ''
+        }));
+        setAuthMessage(copy.authVerificationEmailSent);
       }
     } finally {
       setAuthBusy(false);
@@ -5300,7 +5346,6 @@ function App() {
         authSubmitLabel={authSubmitLabel}
         googleAuthEnabled={googleAuthEnabled}
         isAuthLinkMode={isAuthLinkMode}
-        isEmailVerifyMode={isEmailVerifyMode}
         onClose={closeAuth}
         onGoogleAuth={handleGoogleAuth}
         onSelectMode={(mode) => {
@@ -7616,7 +7661,6 @@ function App() {
             authSubmitLabel={authSubmitLabel}
             googleAuthEnabled={googleAuthEnabled}
             isAuthLinkMode={isAuthLinkMode}
-            isEmailVerifyMode={isEmailVerifyMode}
             onClose={closeAuth}
             onGoogleAuth={handleGoogleAuth}
             onSelectMode={(mode) => {

@@ -2,6 +2,7 @@ import './env.js';
 import express from 'express';
 import multer from 'multer';
 import { nanoid } from 'nanoid';
+import { randomInt } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -496,10 +497,10 @@ function getPublicAppOrigin(req: express.Request) {
   return origin;
 }
 
-function buildEmailVerificationUrl(req: express.Request, token: string) {
+function buildEmailVerificationUrl(req: express.Request, email: string) {
   const url = new URL(getPublicAppOrigin(req));
   url.searchParams.set('auth', 'verify');
-  url.searchParams.set('token', token);
+  url.searchParams.set('email', email);
   return url.toString();
 }
 
@@ -512,6 +513,14 @@ function buildPasswordResetUrl(req: express.Request, token: string) {
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function createEmailVerificationCode() {
+  return String(randomInt(0, 1_000_000)).padStart(6, '0');
+}
+
+function hashEmailVerificationCode(email: string, code: string) {
+  return hashSessionToken(`${normalizeEmail(email)}:${code.trim()}`);
 }
 
 function isStrongPassword(password: string) {
@@ -555,24 +564,18 @@ async function sendVerificationForUser(
     return null;
   }
 
-  const existingToken = store.getActiveEmailVerificationTokenForUser(user.id);
-  if (existingToken && !options.force) {
-    return {
-      verificationToken: existingToken,
-      delivery: { sent: true, reason: 'active_token_reused' }
-    };
-  }
-
-  const rawToken = createSessionToken();
+  void options;
+  const verificationCode = createEmailVerificationCode();
   const verificationToken = store.createEmailVerificationToken(
     user.id,
-    hashSessionToken(rawToken),
+    hashEmailVerificationCode(user.email, verificationCode),
     EMAIL_VERIFICATION_TTL_MS
   );
   const delivery = await sendEmailVerificationEmail({
     to: user.email,
     displayName: user.displayName,
-    verificationUrl: buildEmailVerificationUrl(req, rawToken),
+    verificationCode,
+    verificationUrl: buildEmailVerificationUrl(req, user.email),
     expiresAt: verificationToken.expiresAt
   });
   return { verificationToken, delivery };
@@ -2234,9 +2237,15 @@ const passwordResetConfirmSchema = z.object({
   })
 });
 
-const emailVerificationConfirmSchema = z.object({
-  token: z.string().trim().min(20)
-});
+const emailVerificationConfirmSchema = z.union([
+  z.object({
+    token: z.string().trim().min(20)
+  }),
+  z.object({
+    email: z.email(),
+    code: z.string().trim().regex(/^\d{6}$/)
+  })
+]);
 
 const emailVerificationResendSchema = z.object({
   email: z.email()
@@ -3005,6 +3014,7 @@ app.use(createAuthRouter({
   getPublicAppOrigin,
   getRawHeaderValue,
   hashPassword,
+  hashEmailVerificationCode,
   hashSessionToken,
   isUserDisabled,
   loginSchema,

@@ -66,8 +66,23 @@ function extractTokenFromLogs(authMode, recipient) {
   return null;
 }
 
+function extractVerificationCodeFromLogs(recipient) {
+  const lines = serverOutput.split(/\r?\n/).filter((line) => line.includes(recipient)).reverse();
+  for (const line of lines) {
+    const codeMatch = line.match(/Verification code for [^:]+:\s*(\d{6})\b/);
+    if (codeMatch?.[1]) {
+      return codeMatch[1];
+    }
+  }
+  return null;
+}
+
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function hashVerificationCode(userEmail, code) {
+  return hashToken(`${userEmail.trim().toLowerCase()}:${code.trim()}`);
 }
 
 function hasStoredEmailVerificationToken(rawToken) {
@@ -76,6 +91,15 @@ function hasStoredEmailVerificationToken(rawToken) {
   }
   const db = readDb();
   const hashed = hashToken(rawToken);
+  return Array.isArray(db.emailVerificationTokens) && db.emailVerificationTokens.some((item) => item.tokenHash === hashed);
+}
+
+function hasStoredEmailVerificationCode(userEmail, code) {
+  if (!fs.existsSync(dbPath())) {
+    return false;
+  }
+  const db = readDb();
+  const hashed = hashVerificationCode(userEmail, code);
   return Array.isArray(db.emailVerificationTokens) && db.emailVerificationTokens.some((item) => item.tokenHash === hashed);
 }
 
@@ -288,10 +312,10 @@ async function main() {
         displayName: 'Metrovan Stripe Smoke'
       });
       assert(register.status === 201, `Expected register 201, got ${register.status}`);
-      const token = extractTokenFromLogs('verify', email);
-      assert(token, 'Could not find email verification token in local server logs.');
-      assert(hasStoredEmailVerificationToken(token), 'Extracted verification token was not found in local metadata.');
-      const verify = await client.request('POST', '/api/auth/email-verification/confirm', { token });
+      const code = extractVerificationCodeFromLogs(email);
+      assert(code, 'Could not find email verification code in local server logs.');
+      assert(hasStoredEmailVerificationCode(email, code), 'Extracted verification code was not found in local metadata.');
+      const verify = await client.request('POST', '/api/auth/email-verification/confirm', { email, code });
       assert(verify.status === 200, `Expected email verification 200, got ${verify.status}: ${JSON.stringify(verify.payload)}`);
       verifiedUser = verify.payload.session.user;
       return { email: verifiedUser.email };

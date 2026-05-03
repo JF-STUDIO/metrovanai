@@ -924,7 +924,7 @@ export function getAuthErrorMessage(error: unknown, mode: AuthMode, locale: UiLo
     return copy.authEmailExists;
   }
 
-  if (lower.includes('email verification required')) {
+  if (lower.includes('email verification required') || lower.includes('请先完成邮箱验证') || lower.includes('邮箱还没有验证')) {
     return copy.authEmailNotVerified;
   }
 
@@ -944,7 +944,7 @@ export function getAuthErrorMessage(error: unknown, mode: AuthMode, locale: UiLo
     return copy.authPasswordTooShort;
   }
 
-  if (lower.includes('invalid or expired')) {
+  if (lower.includes('invalid or expired') || lower.includes('无效或已过期')) {
     return mode === 'verify-email' ? copy.authVerifyInvalidOrExpired : copy.authResetInvalidOrExpired;
   }
 
@@ -1609,6 +1609,7 @@ export function clearAuthTokenQuery() {
   url.searchParams.delete('resetToken');
   url.searchParams.delete('verifyToken');
   url.searchParams.delete('emailVerificationToken');
+  url.searchParams.delete('email');
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 

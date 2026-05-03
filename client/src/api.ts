@@ -1069,7 +1069,7 @@ export async function confirmPasswordReset(input: { token: string; password: str
   });
 }
 
-export async function confirmEmailVerification(input: { token: string }) {
+export async function confirmEmailVerification(input: { token: string } | { email: string; code: string }) {
   return await jsonRequest<{ session: AuthSessionPayload }>('/api/auth/email-verification/confirm', {
     method: 'POST',
     body: JSON.stringify(input)

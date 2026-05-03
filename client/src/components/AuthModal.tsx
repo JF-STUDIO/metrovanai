@@ -7,6 +7,7 @@ interface AuthFormState {
   name: string;
   password: string;
   confirmPassword: string;
+  verificationCode: string;
 }
 
 interface AuthModalCopy {
@@ -24,6 +25,8 @@ interface AuthModalCopy {
   authForgotPassword: string;
   authConfirmPassword: string;
   authConfirmPasswordPlaceholder: string;
+  authVerificationCode: string;
+  authVerificationCodePlaceholder: string;
   authBackToLogin: string;
   authNoAccount: string;
   authHasAccount: string;
@@ -40,7 +43,6 @@ interface AuthModalProps {
   authSubmitLabel: string;
   googleAuthEnabled: boolean | null;
   isAuthLinkMode: boolean;
-  isEmailVerifyMode: boolean;
   onClose: () => void;
   onGoogleAuth: () => void;
   onSelectMode: (mode: 'signin' | 'signup') => void;
@@ -61,7 +63,6 @@ export function AuthModal({
   authSubmitLabel,
   googleAuthEnabled,
   isAuthLinkMode,
-  isEmailVerifyMode,
   onClose,
   onGoogleAuth,
   onSelectMode,
@@ -153,7 +154,7 @@ export function AuthModal({
               />
             </label>
           )}
-          {authMode !== 'reset-confirm' && authMode !== 'verify-email' && (
+          {authMode !== 'reset-confirm' && (
             <label>
               <span>{copy.authEmail}</span>
               <input
@@ -163,6 +164,20 @@ export function AuthModal({
                 value={auth.email}
                 onChange={(event) => onAuthChange({ email: event.target.value })}
                 placeholder="name@email.com"
+              />
+            </label>
+          )}
+          {authMode === 'verify-email' && (
+            <label>
+              <span>{copy.authVerificationCode}</span>
+              <input
+                disabled={authBusy}
+                name="verificationCode"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={auth.verificationCode}
+                onChange={(event) => onAuthChange({ verificationCode: event.target.value.replace(/\D/g, '').slice(0, 6) })}
+                placeholder={copy.authVerificationCodePlaceholder}
               />
             </label>
           )}
@@ -204,11 +219,9 @@ export function AuthModal({
           <button className="ghost-button" type="button" onClick={onToggleMode} disabled={authBusy}>
             {isAuthLinkMode ? copy.authBackToLogin : authMode === 'signin' ? copy.authNoAccount : copy.authHasAccount}
           </button>
-          {!isEmailVerifyMode && (
-            <button className="solid-button auth-submit" type="button" onClick={onSubmit} disabled={authBusy}>
-              {authSubmitLabel}
-            </button>
-          )}
+          <button className="solid-button auth-submit" type="button" onClick={onSubmit} disabled={authBusy}>
+            {authSubmitLabel}
+          </button>
         </div>
       </div>
     </div>

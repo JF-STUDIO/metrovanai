@@ -146,14 +146,14 @@ assertIncludes(
 
 assertIncludes(
   'server/src/index.ts',
-  'getActiveEmailVerificationTokenForUser(user.id)',
-  'Login/register email verification must reuse an active verification token instead of repeatedly sending new emails.'
+  'hashEmailVerificationCode(user.email, verificationCode)',
+  'Email verification codes must be stored hashed, not in plaintext.'
 );
 
 assertIncludes(
   'server/src/routes/auth.ts',
   'sendVerificationForUser(req, user, { force: true })',
-  'Only the explicit resend endpoint should force a fresh verification email.'
+  'Unverified login must send a fresh code so users can verify without an old link.'
 );
 
 assertIncludes(

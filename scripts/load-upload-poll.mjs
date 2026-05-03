@@ -196,6 +196,15 @@ function extractTokenFromLogs(authMode, recipient) {
   return null;
 }
 
+function extractVerificationCodeFromLogs(recipient) {
+  const lines = serverOutput.split(/\r?\n/).filter((line) => line.includes(recipient)).reverse();
+  for (const line of lines) {
+    const codeMatch = line.match(/Verification code for [^:]+:\s*(\d{6})\b/);
+    if (codeMatch?.[1]) return codeMatch[1];
+  }
+  return null;
+}
+
 class ApiClient {
   constructor(syntheticIp) {
     this.cookies = new Map();
@@ -283,13 +292,13 @@ async function runUser(index) {
 
   await step('verify', async () => {
     const deadline = Date.now() + 10_000;
-    let token = null;
-    while (Date.now() < deadline && !token) {
-      token = extractTokenFromLogs('verify', email);
-      if (!token) await sleep(100);
+    let code = null;
+    while (Date.now() < deadline && !code) {
+      code = extractVerificationCodeFromLogs(email);
+      if (!code) await sleep(100);
     }
-    if (!token) throw new Error('missing verification token');
-    const response = await client.request('POST', '/api/auth/email-verification/confirm', { token });
+    if (!code) throw new Error('missing verification code');
+    const response = await client.request('POST', '/api/auth/email-verification/confirm', { email, code });
     if (response.status !== 200) throw new Error(`verify ${response.status}`);
   });
 

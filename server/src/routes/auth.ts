@@ -35,6 +35,7 @@ export function createAuthRouter(ctx: RouteContext) {
     getPublicAppOrigin,
     getRawHeaderValue,
     hashPassword,
+    hashEmailVerificationCode,
     hashSessionToken,
     isUserDisabled,
     loginSchema,
@@ -162,7 +163,7 @@ app.post('/api/auth/login', async (req, res) => {
       details: { email: user.email }
     });
     try {
-      const verification = await sendVerificationForUser(req, user);
+      const verification = await sendVerificationForUser(req, user, { force: true });
       if (verification && !verification.delivery.sent) {
         res.status(503).json({ error: '验证邮件发送失败，请稍后重试。' });
         return;
@@ -207,7 +208,10 @@ app.post('/api/auth/email-verification/confirm', async (req, res) => {
     return;
   }
 
-  const verificationTokenHash = hashSessionToken(parsed.data.token);
+  const verificationTokenHash =
+    'token' in parsed.data
+      ? hashSessionToken(parsed.data.token)
+      : hashEmailVerificationCode(parsed.data.email, parsed.data.code);
   const verificationToken = store.getEmailVerificationTokenByHash(verificationTokenHash);
   if (!verificationToken) {
     const existingToken = store.getEmailVerificationTokenRecordByHash(verificationTokenHash);
@@ -223,13 +227,13 @@ app.post('/api/auth/email-verification/confirm', async (req, res) => {
       return;
     }
 
-    res.status(400).json({ error: '该验证链接无效或已过期，请重新发送验证邮件。' });
+    res.status(400).json({ error: '该验证码无效或已过期，请重新发送验证邮件。' });
     return;
   }
 
   const user = store.getUserById(verificationToken.userId);
   if (!user) {
-    res.status(400).json({ error: '该验证链接无效或已过期，请重新发送验证邮件。' });
+    res.status(400).json({ error: '该验证码无效或已过期，请重新发送验证邮件。' });
     return;
   }
 
@@ -243,7 +247,7 @@ app.post('/api/auth/email-verification/confirm', async (req, res) => {
     emailVerifiedAt: current.emailVerifiedAt ?? new Date().toISOString()
   }));
   if (!verifiedUser) {
-    res.status(400).json({ error: '该验证链接无效或已过期，请重新发送验证邮件。' });
+    res.status(400).json({ error: '该验证码无效或已过期，请重新发送验证邮件。' });
     return;
   }
 
