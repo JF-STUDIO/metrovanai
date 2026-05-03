@@ -553,14 +553,14 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/pages/BillingPage.tsx',
   '积分使用情况',
   'Billing page must split credit usage from recharge records.'
 );
 
 assertIncludes(
-  'client/src/App.tsx',
-  'renderStripeInvoiceLink(order)',
+  'client/src/pages/BillingPage.tsx',
+  'renderStripeInvoiceLink(order, copy)',
   'Billing page must expose recharge records with a single Stripe invoice link.'
 );
 
@@ -571,13 +571,13 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/pages/BillingPage.tsx',
   "entry.type === 'charge' && !isAdminBillingAdjustmentEntry(entry)",
   'Billing usage list must show project charges instead of manual admin adjustments.'
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/pages/BillingPage.tsx',
   '每次充值金额和 Invoice。',
   'Billing page must keep recharge records concise with Stripe invoice links.'
 );
