@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
-import { startTransition, useLayoutEffect } from 'react';
+import { useLayoutEffect } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { AdminRoute } from './components/AdminRoute';
 import { AppAuthDialog } from './components/AppAuthDialog';
@@ -10,6 +10,7 @@ import { BillingPage } from './pages/BillingPage';
 import { LandingPage } from './pages/LandingPage';
 import logoMark from './assets/metrovan-logo-mark.webp';
 import { isDemoModeEnabled } from './demo-mode';
+import { useAuthFlow } from './hooks/useAuthFlow';
 import { useResultEditor } from './hooks/useResultEditor';
 import type { LocalExposureDraft, LocalHdrItemDraft, LocalImportDraft } from './local-import';
 import { UI_TEXT, type UiLocale } from './app-copy';
@@ -22,9 +23,7 @@ import {
 } from './studio-features';
 import {
   ApiRequestError,
-  confirmEmailVerification,
   confirmCheckoutSession,
-  confirmPasswordReset,
   applyHdrLayout,
   createCheckoutSession,
   allowAdminUserAccess,
@@ -53,24 +52,19 @@ import {
   fetchAdminUserDetail,
   fetchAdminUsers,
   fetchAdminWorkflows,
-  fetchAuthProviders,
   fetchBilling,
   fetchProject,
   fetchProjects,
   fetchResultThumbnails,
   fetchSession,
   fetchStudioFeatures,
-  getApiRoot,
   isDirectUploadIntegrityError,
-  loginWithEmail,
   logoutSession,
   moveHdrItem,
   patchProject,
   reorderResults,
-  registerWithEmail,
   redeemActivationCode,
   refundAdminOrder,
-  requestPasswordReset,
   regenerateResult,
   recoverAdminProjectRunningHubResults,
   repairAdminProject,
@@ -139,7 +133,6 @@ import {
   MIN_RUNPOD_HDR_BATCH_SIZE,
   buildAdminPlanPackageFromDraft,
   buildUniqueAdminActivationCode,
-  clearAuthTokenQuery,
   createAdminBatchCodeDraft,
   createAdminPlanDraft,
   createDemoProjects,
@@ -148,21 +141,16 @@ import {
   formatDate,
   formatUsd,
   formatUploadProgressLabel,
-  getAuthErrorMessage,
-  getAuthFeedbackMessage,
   getColorModeLabel,
   getCustomRechargePoints,
   getDraftGroupId,
-  getEmailVerificationTokenFromQuery,
   getGroupItems,
   getHdrItemStatusLabel,
   getHdrItemReviewStateFromExposures,
   getHdrLocalReviewState,
   getHdrPreviewUrl,
-  getInitialAuthMode,
   getLocalReviewCopy,
   getMaxNavigableStep,
-  getPasswordResetTokenFromQuery,
   getPathForRoute,
   getProjectProcessingStageCopy,
   getProjectStatusLabel,
@@ -174,7 +162,6 @@ import {
   isHdrItemProcessing,
   isInsufficientCreditsError,
   isProjectJobActivelyProcessing,
-  isStrongPasswordInput,
   loadLocalImportModule,
   markStudioGuideDismissed,
   mergeLocalImportDrafts,
@@ -184,14 +171,12 @@ import {
   parseCustomRechargeAmount,
   resolveMediaUrl,
   revokeLocalImportDraftUrls,
-  shouldOpenAuthFromQuery,
   syncLocalHdrGroups,
   sortExposuresForHdr,
   type AdminBatchCodeDraft,
   type AdminConsolePage,
   type AdminPlanDraft,
   type AppRoute,
-  type AuthMode,
   type DownloadDraft,
   type FailedUploadEntry,
   type SessionState,
@@ -245,13 +230,7 @@ function App() {
     return null;
   });
   const [sessionReady, setSessionReady] = useState(isDemoMode);
-  const [authOpen, setAuthOpen] = useState(() => shouldOpenAuthFromQuery());
-  const [authMode, setAuthMode] = useState<AuthMode>(() => getInitialAuthMode());
-  const [googleAuthEnabled, setGoogleAuthEnabled] = useState<boolean | null>(null);
-  const [authMessage, setAuthMessage] = useState('');
-  const [auth, setAuth] = useState({ email: '', name: '', password: '', confirmPassword: '', verificationCode: '' });
   const [message, setMessage] = useState('');
-  const [authBusy, setAuthBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [uploadActive, setUploadActive] = useState(false);
@@ -480,13 +459,22 @@ function App() {
         signal?.addEventListener('abort', abort, { once: true });
       })
   });
-  const emailVerificationHandledRef = useRef(false);
   const checkoutHandledRef = useRef(false);
   const navigateToRouteRef = useRef<(nextRoute: AppRoute) => void>(() => undefined);
 
   const demoProjects = useMemo(() => createDemoProjects(), []);
   const visibleProjects = isDemoMode ? demoProjects : projects;
   const copy = UI_TEXT[locale];
+  const authFlow = useAuthFlow({
+    copy,
+    isDemoMode,
+    locale,
+    navigateToRoute,
+    setActiveRoute,
+    setLocale,
+    setMessage,
+    setSession
+  });
   const visibleStudioFeatures = studioFeatureCards.filter((feature) => feature.status !== 'locked');
   const selectedFeature = visibleStudioFeatures.find((feature) => feature.id === selectedFeatureId) ?? visibleStudioFeatures[0] ?? STUDIO_FEATURES[0];
   const availableFeatureCount = visibleStudioFeatures.length;
@@ -504,41 +492,6 @@ function App() {
   );
   const safeStudioGuideStep = Math.min(studioGuideStep, studioGuideSteps.length - 1);
   const activeStudioGuideStep = studioGuideSteps[safeStudioGuideStep];
-  const authTitle =
-    authMode === 'signin'
-      ? copy.authTitleSignin
-      : authMode === 'signup'
-        ? copy.authTitleSignup
-        : authMode === 'reset-request'
-          ? copy.authTitleResetRequest
-          : authMode === 'reset-confirm'
-            ? copy.authTitleResetConfirm
-            : copy.authTitleVerifyEmail;
-  const authSubtitle =
-    authMode === 'signin'
-      ? copy.authSubtitleSignin
-      : authMode === 'signup'
-        ? copy.authSubtitleSignup
-        : authMode === 'reset-request'
-          ? copy.authSubtitleResetRequest
-          : authMode === 'reset-confirm'
-            ? copy.authSubtitleResetConfirm
-            : copy.authSubtitleVerifyEmail;
-  const isPasswordResetMode = authMode === 'reset-request' || authMode === 'reset-confirm';
-  const isEmailVerifyMode = authMode === 'verify-email';
-  const isAuthLinkMode = isPasswordResetMode || isEmailVerifyMode;
-  const authSubmitLabel = authBusy
-    ? copy.authWorking
-    : authMode === 'signin'
-      ? copy.authModeSignin
-      : authMode === 'signup'
-        ? copy.authModeSignup
-        : authMode === 'reset-request'
-          ? copy.authModeResetRequest
-          : authMode === 'reset-confirm'
-            ? copy.authModeResetConfirm
-            : copy.authModeVerifyEmail;
-
   useEffect(() => {
     const isImageTarget = (target: EventTarget | null) =>
       target instanceof Element && Boolean(target.closest('img'));
@@ -934,9 +887,7 @@ function App() {
     }
 
     const timer = window.setTimeout(() => {
-      setAuthMode('signin');
-      setAuthOpen(true);
-      setAuthMessage('');
+      authFlow.openAuth('signin');
       setMessage(activeRoute === 'admin' ? '请先用管理员账号登录后台。' : '');
     }, 0);
 
@@ -1624,101 +1575,6 @@ function App() {
   }, [message]);
 
   useEffect(() => {
-    if (isDemoMode) {
-      return;
-    }
-
-    let cancelled = false;
-    void fetchAuthProviders()
-      .then((response) => {
-        if (cancelled) return;
-        setGoogleAuthEnabled(response.google.enabled);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setGoogleAuthEnabled(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isDemoMode]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const authError = params.get('authError');
-    const authProvider = params.get('authProvider');
-    if (!authError && !authProvider) {
-      return;
-    }
-
-    startTransition(() => {
-      if (authError) {
-        setAuthMessage(getAuthFeedbackMessage(authError, locale));
-        setMessage('');
-        setAuthOpen(true);
-        setAuthMode('signin');
-      } else if (authProvider === 'google') {
-        setMessage(copy.googleSuccess);
-      }
-    });
-
-    params.delete('authError');
-    params.delete('authProvider');
-    params.delete('auth');
-    const nextQuery = params.toString();
-    window.history.replaceState(null, '', `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`);
-  }, [copy.googleSuccess, locale]);
-
-  useEffect(() => {
-    if (isDemoMode || !authOpen || authMode !== 'verify-email' || emailVerificationHandledRef.current) {
-      return;
-    }
-
-    const queryEmail = new URLSearchParams(window.location.search).get('email')?.trim() ?? '';
-    if (queryEmail) {
-      setAuth((current) => ({ ...current, email: current.email || queryEmail }));
-    }
-
-    const verificationToken = getEmailVerificationTokenFromQuery();
-    if (!verificationToken) {
-      return;
-    }
-
-    emailVerificationHandledRef.current = true;
-    const timer = window.setTimeout(() => {
-      setAuthBusy(true);
-      setAuthMessage(copy.authSubtitleVerifyEmail);
-      void confirmEmailVerification({ token: verificationToken })
-        .then((response) => {
-          clearAuthTokenQuery();
-          setSession(response.session.user);
-          setLocale(response.session.user.locale);
-          setAuthOpen(false);
-          setAuth({ email: '', name: '', password: '', confirmPassword: '', verificationCode: '' });
-          setAuthMessage('');
-          const nextPath = getPathForRoute('studio');
-          const nextUrl = `${nextPath}${window.location.hash}`;
-          if (window.location.pathname !== nextPath) {
-            window.history.pushState({}, '', nextUrl);
-          }
-          setActiveRoute('studio');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-          setMessage(copy.authEmailVerifiedSuccess);
-        })
-        .catch((error) => {
-          setAuthMessage(getAuthErrorMessage(error, 'verify-email', locale));
-          setMessage('');
-        })
-        .finally(() => {
-          setAuthBusy(false);
-        });
-    }, 0);
-
-    return () => window.clearTimeout(timer);
-  }, [authMode, authOpen, copy.authEmailVerifiedSuccess, copy.authSubtitleVerifyEmail, copy.authVerifyTokenMissing, isDemoMode, locale]);
-
-  useEffect(() => {
     if (isDemoMode) return;
     if (!sessionReady || !session) return;
     let cancelled = false;
@@ -1977,9 +1833,7 @@ function App() {
         setMessage('当前账号没有管理员权限。');
         resolvedRoute = 'studio';
       } else {
-        setAuthMode('signin');
-        setAuthOpen(true);
-        setAuthMessage('');
+        authFlow.openAuth('signin');
         setMessage('请先用管理员账号登录后台。');
         resolvedRoute = 'home';
       }
@@ -1995,13 +1849,6 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   navigateToRouteRef.current = navigateToRoute;
-
-  function openAuth(nextMode: AuthMode) {
-    setAuthMode(nextMode);
-    setAuthOpen(true);
-    setAuthMessage('');
-    setMessage('');
-  }
 
   async function handleAdminLoadUsers() {
     if (!hasAdminSession) {
@@ -3388,225 +3235,6 @@ function App() {
     setDownloadDraft(DEFAULT_DOWNLOAD_DRAFT);
   }
 
-  function closeAuth() {
-    if (authMode === 'reset-confirm' || authMode === 'verify-email') {
-      clearAuthTokenQuery();
-    }
-    setAuthOpen(false);
-    setAuth({ email: '', name: '', password: '', confirmPassword: '', verificationCode: '' });
-    setAuthMessage('');
-  }
-
-  function handleGoogleAuth() {
-    if (googleAuthEnabled === false) {
-      setAuthMessage(copy.googleConfiguredMissing);
-      setMessage('');
-      setAuthOpen(true);
-      setAuthMode('signin');
-      return;
-    }
-    const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
-    window.location.assign(`${getApiRoot()}/api/auth/google/start?returnTo=${encodeURIComponent(returnTo)}`);
-  }
-
-  function handleForgotPassword() {
-    setAuthMode('reset-request');
-    setAuth((current) => ({
-      ...current,
-      password: '',
-      confirmPassword: ''
-    }));
-    setAuthMessage('');
-    setMessage('');
-  }
-
-  async function submitAuth() {
-    const email = auth.email.trim();
-
-    if (authMode === 'reset-request') {
-      if (!email) {
-        setAuthMessage(copy.authMissingEmail);
-        setMessage('');
-        return;
-      }
-
-      setAuthBusy(true);
-      setAuthMessage('');
-      try {
-        await requestPasswordReset({ email });
-        setAuthMessage(copy.authResetEmailSent);
-        setMessage('');
-      } catch (error) {
-        setAuthMessage(getAuthErrorMessage(error, authMode, locale));
-        setMessage('');
-      } finally {
-        setAuthBusy(false);
-      }
-      return;
-    }
-
-    if (authMode === 'reset-confirm') {
-      const resetToken = getPasswordResetTokenFromQuery();
-      if (!resetToken) {
-        setAuthMessage(copy.authResetTokenMissing);
-        setMessage('');
-        return;
-      }
-      if (!isStrongPasswordInput(auth.password)) {
-        setAuthMessage(copy.authPasswordTooShort);
-        setMessage('');
-        return;
-      }
-      if (auth.password !== auth.confirmPassword) {
-        setAuthMessage(copy.authPasswordMismatch);
-        setMessage('');
-        return;
-      }
-
-      setAuthBusy(true);
-      setAuthMessage('');
-      try {
-        await confirmPasswordReset({
-          token: resetToken,
-          password: auth.password
-        });
-        clearAuthTokenQuery();
-        setAuthMode('signin');
-        setAuth((current) => ({
-          ...current,
-          password: '',
-          confirmPassword: ''
-        }));
-        setAuthMessage(copy.authResetPasswordSuccess);
-        setMessage('');
-      } catch (error) {
-        setAuthMessage(getAuthErrorMessage(error, authMode, locale));
-        setMessage('');
-      } finally {
-        setAuthBusy(false);
-      }
-      return;
-    }
-
-    if (authMode === 'verify-email') {
-      const verificationCode = auth.verificationCode.trim();
-      if (!email || !/^\d{6}$/.test(verificationCode)) {
-        setAuthMessage(locale === 'zh' ? '请输入邮箱和 6 位验证码。' : 'Enter your email and 6-digit code.');
-        setMessage('');
-        return;
-      }
-
-      setAuthBusy(true);
-      setAuthMessage('');
-      try {
-        const response = await confirmEmailVerification({
-          email,
-          code: verificationCode
-        });
-        clearAuthTokenQuery();
-        setSession(response.session.user);
-        setLocale(response.session.user.locale);
-        setAuthOpen(false);
-        setAuth({ email: '', name: '', password: '', confirmPassword: '', verificationCode: '' });
-        setAuthMessage('');
-        navigateToRoute('studio');
-        setMessage(copy.authEmailVerifiedSuccess);
-      } catch (error) {
-        setAuthMessage(getAuthErrorMessage(error, authMode, locale));
-        setMessage('');
-      } finally {
-        setAuthBusy(false);
-      }
-      return;
-    }
-
-    if (!email || !auth.password.trim()) {
-      const nextMessage = copy.authMissingFields;
-      setAuthMessage(nextMessage);
-      setMessage('');
-      return;
-    }
-    if (authMode === 'signup' && auth.password !== auth.confirmPassword) {
-      const nextMessage = copy.authPasswordMismatch;
-      setAuthMessage(nextMessage);
-      setMessage('');
-      return;
-    }
-    if (authMode === 'signup' && !isStrongPasswordInput(auth.password)) {
-      setAuthMessage(copy.authPasswordTooShort);
-      setMessage('');
-      return;
-    }
-
-    setAuthBusy(true);
-    setAuthMessage('');
-    try {
-      if (authMode === 'signin') {
-        const response = await loginWithEmail({
-          email,
-          password: auth.password
-        });
-        setSession(response.session.user);
-        setLocale(response.session.user.locale);
-        closeAuth();
-        navigateToRoute('studio');
-        setMessage(copy.signInSuccess);
-        return;
-      }
-
-      const response = await registerWithEmail({
-        email,
-        displayName: auth.name.trim() || undefined,
-        password: auth.password
-      });
-      if (response.verificationRequired) {
-        setAuthMode('verify-email');
-        setAuth((current) => ({
-          ...current,
-          password: '',
-          confirmPassword: '',
-          verificationCode: ''
-        }));
-        setAuthMessage(copy.authVerificationEmailSent);
-        setMessage('');
-        return;
-      }
-
-      if (response.session) {
-        setSession(response.session.user);
-        setLocale(response.session.user.locale);
-        closeAuth();
-        navigateToRoute('studio');
-        setMessage(copy.signUpSuccess);
-      }
-    } catch (error) {
-      const nextMessage = getAuthErrorMessage(error, authMode, locale);
-      setAuthMessage(nextMessage);
-      setMessage('');
-      if (authMode === 'signup' && nextMessage === copy.authEmailExists) {
-        setAuthMode('signin');
-        setAuth((current) => ({
-          ...current,
-          password: '',
-          confirmPassword: ''
-        }));
-      }
-      if (authMode === 'signin' && nextMessage === copy.authEmailNotVerified) {
-        setAuthMode('verify-email');
-        setAuth((current) => ({
-          ...current,
-          email,
-          password: '',
-          confirmPassword: '',
-          verificationCode: ''
-        }));
-        setAuthMessage(copy.authVerificationEmailSent);
-      }
-    } finally {
-      setAuthBusy(false);
-    }
-  }
-
   async function signOut() {
     if (!isDemoMode) {
       try {
@@ -3632,7 +3260,7 @@ function App() {
     setUserMenuOpen(false);
     setHistoryMenuOpen(false);
     setMessage('');
-    setAuthMessage('');
+    authFlow.setAuthMessage('');
     setSettingsMessage('');
     setLocalImportDrafts((current) => {
       Object.values(current).forEach((draft) => revokeLocalImportDraftUrls(draft));
@@ -4852,34 +4480,8 @@ function App() {
   function renderAuthDialog() {
     return (
       <AppAuthDialog
-        copy={copy}
-        open={authOpen}
+        {...authFlow.authDialogProps}
         hasSession={Boolean(session)}
-        authMode={authMode}
-        authBusy={authBusy}
-        auth={auth}
-        authTitle={authTitle}
-        authSubtitle={authSubtitle}
-        authMessage={authMessage}
-        authSubmitLabel={authSubmitLabel}
-        googleAuthEnabled={googleAuthEnabled}
-        isAuthLinkMode={isAuthLinkMode}
-        onClose={closeAuth}
-        onGoogleAuth={handleGoogleAuth}
-        onSelectMode={(mode: 'signin' | 'signup') => {
-          setAuthMode(mode);
-          setAuthMessage('');
-        }}
-        onAuthChange={(patch) => setAuth((current) => ({ ...current, ...patch }))}
-        onForgotPassword={handleForgotPassword}
-        onToggleMode={() => {
-          if (authMode === 'reset-confirm' || authMode === 'verify-email') {
-            clearAuthTokenQuery();
-          }
-          setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
-          setAuthMessage('');
-        }}
-        onSubmit={submitAuth}
       />
     );
   }
@@ -4899,7 +4501,7 @@ function App() {
           hasSession={Boolean(session)}
           message={adminAccessMessage}
           onNavigate={navigateToRoute}
-          onOpenAuth={openAuth}
+          onOpenAuth={authFlow.openAuth}
         />
 
         {renderAuthDialog()}
@@ -5130,7 +4732,7 @@ function App() {
           hasSession={Boolean(session)}
           message={message}
           onNavigate={navigateToRoute}
-          onOpenAuth={openAuth}
+          onOpenAuth={authFlow.openAuth}
         />
 
         {renderAuthDialog()}
