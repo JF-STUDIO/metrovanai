@@ -16,6 +16,7 @@ import { ProjectDownloadDialog } from './components/ProjectDownloadDialog';
 import { ProjectWorkspaceHeader } from './components/ProjectWorkspaceHeader';
 import { ResultEditorDialog } from './components/ResultEditorDialog';
 import { ResultsPanel } from './components/ResultsPanel';
+import { ReviewGroupsPanel } from './components/ReviewGroupsPanel';
 import { ReviewPanelHeader } from './components/ReviewPanelHeader';
 import { ReviewUploadStatus } from './components/ReviewUploadStatus';
 import { StudioFeatureLaunchPanel } from './components/StudioFeatureLaunchPanel';
@@ -171,7 +172,6 @@ import {
   createHdrItemFromExposure,
   filterSupportedImportFiles,
   formatDate,
-  formatGroupSummary,
   formatUsd,
   formatUploadProgressLabel,
   getAuthErrorMessage,
@@ -7838,233 +7838,40 @@ function App() {
                         />
                       )}
 
-                      <div className="group-list">
-                        {workspaceGroups.map((group) => {
-                          const groupItems = getGroupItems(group, workspaceReviewProject ?? { hdrItems: [] });
-                          return (
-                            <article key={group.id} className="group-card">
-                              <div className="group-card-head">
-                                <div>
-                                  <strong>{group.name}</strong>
-                                  <span>
-                                    {formatGroupSummary(
-                                      groupItems.length,
-                                      groupItems.reduce((sum, item) => sum + item.exposures.length, 0),
-                                      locale
-                                    )}
-                                  </span>
-                                </div>
-                                {!isDemoMode && showAdvancedGroupingControls && (
-                                  <div className="group-chips">
-                                    <span className="meta-pill">{getSceneLabel(group.sceneType, locale)}</span>
-                                    <span className="meta-pill">{getColorModeLabel(group.colorMode, locale)}</span>
-                                  </div>
-                                )}
-                              </div>
-
-                              {showAdvancedGroupingControls && (
-                              <div className="group-controls">
-                                {!isDemoMode && (
-                                  <div className="segmented">
-                                    {(['interior', 'exterior', 'pending'] as const).map((sceneType) => (
-                                      <button
-                                        key={sceneType}
-                                        type="button"
-                                        className={group.sceneType === sceneType ? 'active' : ''}
-                                        onClick={() => void handleSceneChange(group, sceneType)}
-                                      >
-                                        {getSceneLabel(sceneType, locale)}
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
-
-                                <div className="segmented">
-                                  {(['default', 'replace'] as const).map((mode) => (
-                                    <button
-                                      key={mode}
-                                      type="button"
-                                      className={group.colorMode === mode ? 'active' : ''}
-                                      onClick={() => void handleColorModeChange(group, mode)}
-                                    >
-                                      {getColorModeLabel(mode, locale)}
-                                    </button>
-                                  ))}
-                                </div>
-
-                                {isDemoMode && (
-                                  <div className="demo-group-scene-chip">
-                                    <span className="meta-pill">{getSceneLabel(group.sceneType, locale)}</span>
-                                  </div>
-                                )}
-
-                                {group.colorMode === 'replace' && (
-                                  <div className="color-editor">
-                                    <input
-                                      value={getGroupColorDraft(group)}
-                                      onChange={(event) =>
-                                        setGroupColorOverrides((current) => ({ ...current, [group.id]: event.target.value.toUpperCase() }))
-                                      }
-                                      placeholder="#D2CBC1"
-                                    />
-                                    <button className="solid-button small" type="button" onClick={() => void handleApplyGroupColor(group)}>
-                                      {copy.apply}
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                              )}
-
-                              {showAdvancedGroupingControls && group.colorMode === 'replace' && (
-                                <p className="group-note">{copy.groupNote}</p>
-                              )}
-
-                              <div className="asset-grid">
-                                {groupItems.map((hdrItem) => {
-                                  const previewUrl = getHdrPreviewUrl(hdrItem);
-                                  const selectedExposure = getSelectedExposure(hdrItem);
-                                  const selectedIndex = hdrItem.exposures.findIndex((exposure) => exposure.id === hdrItem.selectedExposureId);
-                                  const hdrItemProcessing = showProcessingGroupGrid && isHdrItemProcessing(hdrItem.status);
-                                  const hdrItemCompleted = showProcessingGroupGrid && hdrItem.status === 'completed';
-                                  const hdrItemFailed = showProcessingGroupGrid && hdrItem.status === 'error';
-                                  const localReviewState = activeLocalDraft && canEditHdrGrouping ? getHdrLocalReviewState(hdrItem) : null;
-                                  const localReviewCopy =
-                                    localReviewState && localReviewState !== 'normal'
-                                      ? getLocalReviewCopy(localReviewState, locale)
-                                      : null;
-                                  const emptyPreviewLabel = activeLocalDraft ? copy.localPreviewUnavailable : copy.noPreview;
-                                  const showAssetReviewControls = canEditHdrGrouping && !showProcessingGroupGrid;
-                                  const showManualHdrTools = Boolean(activeLocalDraft && showAssetReviewControls);
-                                  return (
-                                    <article
-                                      key={hdrItem.id}
-                                      className={`asset-card${localReviewState ? ` local-review-${localReviewState}` : ''}${
-                                        hdrItemProcessing ? ' is-processing' : ''
-                                      }${hdrItemCompleted ? ' is-completed' : ''}${hdrItemFailed ? ' is-error' : ''}`}
-                                    >
-                                      <div
-                                        className="asset-frame"
-                                        onPointerDown={
-                                          showAssetReviewControls && hdrItem.exposures.length > 1
-                                            ? (event) => handleHdrExposureSwipeStart(hdrItem, event)
-                                            : undefined
-                                        }
-                                        onPointerUp={
-                                          showAssetReviewControls && hdrItem.exposures.length > 1
-                                            ? (event) => handleHdrExposureSwipeEnd(hdrItem, event)
-                                            : undefined
-                                        }
-                                        onPointerCancel={() => {
-                                          hdrExposureSwipeRef.current = null;
-                                        }}
-                                      >
-                                        {previewUrl ? (
-                                          <img src={previewUrl} alt={hdrItem.title} loading="lazy" decoding="async" />
-                                        ) : (
-                                          <div className={`asset-empty${isDemoMode ? ' demo-asset-empty' : ''}`}>{isDemoMode ? '' : emptyPreviewLabel}</div>
-                                        )}
-                                        {hdrItemProcessing && (
-                                          <div className="asset-processing-layer" aria-label={copy.hdrItemProcessing}>
-                                            <span className="asset-spinner" />
-                                            <strong>{copy.hdrItemProcessing}</strong>
-                                          </div>
-                                        )}
-                                        {showAssetReviewControls && (
-                                          <div className="asset-overlay">
-                                            <span className="asset-index">{hdrItem.index}</span>
-                                            <span className="asset-count">{selectedIndex + 1}/{hdrItem.exposures.length}</span>
-                                            <button
-                                              className="asset-delete"
-                                              type="button"
-                                              onClick={() => void handleDeleteHdr(hdrItem)}
-                                            >
-                                              {copy.delete}
-                                            </button>
-                                          </div>
-                                        )}
-                                        {hdrItem.exposures.length > 1 && showAssetReviewControls && (
-                                          <>
-                                            <button
-                                              className="viewer-arrow left"
-                                              type="button"
-                                              onPointerDown={(event) => event.stopPropagation()}
-                                              onPointerUp={(event) => event.stopPropagation()}
-                                              onClick={() => void handleShiftExposure(hdrItem, -1)}
-                                            >
-                                              {'<'}
-                                            </button>
-                                            <button
-                                              className="viewer-arrow right"
-                                              type="button"
-                                              onPointerDown={(event) => event.stopPropagation()}
-                                              onPointerUp={(event) => event.stopPropagation()}
-                                              onClick={() => void handleShiftExposure(hdrItem, 1)}
-                                            >
-                                              {'>'}
-                                            </button>
-                                          </>
-                                        )}
-                                      </div>
-                                      <div className="asset-body">
-                                        <strong>{selectedExposure?.originalName ?? hdrItem.title}</strong>
-                                        {!showProcessingGroupGrid && <span>{hdrItem.statusText}</span>}
-                                        {showProcessingGroupGrid && hdrItemFailed && <span>{getHdrItemStatusLabel(hdrItem, locale)}</span>}
-                                        {showAssetReviewControls && localReviewCopy && (
-                                          <div className={`asset-local-review ${localReviewState}`}>
-                                            <strong>{localReviewCopy.title}</strong>
-                                            <span>{localReviewCopy.hint}</span>
-                                          </div>
-                                        )}
-                                        {showManualHdrTools && workspaceHdrItems.length > 1 && (
-                                          <div className="hdr-manual-tools">
-                                            <span>{copy.mergeHdrGroup}</span>
-                                            <select
-                                              value=""
-                                              onChange={(event) => {
-                                                const targetHdrItemId = event.target.value;
-                                                if (targetHdrItemId) {
-                                                  handleMergeLocalHdrItem(hdrItem.id, targetHdrItemId);
-                                                }
-                                              }}
-                                            >
-                                              <option value="">{copy.mergeHdrPlaceholder}</option>
-                                              {workspaceHdrItems
-                                                .filter((option) => option.id !== hdrItem.id)
-                                                .map((option) => (
-                                                  <option key={option.id} value={option.id}>
-                                                    HDR {option.index}
-                                                  </option>
-                                                ))}
-                                            </select>
-                                          </div>
-                                        )}
-                                        {showManualHdrTools && hdrItem.exposures.length > 1 && (
-                                          <button
-                                            className="ghost-button compact hdr-split-button"
-                                            type="button"
-                                            onClick={() => handleSplitLocalHdrItem(hdrItem.id)}
-                                          >
-                                            {copy.splitHdrGroup}
-                                          </button>
-                                        )}
-                                        {showAdvancedGroupingControls && (
-                                          <select value={hdrItem.groupId} onChange={(event) => void handleMoveHdrItem(hdrItem, event.target.value)}>
-                                            {workspaceGroups.map((option) => (
-                                              <option key={option.id} value={option.id}>
-                                                {option.name}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        )}
-                                      </div>
-                                    </article>
-                                  );
-                                })}
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
+                      <ReviewGroupsPanel
+                        activeLocalDraft={activeLocalDraft}
+                        canEditHdrGrouping={canEditHdrGrouping}
+                        copy={copy}
+                        getColorModeLabel={getColorModeLabel}
+                        getGroupColorDraft={getGroupColorDraft}
+                        getGroupItems={getGroupItems}
+                        getHdrItemStatusLabel={getHdrItemStatusLabel}
+                        getHdrLocalReviewState={getHdrLocalReviewState}
+                        getHdrPreviewUrl={getHdrPreviewUrl}
+                        getLocalReviewCopy={getLocalReviewCopy}
+                        getSceneLabel={getSceneLabel}
+                        getSelectedExposure={getSelectedExposure}
+                        handleApplyGroupColor={handleApplyGroupColor}
+                        handleColorModeChange={handleColorModeChange}
+                        handleDeleteHdr={handleDeleteHdr}
+                        handleHdrExposureSwipeEnd={handleHdrExposureSwipeEnd}
+                        handleHdrExposureSwipeStart={handleHdrExposureSwipeStart}
+                        handleMergeLocalHdrItem={handleMergeLocalHdrItem}
+                        handleMoveHdrItem={handleMoveHdrItem}
+                        handleSceneChange={handleSceneChange}
+                        handleShiftExposure={handleShiftExposure}
+                        handleSplitLocalHdrItem={handleSplitLocalHdrItem}
+                        hdrExposureSwipeRef={hdrExposureSwipeRef}
+                        isDemoMode={isDemoMode}
+                        isHdrItemProcessing={isHdrItemProcessing}
+                        locale={locale}
+                        setGroupColorOverrides={setGroupColorOverrides}
+                        showAdvancedGroupingControls={showAdvancedGroupingControls}
+                        showProcessingGroupGrid={showProcessingGroupGrid}
+                        workspaceGroups={workspaceGroups}
+                        workspaceHdrItems={workspaceHdrItems}
+                        workspaceReviewProject={workspaceReviewProject}
+                      />
                     </section>
                   </>
                 )}

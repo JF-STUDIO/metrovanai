@@ -1,4 +1,3 @@
-import showcaseExteriorAfter from './assets/showcase-exterior-after.webp';
 import showcaseInteriorAfter from './assets/showcase-interior-after.webp';
 import showcaseInteriorBefore from './assets/showcase-interior-before.webp';
 import type { StudioFeatureConfig } from './api';
@@ -65,69 +64,6 @@ export const STUDIO_FEATURES: StudioFeatureDefinition[] = [
     tone: 'white',
     beforeImage: showcaseInteriorBefore,
     afterImage: showcaseInteriorAfter
-  },
-  {
-    id: 'dusk-exterior',
-    category: 'exterior',
-    status: 'locked',
-    tag: { zh: '室外 · 黄昏', en: 'Exterior · Dusk' },
-    title: { zh: '白天变黄昏室外修图', en: 'Day to Dusk Exterior' },
-    description: {
-      zh: '把白天外景转换成黄昏氛围，增强建筑灯光和天空层次。',
-      en: 'Turns daytime exteriors into a dusk look with stronger building glow and sky depth.'
-    },
-    detail: {
-      zh: '建设中。上线后用于室外门头、车道、前院和建筑立面。',
-      en: 'Coming soon. Designed for exterior fronts, driveways, yards, and facades.'
-    },
-    exposureLabel: { zh: '单张或 HDR', en: 'Single or HDR' },
-    pointLabel: { zh: '建设中', en: 'Coming soon' },
-    defaultName: { zh: '白天变黄昏', en: 'Day to Dusk' },
-    tone: 'dusk',
-    beforeImage: showcaseExteriorAfter,
-    afterImage: showcaseExteriorAfter
-  },
-  {
-    id: 'blue-hour',
-    category: 'exterior',
-    status: 'locked',
-    tag: { zh: '室外 · 蓝调', en: 'Exterior · Blue Hour' },
-    title: { zh: '蓝调时刻照片修图', en: 'Blue Hour Retouch' },
-    description: {
-      zh: '适用窗外蓝调和夜景外观，统一天空、灯光和建筑质感。',
-      en: 'For blue-hour window and exterior looks, balancing sky, lights, and facade texture.'
-    },
-    detail: {
-      zh: '建设中。适合室外蓝调、窗外蓝调和夜景营销图。',
-      en: 'Coming soon. Built for exterior blue hour, window blue hour, and night listing images.'
-    },
-    exposureLabel: { zh: '单张或 HDR', en: 'Single or HDR' },
-    pointLabel: { zh: '建设中', en: 'Coming soon' },
-    defaultName: { zh: '蓝调时刻', en: 'Blue Hour' },
-    tone: 'blue',
-    beforeImage: showcaseExteriorAfter,
-    afterImage: showcaseExteriorAfter
-  },
-  {
-    id: 'season-shift',
-    category: 'special',
-    status: 'locked',
-    tag: { zh: '特殊场景', en: 'Special Scene' },
-    title: { zh: '季节转换', en: 'Season Shift' },
-    description: {
-      zh: '转换草地、树木和环境季节氛围，用于不同销售季节的房源展示。',
-      en: 'Changes grass, trees, and seasonal atmosphere for different listing campaigns.'
-    },
-    detail: {
-      zh: '建设中。后续用于春夏秋冬氛围转换。',
-      en: 'Coming soon. Planned for spring, summer, fall, and winter scene conversions.'
-    },
-    exposureLabel: { zh: '单张照片', en: 'Single image' },
-    pointLabel: { zh: '建设中', en: 'Coming soon' },
-    defaultName: { zh: '季节转换', en: 'Season Shift' },
-    tone: 'season',
-    beforeImage: showcaseExteriorAfter,
-    afterImage: showcaseExteriorAfter
   }
 ];
 

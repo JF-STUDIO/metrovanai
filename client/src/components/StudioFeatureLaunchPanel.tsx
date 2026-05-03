@@ -26,44 +26,39 @@ export function StudioFeatureLaunchPanel({
         </div>
       </div>
       <div className="feature-card-grid">
-        {visibleStudioFeatures.map((feature) => {
-          const locked = feature.status === 'locked';
-          return (
-            <button
-              key={feature.id}
-              className={`studio-feature-card tone-${feature.tone}${locked ? ' locked' : ''}`}
-              type="button"
-              onClick={() => onOpenFeatureProjectDialog(feature)}
-              disabled={locked}
-            >
-              <div className="studio-feature-visual">
-                {feature.beforeImage && feature.afterImage ? (
-                  <>
-                    <img className="studio-feature-before" src={feature.beforeImage} alt="" loading="lazy" decoding="async" />
-                    <img className="studio-feature-after" src={feature.afterImage} alt="" loading="lazy" decoding="async" />
-                    <span className="studio-feature-scanline" aria-hidden="true" />
-                  </>
-                ) : (
-                  <span className="studio-feature-gradient" aria-hidden="true" />
-                )}
-                <span className="studio-feature-tag">{feature.tag[locale]}</span>
-                {locked && <span className="studio-feature-lock">{locale === 'en' ? 'Coming soon' : '建设中'}</span>}
+        {visibleStudioFeatures.map((feature) => (
+          <button
+            key={feature.id}
+            className={`studio-feature-card tone-${feature.tone}`}
+            type="button"
+            onClick={() => onOpenFeatureProjectDialog(feature)}
+          >
+            <div className="studio-feature-visual">
+              {feature.beforeImage && feature.afterImage ? (
+                <>
+                  <img className="studio-feature-before" src={feature.beforeImage} alt="" loading="lazy" decoding="async" />
+                  <img className="studio-feature-after" src={feature.afterImage} alt="" loading="lazy" decoding="async" />
+                  <span className="studio-feature-scanline" aria-hidden="true" />
+                </>
+              ) : (
+                <span className="studio-feature-gradient" aria-hidden="true" />
+              )}
+              <span className="studio-feature-tag">{feature.tag[locale]}</span>
+            </div>
+            <div className="studio-feature-body">
+              <strong>{feature.title[locale]}</strong>
+              <p>{feature.description[locale]}</p>
+              <div className="studio-feature-meta">
+                <em>{feature.pointLabel[locale]}</em>
+                <span className="studio-feature-use">{locale === 'en' ? 'Use' : '去使用'}</span>
               </div>
-              <div className="studio-feature-body">
-                <strong>{feature.title[locale]}</strong>
-                <p>{feature.description[locale]}</p>
-                <div className="studio-feature-meta">
-                  <em>{feature.pointLabel[locale]}</em>
-                  <span className="studio-feature-use">{locale === 'en' ? 'Use' : '去使用'}</span>
-                </div>
-              </div>
-            </button>
-          );
-        })}
+            </div>
+          </button>
+        ))}
       </div>
       <div className="feature-launch-note">
         <strong>{availableFeatureCount}</strong>
-        <span>{locale === 'en' ? ' workflows available. More are being connected.' : '个功能可用，更多功能正在接入。'}</span>
+        <span>{locale === 'en' ? ' workflows ready to use.' : '个功能可直接使用。'}</span>
       </div>
     </section>
   );

@@ -1,8 +1,72 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 const apiRoot = (process.env.METROVAN_CHECK_API_ROOT || 'https://api.metrovanai.com').replace(/\/+$/, '');
-const adminKey = process.env.METROVAN_CHECK_ADMIN_KEY || '';
 const strictChecks = ['1', 'true', 'yes'].includes(String(process.env.METROVAN_CHECK_STRICT || '').toLowerCase());
 
 const checks = [];
+
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+  const text = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    const name = line.slice(0, separator).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
+    let value = line.slice(separator + 1).trim();
+    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+      value = value.slice(1, -1);
+    }
+    process.env[name] ??= value;
+  }
+  return true;
+}
+
+loadEnvFile(path.resolve(import.meta.dirname, '..', '..', 'PRIVATE_METROVAN_AI_SECRETS_REAL_DO_NOT_SHARE.env.local'));
+loadEnvFile(path.resolve(import.meta.dirname, '..', '.env.local'));
+loadEnvFile(path.resolve(import.meta.dirname, '..', '.env'));
+
+async function getRenderServiceEnvValue(name) {
+  const serviceId = process.env.METROVAN_RENDER_PRODUCTION_SERVICE_ID;
+  const apiKey = process.env.RENDER_API_KEY;
+  if (!serviceId || !apiKey) {
+    return '';
+  }
+
+  try {
+    const response = await fetch(`https://api.render.com/v1/services/${serviceId}/env-vars`, {
+      headers: { Authorization: `Bearer ${apiKey}` }
+    });
+    if (!response.ok) {
+      return '';
+    }
+    const payload = await response.json();
+    const items = Array.isArray(payload) ? payload : Array.isArray(payload?.envVars) ? payload.envVars : [];
+    const match = items.find((item) => item?.envVar?.key === name || item?.key === name);
+    return String(match?.envVar?.value ?? match?.value ?? '').trim();
+  } catch {
+    return '';
+  }
+}
+
+async function resolveAdminReadinessKey() {
+  const direct = String(process.env.METROVAN_CHECK_ADMIN_KEY || process.env.METROVAN_ADMIN_READINESS_KEY || '').trim();
+  if (direct) {
+    return { key: direct, source: process.env.METROVAN_CHECK_ADMIN_KEY ? 'METROVAN_CHECK_ADMIN_KEY' : 'METROVAN_ADMIN_READINESS_KEY' };
+  }
+
+  const renderKey = await getRenderServiceEnvValue('METROVAN_ADMIN_READINESS_KEY');
+  if (renderKey) {
+    return { key: renderKey, source: 'render_service_env' };
+  }
+
+  return { key: '', source: '' };
+}
 
 function record(id, ok, details = {}) {
   const item = { id, ok, ...details };
@@ -78,6 +142,8 @@ async function checkSecurityHeaders() {
 }
 
 async function main() {
+  const adminReadiness = await resolveAdminReadinessKey();
+
   await checkJson('health', '/api/health', { includePayload: true });
   await checkHead('home_route', '/home');
   await checkJson('anonymous_session', '/api/auth/session', { expectStatus: 200, includePayload: true });
@@ -100,16 +166,17 @@ async function main() {
     });
   }
 
-  if (adminKey) {
+  if (adminReadiness.key) {
     const readiness = await checkJson('admin_readiness', '/api/admin/readiness', {
-      headers: { 'x-metrovan-admin-key': adminKey },
-      includePayload: true
+      headers: { 'x-metrovan-admin-key': adminReadiness.key },
+      includePayload: false
     });
     const required = Array.isArray(readiness.payload?.checks)
       ? readiness.payload.checks.filter((check) => check.status === 'action-required')
       : [];
     record('admin_readiness_action_required', required.length === 0, {
       count: required.length,
+      keySource: adminReadiness.source,
       items: required.map((check) => ({ id: check.id, current: check.current, next: check.next }))
     });
   } else {
