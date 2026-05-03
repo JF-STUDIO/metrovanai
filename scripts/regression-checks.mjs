@@ -463,13 +463,13 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminRoute.tsx',
   '待处理队列',
   'Admin works view must surface a prioritized issue queue.'
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminRoute.tsx',
   'adminPriorityProjects',
   'Admin works view must compute prioritized projects from health diagnostics.'
 );
