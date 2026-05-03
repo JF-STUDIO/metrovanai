@@ -410,8 +410,8 @@ assertIncludes(
 
 assertIncludes(
   'server/src/processor.ts',
-  'METROVAN_WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS ?? 2',
-  'Processing should run once, automatically retry once on failure, then mark the item failed.'
+  'METROVAN_WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS ?? 5',
+  'Processing should retry up to 5 times with exponential backoff before marking the item failed.'
 );
 
 assertIncludes(
