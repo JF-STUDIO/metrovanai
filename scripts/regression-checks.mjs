@@ -151,13 +151,13 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminUsersPage.tsx',
   '账号实时状态',
   'Admin user detail must expose live account diagnostics.'
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminUsersPage.tsx',
   '<option value="verified">已验证</option>',
   'Admin verified-user filter must use the backend verified value.'
 );
@@ -439,7 +439,7 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminProjectDetailPanel.tsx',
   '重新生成下载包',
   'Admin project detail must expose a download regeneration repair action.'
 );
@@ -511,7 +511,7 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminMaintenancePage.tsx',
   '维护报告',
   'Admin console must expose a maintenance report history page.'
 );
