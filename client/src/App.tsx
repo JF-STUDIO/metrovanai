@@ -3,7 +3,7 @@ import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import { AdminActivationCodesPage } from './components/AdminActivationCodesPage';
-import { AuthModal } from './components/AuthModal';
+import { AppAuthDialog } from './components/AppAuthDialog';
 import { AdminBillingLedgerPage } from './components/AdminBillingLedgerPage';
 import { AdminConsole } from './components/AdminConsole';
 import { AdminContentPage } from './components/AdminContentPage';
@@ -22,18 +22,7 @@ import { AdminSettingsPage } from './components/AdminSettingsPage';
 import { AdminUsersPage } from './components/AdminUsersPage';
 import { AdminWorksList } from './components/AdminWorksList';
 import { BillingPanel } from './components/BillingPanel';
-import { LocalImportReviewNotices } from './components/LocalImportReviewNotices';
-import { ProcessingStatusPanel } from './components/ProcessingStatusPanel';
-import { ProjectStepStrip } from './components/ProjectStepStrip';
-import { ProjectWorkspaceHeader } from './components/ProjectWorkspaceHeader';
-import { ResultsPanel } from './components/ResultsPanel';
-import { ReviewGroupsPanel } from './components/ReviewGroupsPanel';
-import { ReviewPanelHeader } from './components/ReviewPanelHeader';
-import { ReviewUploadStatus } from './components/ReviewUploadStatus';
-import { StudioFeatureLaunchPanel } from './components/StudioFeatureLaunchPanel';
-import { StudioHeader } from './components/StudioHeader';
-import { StudioOverlays } from './components/StudioOverlays';
-import { UploadDropzone } from './components/UploadDropzone';
+import { StudioWorkspaceShell } from './components/StudioWorkspaceShell';
 import { BillingPage } from './pages/BillingPage';
 import { LandingPage } from './pages/LandingPage';
 import logoMark from './assets/metrovan-logo-mark.webp';
@@ -5175,13 +5164,11 @@ function App() {
   }
 
   function renderAuthDialog() {
-    if (!authOpen || session) {
-      return null;
-    }
-
     return (
-      <AuthModal
+      <AppAuthDialog
         copy={copy}
+        open={authOpen}
+        hasSession={Boolean(session)}
         authMode={authMode}
         authBusy={authBusy}
         auth={auth}
@@ -5193,7 +5180,7 @@ function App() {
         isAuthLinkMode={isAuthLinkMode}
         onClose={closeAuth}
         onGoogleAuth={handleGoogleAuth}
-        onSelectMode={(mode) => {
+        onSelectMode={(mode: 'signin' | 'signup') => {
           setAuthMode(mode);
           setAuthMessage('');
         }}
@@ -5905,292 +5892,56 @@ function App() {
           onOpenAuth={openAuth}
         />
 
-        {authOpen && !session && (
-          <AuthModal
-            copy={copy}
-            authMode={authMode}
-            authBusy={authBusy}
-            auth={auth}
-            authTitle={authTitle}
-            authSubtitle={authSubtitle}
-            authMessage={authMessage}
-            authSubmitLabel={authSubmitLabel}
-            googleAuthEnabled={googleAuthEnabled}
-            isAuthLinkMode={isAuthLinkMode}
-            onClose={closeAuth}
-            onGoogleAuth={handleGoogleAuth}
-            onSelectMode={(mode) => {
-              setAuthMode(mode);
-              setAuthMessage('');
-            }}
-            onAuthChange={(patch) => setAuth((current) => ({ ...current, ...patch }))}
-            onForgotPassword={handleForgotPassword}
-            onToggleMode={() => {
-              if (authMode === 'reset-confirm' || authMode === 'verify-email') {
-                clearAuthTokenQuery();
-              }
-              setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
-              setAuthMessage('');
-            }}
-            onSubmit={submitAuth}
-          />
-        )}
+        {renderAuthDialog()}
       </>
     );
   }
 
   return (
-    <>
-      <main className={`studio-shell${isDemoMode ? ' demo-shell' : ''}`}>
-        <div className="ambient-layer studio-ambient" />
-        <StudioHeader
-          billingSummary={billingSummary}
-          copy={copy}
-          currentProjectId={currentProjectId}
-          historyMenuOpen={historyMenuOpen}
-          historyMenuRef={historyMenuRef}
-          isDemoMode={isDemoMode}
-          locale={locale}
-          logoMark={logoMark}
-          session={session}
-          userMenuOpen={userMenuOpen}
-          userMenuRef={userMenuRef}
-          visibleProjects={visibleProjects}
-          onDeleteProject={handleDeleteProject}
-          onDownloadProject={handleDownloadProject}
-          onOpenBilling={(mode) => void handleOpenBilling(mode)}
-          onOpenSettings={openSettings}
-          onRenameProject={(project) => void handleRenameProject(project)}
-          onReturnToStudioFeatureCards={returnToStudioFeatureCards}
-          onSelectProject={(projectId) => {
-            setCurrentProjectId(projectId);
-            setHistoryMenuOpen(false);
-          }}
-          onSetHistoryMenuOpen={setHistoryMenuOpen}
-          onSetUserMenuOpen={setUserMenuOpen}
-          onSignOut={() => void signOut()}
-        />
-
-        {message && <div className="global-message">{message}</div>}
-
-        <div className="studio-layout">
-          <section className="workspace">
-            {!currentProject ? (
-              <StudioFeatureLaunchPanel
-                availableFeatureCount={availableFeatureCount}
-                locale={locale}
-                visibleStudioFeatures={visibleStudioFeatures}
-                onOpenFeatureProjectDialog={openFeatureProjectDialog}
-              />
-            ) : (
-              <>
-                <ProjectWorkspaceHeader
-                  copy={copy}
-                  isDemoMode={isDemoMode}
-                  locale={locale}
-                  project={currentProject}
-                  onRenameProject={(project) => void handleRenameProject(project)}
-                  onReturnToStudioFeatureCards={returnToStudioFeatureCards}
-                />
-
-                <ProjectStepStrip
-                  activeStepLabels={activeStepLabels}
-                  copy={copy}
-                  project={currentProject}
-                  getMaxNavigableStep={getMaxNavigableStep}
-                  onStepClick={(step) => void handleStepClick(step)}
-                />
-
-                {showProcessingStepContent && !isDemoMode && (
-                  <ProcessingStatusPanel
-                    busy={busy}
-                    copy={copy}
-                    locale={locale}
-                    processingPanelDetail={processingPanelDetail}
-                    processingPanelTitle={processingPanelTitle}
-                    project={currentProject}
-                    showProcessingUploadProgress={showProcessingUploadProgress}
-                    showRecoverUploadAction={showRecoverUploadAction}
-                    showResumeUploadAction={showResumeUploadAction}
-                    showRetryProcessingAction={showRetryProcessingAction}
-                    uploadPaused={uploadPaused}
-                    uploadPercent={uploadPercent}
-                    workspacePointsEstimate={workspacePointsEstimate}
-                    onCancelUpload={handleCancelUpload}
-                    onPauseUpload={handlePauseUpload}
-                    onRecoverUploadFiles={triggerFilePicker}
-                    onResumeProcessingUpload={() => void handleStartProcessing()}
-                    onResumeUpload={handleResumeUpload}
-                    onRetryProcessing={() => void handleStartProcessing({ retryFailed: true })}
-                  />
-                )}
-
-                {showUploadStepContent && !isDemoMode && (
-                  <UploadDropzone
-                    copy={copy}
-                    dragActive={dragActive}
-                    showUploadProgress={showUploadProgress}
-                    uploadProgressLabel={uploadProgressLabel}
-                    uploadProgressWidth={uploadProgressWidth}
-                    onDragActiveChange={setDragActive}
-                    onFiles={(files) => void handleUpload(files)}
-                    onTriggerFilePicker={triggerFilePicker}
-                  />
-                )}
-
-                {showReviewStepContent && (
-                  <>
-                    {isDemoMode && (
-                      <section className="panel demo-toolbar-panel">
-                        <div className="demo-toolbar-actions">
-                          <button className="ghost-button compact" type="button">{copy.demoVerticalFix}</button>
-                          <button className="ghost-button compact" type="button">{copy.demoCheckGrouping}</button>
-                          <button className="ghost-button compact" type="button">{copy.demoAdjustGrouping}</button>
-                        </div>
-                        <button className="solid-button small demo-send-button" type="button">{copy.sendToProcess}</button>
-                      </section>
-                    )}
-
-                    <section className="panel review-panel">
-                      {!isDemoMode && (
-                        <ReviewPanelHeader
-                          busy={busy}
-                          copy={copy}
-                          showAdvancedGroupingControls={showAdvancedGroupingControls}
-                          showProcessingGroupGrid={showProcessingGroupGrid}
-                          showReviewActions={showReviewActions}
-                          showReviewUploadProgress={showReviewUploadProgress}
-                          uploadActive={uploadActive}
-                          workspaceHdrItemCount={workspaceHdrItems.length}
-                          onAddPhotos={triggerFilePicker}
-                          onConfirmSend={() => void handleStartProcessing()}
-                          onCreateGroup={() => void handleCreateGroup()}
-                        />
-                      )}
-
-                      {!isDemoMode && (
-                        <ReviewUploadStatus
-                          busy={busy}
-                          copy={copy}
-                          failedUploadFiles={failedUploadFiles}
-                          locale={locale}
-                          showReviewLocalImportProgress={showReviewLocalImportProgress}
-                          showReviewUploadProgress={showReviewUploadProgress}
-                          uploadPaused={uploadPaused}
-                          uploadProgressLabel={uploadProgressLabel}
-                          uploadProgressWidth={uploadProgressWidth}
-                          onCancelUpload={handleCancelUpload}
-                          onPauseUpload={handlePauseUpload}
-                          onResumeUpload={handleResumeUpload}
-                          onRetryAllUploadFiles={() => void handleStartProcessing()}
-                          onRetryUploadFile={(fileIdentity) => void handleStartProcessing({ retryUploadFileIdentity: fileIdentity })}
-                        />
-                      )}
-
-                      {!isDemoMode && showLocalImportDiagnostics && localDraftDiagnostics && (
-                        <LocalImportReviewNotices
-                          copy={copy}
-                          diagnostics={localDraftDiagnostics}
-                        />
-                      )}
-
-                      <ReviewGroupsPanel
-                        activeLocalDraft={activeLocalDraft}
-                        canEditHdrGrouping={canEditHdrGrouping}
-                        copy={copy}
-                        getColorModeLabel={getColorModeLabel}
-                        getGroupColorDraft={getGroupColorDraft}
-                        getGroupItems={getGroupItems}
-                        getHdrItemStatusLabel={getHdrItemStatusLabel}
-                        getHdrLocalReviewState={getHdrLocalReviewState}
-                        getHdrPreviewUrl={getHdrPreviewUrl}
-                        getLocalReviewCopy={getLocalReviewCopy}
-                        getSceneLabel={getSceneLabel}
-                        getSelectedExposure={getSelectedExposure}
-                        handleApplyGroupColor={handleApplyGroupColor}
-                        handleColorModeChange={handleColorModeChange}
-                        handleDeleteHdr={handleDeleteHdr}
-                        handleHdrExposureSwipeEnd={handleHdrExposureSwipeEnd}
-                        handleHdrExposureSwipeStart={handleHdrExposureSwipeStart}
-                        handleMergeLocalHdrItem={handleMergeLocalHdrItem}
-                        handleMoveHdrItem={handleMoveHdrItem}
-                        handleSceneChange={handleSceneChange}
-                        handleShiftExposure={handleShiftExposure}
-                        handleSplitLocalHdrItem={handleSplitLocalHdrItem}
-                        hdrExposureSwipeRef={hdrExposureSwipeRef}
-                        isDemoMode={isDemoMode}
-                        isHdrItemProcessing={isHdrItemProcessing}
-                        locale={locale}
-                        setGroupColorOverrides={setGroupColorOverrides}
-                        showAdvancedGroupingControls={showAdvancedGroupingControls}
-                        showProcessingGroupGrid={showProcessingGroupGrid}
-                        workspaceGroups={workspaceGroups}
-                        workspaceHdrItems={workspaceHdrItems}
-                        workspaceReviewProject={workspaceReviewProject}
-                      />
-                    </section>
-                  </>
-                )}
-
-                {showResultsStepContent && (
-                  <ResultsPanel
-                    assets={displayResultAssets}
-                    busy={busy}
-                    copy={copy}
-                    currentProjectId={currentProject.id}
-                    currentProjectResultAssets={currentProject.resultAssets}
-                    dragOverResultHdrItemId={dragOverResultHdrItemId}
-                    draggedResultHdrItemId={draggedResultHdrItemId}
-                    failedResultHdrItems={failedResultHdrItems}
-                    missingResultHdrItems={missingResultHdrItems}
-                    isDemoMode={isDemoMode}
-                    locale={locale}
-                    projectFreeRegenerationsRemaining={projectFreeRegenerationsRemaining}
-                    regenerationFreeLimit={currentProjectRegenerationUsage.freeLimit}
-                    resultCardRefs={resultCardRefs}
-                    resultRegenerateBusy={resultRegenerateBusy}
-                    resultThumbnailUrls={resultThumbnailUrls}
-                    showRetryProcessingAction={showRetryProcessingAction}
-                    getResultColorCard={getResultColorCard}
-                    onOpenViewer={openViewer}
-                    onPickResultColor={(asset) => void handlePickResultColor(asset)}
-                    onPreviewResultReorder={previewResultReorder}
-                    onRegenerateResult={(asset) => void handleRegenerateResult(asset)}
-                    onReorderResults={(sourceHdrItemId, targetHdrItemId) => void handleReorderResults(sourceHdrItemId, targetHdrItemId)}
-                    onRetryProcessing={() => void handleStartProcessing({ retryFailed: true })}
-                    onSetDragOverResultHdrItemId={setDragOverResultHdrItemId}
-                    onSetDraggedResultHdrItemId={setDraggedResultHdrItemId}
-                    onSetResultColorCard={(hdrItemId, color) =>
-                      setResultColorCards((current) => ({
-                        ...current,
-                        [hdrItemId]: color
-                      }))
-                    }
-                    onSetResultDragPreview={setResultDragPreview}
-                    resolveMediaUrl={resolveMediaUrl}
-                  />
-                )}
-              </>
-            )}
-          </section>
-        </div>
-
-        <input
-          ref={fileInputRef}
-          hidden
-          multiple
-          type="file"
-          accept={IMPORT_FILE_ACCEPT}
-          onChange={(event) => {
-            const files = Array.from(event.currentTarget.files ?? []);
-            event.currentTarget.value = '';
-            void handleUpload(files);
-          }}
-        />
-      </main>
-
-      <StudioOverlays
-        accountSettings={{
+    <StudioWorkspaceShell
+      currentProject={currentProject}
+      fileInput={{
+        accept: IMPORT_FILE_ACCEPT,
+        inputRef: fileInputRef,
+        onUpload: (files: File[]) => void handleUpload(files)
+      }}
+      header={{
+        billingSummary,
+        copy,
+        currentProjectId,
+        historyMenuOpen,
+        historyMenuRef,
+        isDemoMode,
+        locale,
+        logoMark,
+        session,
+        userMenuOpen,
+        userMenuRef,
+        visibleProjects,
+        onDeleteProject: handleDeleteProject,
+        onDownloadProject: handleDownloadProject,
+        onOpenBilling: (mode: 'topup' | 'billing') => void handleOpenBilling(mode),
+        onOpenSettings: openSettings,
+        onRenameProject: (project: ProjectRecord) => void handleRenameProject(project),
+        onReturnToStudioFeatureCards: returnToStudioFeatureCards,
+        onSelectProject: (projectId: string) => {
+          setCurrentProjectId(projectId);
+          setHistoryMenuOpen(false);
+        },
+        onSetHistoryMenuOpen: setHistoryMenuOpen,
+        onSetUserMenuOpen: setUserMenuOpen,
+        onSignOut: () => void signOut()
+      }}
+      isDemoMode={isDemoMode}
+      launch={{
+        availableFeatureCount,
+        locale,
+        visibleStudioFeatures,
+        onOpenFeatureProjectDialog: openFeatureProjectDialog
+      }}
+      message={message}
+      overlays={{
+        accountSettings: {
           busy: settingsBusy,
           copy,
           draft: settingsDraft,
@@ -6200,9 +5951,9 @@ function App() {
           setDraft: setSettingsDraft,
           onClose: () => setSettingsOpen(false),
           onSave: () => void handleSaveSettings()
-        }}
-        billingRechargeLayer={renderBillingRechargeLayer()}
-        createProject={{
+        },
+        billingRechargeLayer: renderBillingRechargeLayer(),
+        createProject: {
           busy,
           copy,
           dragActive: createDialogDragActive,
@@ -6217,15 +5968,15 @@ function App() {
           onClose: closeCreateProjectDialog,
           onCreate: () => void handleCreateProject(),
           onFiles: handleCreateDialogFiles
-        }}
-        deleteProject={{
+        },
+        deleteProject: {
           copy,
           locale,
           project: projectToDelete,
           onCancel: () => setProjectToDelete(null),
           onConfirm: () => void handleConfirmDeleteProject()
-        }}
-        downloadDialog={{
+        },
+        downloadDialog: {
           busy: downloadBusy,
           copy,
           draft: downloadDraft,
@@ -6235,8 +5986,8 @@ function App() {
           setDraft: setDownloadDraft,
           onClose: closeDownloadDialog,
           onConfirm: () => void handleConfirmDownload()
-        }}
-        resultEditor={{
+        },
+        resultEditor: {
           asset: currentViewerAsset,
           aspectRatio: currentViewerAspectRatio,
           availableColorCards: availableResultColorCards,
@@ -6280,8 +6031,8 @@ function App() {
           onUpdateAspectRatio: updateResultAspectRatio,
           onUpdateSettings: updateResultEditorSettings,
           resolveMediaUrl
-        }}
-        studioGuide={{
+        },
+        studioGuide: {
           copy,
           open: studioGuideOpen,
           activeStep: activeStudioGuideStep,
@@ -6294,9 +6045,167 @@ function App() {
             setStudioGuideStep((current) =>
               Math.max(0, Math.min(studioGuideSteps.length - 1, current + delta))
             )
-        }}
-      />
-    </>
+        }
+      }}
+      processing={{
+        show: showProcessingStepContent,
+        props: {
+          busy,
+          copy,
+          locale,
+          processingPanelDetail,
+          processingPanelTitle,
+          showProcessingUploadProgress,
+          showRecoverUploadAction,
+          showResumeUploadAction,
+          showRetryProcessingAction,
+          uploadPaused,
+          uploadPercent,
+          workspacePointsEstimate,
+          onCancelUpload: handleCancelUpload,
+          onPauseUpload: handlePauseUpload,
+          onRecoverUploadFiles: triggerFilePicker,
+          onResumeProcessingUpload: () => void handleStartProcessing(),
+          onResumeUpload: handleResumeUpload,
+          onRetryProcessing: () => void handleStartProcessing({ retryFailed: true })
+        }
+      }}
+      results={{
+        show: showResultsStepContent,
+        props: {
+          assets: displayResultAssets,
+          busy,
+          copy,
+          currentProjectId: currentProject?.id ?? '',
+          currentProjectResultAssets: currentProject?.resultAssets ?? [],
+          dragOverResultHdrItemId,
+          draggedResultHdrItemId,
+          failedResultHdrItems,
+          missingResultHdrItems,
+          isDemoMode,
+          locale,
+          projectFreeRegenerationsRemaining,
+          regenerationFreeLimit: currentProjectRegenerationUsage.freeLimit,
+          resultCardRefs,
+          resultRegenerateBusy,
+          resultThumbnailUrls,
+          showRetryProcessingAction,
+          getResultColorCard,
+          onOpenViewer: openViewer,
+          onPickResultColor: (asset: ResultAsset) => void handlePickResultColor(asset),
+          onPreviewResultReorder: previewResultReorder,
+          onRegenerateResult: (asset: ResultAsset) => void handleRegenerateResult(asset),
+          onReorderResults: (sourceHdrItemId: string, targetHdrItemId: string) =>
+            void handleReorderResults(sourceHdrItemId, targetHdrItemId),
+          onRetryProcessing: () => void handleStartProcessing({ retryFailed: true }),
+          onSetDragOverResultHdrItemId: setDragOverResultHdrItemId,
+          onSetDraggedResultHdrItemId: setDraggedResultHdrItemId,
+          onSetResultColorCard: (hdrItemId: string, color: string) =>
+            setResultColorCards((current) => ({
+              ...current,
+              [hdrItemId]: color
+            })),
+          onSetResultDragPreview: setResultDragPreview,
+          resolveMediaUrl
+        }
+      }}
+      review={{
+        copy,
+        show: showReviewStepContent,
+        showLocalImportDiagnostics,
+        localDraftDiagnostics,
+        header: {
+          busy,
+          copy,
+          showAdvancedGroupingControls,
+          showProcessingGroupGrid,
+          showReviewActions,
+          showReviewUploadProgress,
+          uploadActive,
+          workspaceHdrItemCount: workspaceHdrItems.length,
+          onAddPhotos: triggerFilePicker,
+          onConfirmSend: () => void handleStartProcessing(),
+          onCreateGroup: () => void handleCreateGroup()
+        },
+        uploadStatus: {
+          busy,
+          copy,
+          failedUploadFiles,
+          locale,
+          showReviewLocalImportProgress,
+          showReviewUploadProgress,
+          uploadPaused,
+          uploadProgressLabel,
+          uploadProgressWidth,
+          onCancelUpload: handleCancelUpload,
+          onPauseUpload: handlePauseUpload,
+          onResumeUpload: handleResumeUpload,
+          onRetryAllUploadFiles: () => void handleStartProcessing(),
+          onRetryUploadFile: (fileIdentity: string) =>
+            void handleStartProcessing({ retryUploadFileIdentity: fileIdentity })
+        },
+        groups: {
+          activeLocalDraft,
+          canEditHdrGrouping,
+          copy,
+          getColorModeLabel,
+          getGroupColorDraft,
+          getGroupItems,
+          getHdrItemStatusLabel,
+          getHdrLocalReviewState,
+          getHdrPreviewUrl,
+          getLocalReviewCopy,
+          getSceneLabel,
+          getSelectedExposure,
+          handleApplyGroupColor,
+          handleColorModeChange,
+          handleDeleteHdr,
+          handleHdrExposureSwipeEnd,
+          handleHdrExposureSwipeStart,
+          handleMergeLocalHdrItem,
+          handleMoveHdrItem,
+          handleSceneChange,
+          handleShiftExposure,
+          handleSplitLocalHdrItem,
+          hdrExposureSwipeRef,
+          isDemoMode,
+          isHdrItemProcessing,
+          locale,
+          setGroupColorOverrides,
+          showAdvancedGroupingControls,
+          showProcessingGroupGrid,
+          workspaceGroups,
+          workspaceHdrItems,
+          workspaceReviewProject
+        }
+      }}
+      steps={{
+        activeStepLabels,
+        copy,
+        getMaxNavigableStep,
+        onStepClick: (step: 1 | 2 | 3 | 4) => void handleStepClick(step)
+      }}
+      upload={{
+        show: showUploadStepContent,
+        props: {
+          copy,
+          dragActive,
+          showUploadProgress,
+          uploadProgressLabel,
+          uploadProgressWidth,
+          onDragActiveChange: setDragActive,
+          onFiles: (files: File[]) => void handleUpload(files),
+          onTriggerFilePicker: triggerFilePicker
+        }
+      }}
+      workspaceHeader={{
+        copy,
+        isDemoMode,
+        locale,
+        onRenameProject: (project: ProjectRecord) => void handleRenameProject(project),
+        onReturnToStudioFeatureCards: returnToStudioFeatureCards
+      }}
+    />
   );
 }
 
