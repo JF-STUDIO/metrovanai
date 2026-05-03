@@ -164,9 +164,20 @@ app.post('/api/projects/:id/download/jobs', async (req, res) => {
   }
   if (
     !(await checkUserRateLimit(req, res, user, {
-      scope: 'project-download',
-      limit: 30,
-      windowMs: 1000 * 60 * 15
+      scope: 'project-download-job-create',
+      limit: 20,
+      windowMs: 1000 * 60 * 15,
+      message: '下载请求太频繁，请稍后再试。'
+    }))
+  ) {
+    return;
+  }
+  if (
+    !(await checkUserRateLimit(req, res, user, {
+      scope: 'project-download-job-create-hourly',
+      limit: 60,
+      windowMs: 1000 * 60 * 60,
+      message: '下载请求太频繁，请一小时后再试。'
     }))
   ) {
     return;

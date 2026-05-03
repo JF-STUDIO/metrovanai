@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type {
@@ -307,10 +308,15 @@ function normalizeUserRecord(user: UserRecord): UserRecord {
   };
 }
 
+const DB_BACKUP_INTERVAL_SAVES = Number(process.env.METROVAN_DB_BACKUP_INTERVAL_SAVES ?? 50);
+const DB_BACKUP_RETAIN_COUNT = Math.max(2, Number(process.env.METROVAN_DB_BACKUP_RETAIN_COUNT ?? 7));
+
 export class LocalStore {
   private readonly runtimeRoot: string;
   private readonly metadata: MetadataProvider;
   private readonly storage: StorageProvider;
+  private saveCount = 0;
+  private lastBackupDate = '';
 
   constructor(repoRoot: string) {
     this.runtimeRoot = process.env.METROVAN_RUNTIME_ROOT
@@ -325,6 +331,36 @@ export class LocalStore {
       folderNames: STORAGE_FOLDER_NAMES,
       legacyFolderNames: LEGACY_FOLDER_NAMES
     });
+  }
+
+  private maybeBackupDb() {
+    this.saveCount += 1;
+    const today = new Date().toISOString().slice(0, 10);
+    const shouldBackup = this.saveCount % DB_BACKUP_INTERVAL_SAVES === 0 || today !== this.lastBackupDate;
+    if (!shouldBackup) return;
+
+    const dbPath = path.join(this.runtimeRoot, 'db.json');
+    if (!fs.existsSync(dbPath)) return;
+
+    const backupDir = path.join(this.runtimeRoot, 'backups');
+    try {
+      ensureDir(backupDir);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const backupPath = path.join(backupDir, `db-${timestamp}.json`);
+      fs.copyFileSync(dbPath, backupPath);
+      this.lastBackupDate = today;
+
+      const backupFiles = fs
+        .readdirSync(backupDir)
+        .filter((f) => f.startsWith('db-') && f.endsWith('.json'))
+        .sort();
+      const toDelete = backupFiles.slice(0, Math.max(0, backupFiles.length - DB_BACKUP_RETAIN_COUNT));
+      for (const file of toDelete) {
+        fs.rmSync(path.join(backupDir, file), { force: true });
+      }
+    } catch (error) {
+      console.warn(`[store] DB backup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   getStorageRoot() {
@@ -388,6 +424,7 @@ export class LocalStore {
 
   private saveDb(data: DatabaseShape) {
     this.metadata.save(data);
+    this.maybeBackupDb();
   }
 
   toStorageUrl(absolutePath: string) {
@@ -641,6 +678,10 @@ export class LocalStore {
 
   getUserById(userId: string) {
     return this.loadDb().users.find((user) => user.id === userId) ?? null;
+  }
+
+  getUserByKey(userKey: string) {
+    return this.loadDb().users.find((user) => user.userKey === userKey) ?? null;
   }
 
   getUserByEmail(email: string) {

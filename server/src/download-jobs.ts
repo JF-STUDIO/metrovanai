@@ -38,10 +38,10 @@ interface DownloadJob {
 }
 
 const JOB_RETENTION_MS = 5 * 60 * 1000;
-const DOWNLOAD_URL_TTL_SECONDS = 6 * 60 * 60;
+const DOWNLOAD_URL_TTL_SECONDS = 24 * 60 * 60;
 const MAX_DOWNLOAD_JOB_WORKERS = Math.max(
   1,
-  Math.round(Number(process.env.METROVAN_DOWNLOAD_JOB_WORKERS ?? 3) || 3)
+  Math.round(Number(process.env.METROVAN_DOWNLOAD_JOB_WORKERS ?? 10) || 10)
 );
 const jobs = new Map<string, DownloadJob>();
 const activeByRequest = new Map<string, string>();

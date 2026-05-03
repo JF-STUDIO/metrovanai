@@ -14,6 +14,11 @@ import {
   type TaskExecutionRunContext
 } from './task-executor.js';
 import { isConfiguredObjectStorageKey } from './object-storage.js';
+import {
+  sendProjectCompletedEmail,
+  sendProjectFailedEmail,
+  sendProjectRefundEmail
+} from './mailer.js';
 
 const POINT_PRICE_USD = 0.25;
 const STREAMING_UPLOAD_POLL_MS = 750;
@@ -24,7 +29,7 @@ const WORKFLOW_BATCH_FILL_WAIT_MS = Math.max(
 );
 const WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS = Math.max(
   1,
-  Math.min(3, Number(process.env.METROVAN_WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS ?? 2))
+  Math.min(5, Number(process.env.METROVAN_WORKFLOW_ITEM_AUTO_RETRY_ATTEMPTS ?? 5))
 );
 const WORKFLOW_ITEM_AUTO_RETRY_BASE_DELAY_MS = Math.max(
   500,
@@ -197,6 +202,26 @@ function toUserFacingProcessingError(message: string) {
   return `自动重试后仍失败。原始错误：${message}`;
 }
 
+function formatEta(remainingSeconds: number) {
+  if (remainingSeconds < 60) return `约 ${Math.ceil(remainingSeconds)} 秒`;
+  if (remainingSeconds < 3600) return `约 ${Math.ceil(remainingSeconds / 60)} 分钟`;
+  return `约 ${Math.ceil(remainingSeconds / 3600)} 小时`;
+}
+
+function calcEtaDetail(job: { startedAt: string | null; workflowRealtime: { returned: number; total: number } }, completedNow: number) {
+  if (!job.startedAt || completedNow <= 0 || job.workflowRealtime.total <= 0) return '';
+  const elapsedMs = Date.now() - new Date(job.startedAt).getTime();
+  if (elapsedMs < 3000) return '';
+  const remaining = job.workflowRealtime.total - completedNow;
+  if (remaining <= 0) return '';
+  const msPerItem = elapsedMs / completedNow;
+  return `，预计还需 ${formatEta((remaining * msPerItem) / 1000)}`;
+}
+
+function getSiteBaseUrl() {
+  return (process.env.METROVAN_SITE_URL ?? process.env.SITE_URL ?? 'https://metrovanai.com').replace(/\/+$/, '');
+}
+
 export class ProjectProcessor {
   private readonly activeJobs = new Map<string, Promise<void>>();
   private readonly activeRegenerations = new Map<string, Promise<void>>();
@@ -211,6 +236,55 @@ export class ProjectProcessor {
       repoRoot,
       store
     });
+  }
+
+  private sendProjectNotification(
+    projectId: string,
+    creditResult: { action: string; points: number } | null
+  ) {
+    const project = this.store.getProject(projectId);
+    if (!project) return;
+    const user = this.store.getUserByKey(project.userKey);
+    if (!user?.email) return;
+
+    const refundedPoints = creditResult?.action === 'refunded' ? (creditResult.points ?? 0) : 0;
+    const succeededCount = project.resultAssets.length;
+    const failedCount = project.hdrItems.filter((item) => item.status === 'error').length;
+    const projectUrl = `${getSiteBaseUrl()}/studio/${project.id}`;
+
+    if (succeededCount > 0) {
+      sendProjectCompletedEmail({
+        to: user.email,
+        displayName: user.displayName,
+        projectName: project.name,
+        projectUrl,
+        succeededCount,
+        failedCount,
+        refundedPoints
+      }).catch((err) => {
+        console.warn(`[mailer] Failed to send project completed email: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    } else {
+      sendProjectFailedEmail({
+        to: user.email,
+        displayName: user.displayName,
+        projectName: project.name,
+        refundedPoints
+      }).catch((err) => {
+        console.warn(`[mailer] Failed to send project failed email: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+
+    if (refundedPoints > 0 && succeededCount > 0) {
+      sendProjectRefundEmail({
+        to: user.email,
+        displayName: user.displayName,
+        projectName: project.name,
+        refundedPoints
+      }).catch((err) => {
+        console.warn(`[mailer] Failed to send refund email: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
   }
 
   getExecutionInfo() {
@@ -326,7 +400,7 @@ export class ProjectProcessor {
       currentStep: completedCount > 0 ? 4 : 3,
       pointsSpent: completedCount
     }));
-    this.store.settleProjectProcessingCredits(projectId, POINT_PRICE_USD);
+    const creditResult = this.store.settleProjectProcessingCredits(projectId, POINT_PRICE_USD);
     this.store.setJobState(projectId, (job) => ({
       ...job,
       status: completedCount > 0 ? 'completed' : 'failed',
@@ -349,6 +423,7 @@ export class ProjectProcessor {
         detail: message
       }
     }));
+    this.sendProjectNotification(projectId, creditResult);
   }
 
   async recoverInterruptedProjects() {
@@ -857,7 +932,7 @@ export class ProjectProcessor {
       currentStep: hasSuccess ? 4 : 3,
       pointsSpent: hasSuccess ? this.countCompletedHdrItems(project) : 0
     }));
-    this.store.settleProjectProcessingCredits(projectId, POINT_PRICE_USD);
+    const runCreditResult = this.store.settleProjectProcessingCredits(projectId, POINT_PRICE_USD);
     this.store.setJobState(projectId, (job) => ({
       ...job,
       status: hasSuccess ? 'completed' : 'failed',
@@ -869,6 +944,7 @@ export class ProjectProcessor {
       currentHdrItemId: null,
       percent: hasSuccess ? 100 : Math.max(job.percent, 1)
     }));
+    this.sendProjectNotification(projectId, runCreditResult);
   }
 
   private countCompletedHdrItems(project: ProjectRecord) {
@@ -1462,7 +1538,9 @@ export class ProjectProcessor {
             workflowName: 'auto-retry',
             taskId: executionItem.hdrItem.id
           });
-          await delay(Math.min(20000, WORKFLOW_ITEM_AUTO_RETRY_BASE_DELAY_MS * (attempt - 1)));
+          const exponentialDelay = WORKFLOW_ITEM_AUTO_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 2);
+          const jitter = Math.random() * 0.3 * exponentialDelay;
+          await delay(Math.min(60000, Math.round(exponentialDelay + jitter)));
         }
 
         try {
@@ -1565,7 +1643,7 @@ export class ProjectProcessor {
         succeeded: job.workflowRealtime.succeeded + 1,
         active: Math.max(0, job.workflowRealtime.active - 1),
         monitorState: 'returned',
-        detail: `${hdrItem.title} completed`,
+        detail: `${hdrItem.title} 已完成${calcEtaDetail(job, job.workflowRealtime.returned + 1)}`,
         remoteProgress: 100,
         queuePosition: 0,
         currentNodePercent: 100

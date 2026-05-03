@@ -531,12 +531,18 @@ function parsePositiveIntEnv(name: string, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : fallback;
 }
 
+const DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+
 function getDirectUploadTargetLimits() {
   return {
     maxFiles: parsePositiveIntEnv('METROVAN_DIRECT_UPLOAD_TARGET_MAX_FILES', DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILES),
     maxBatchBytes: parsePositiveIntEnv(
       'METROVAN_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES',
       DEFAULT_DIRECT_UPLOAD_TARGET_MAX_BATCH_BYTES
+    ),
+    maxFileBytes: parsePositiveIntEnv(
+      'METROVAN_DIRECT_UPLOAD_TARGET_MAX_FILE_BYTES',
+      DEFAULT_DIRECT_UPLOAD_TARGET_MAX_FILE_BYTES
     )
   };
 }
@@ -545,6 +551,12 @@ function checkDirectUploadTargetLimits(files: Array<{ size: number }>) {
   const limits = getDirectUploadTargetLimits();
   if (files.length > limits.maxFiles) {
     throw new Error(`Too many files in one upload request. Select at most ${limits.maxFiles} files per batch.`);
+  }
+
+  const oversized = files.find((file) => file.size > limits.maxFileBytes);
+  if (oversized) {
+    const maxGb = (limits.maxFileBytes / (1024 * 1024 * 1024)).toFixed(1);
+    throw new Error(`A file exceeds the per-file size limit of ${maxGb} GB.`);
   }
 
   const totalBytes = files.reduce((total, file) => total + Math.max(0, file.size), 0);
