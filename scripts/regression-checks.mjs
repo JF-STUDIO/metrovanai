@@ -175,13 +175,13 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminContentPage.tsx',
   'const isOpen = event.currentTarget.open;',
   'Admin feature card toggle must capture the details open state before the React event is released.'
 );
 
 assertNotIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminContentPage.tsx',
   '[feature.id]: event.currentTarget.open',
   'Admin feature card toggle must not read currentTarget inside a state updater.'
 );
@@ -205,13 +205,13 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminContentPage.tsx',
   "feature.enabled ? '前台显示' : '前台隐藏'",
   'Admin feature cards must clearly show whether a saved card is visible on the frontend.'
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminContentPage.tsx',
   '关闭时保存成功也不会在前台显示',
   'Admin feature enable checkbox must explain that disabled cards are hidden from the frontend.'
 );
@@ -361,7 +361,7 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminProjectDetailPanel.tsx',
   '项目健康检查',
   'Admin works view must surface project health diagnostics.'
 );
@@ -385,7 +385,7 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminProjectDetailPanel.tsx',
   '深度巡检',
   'Admin project detail must expose an on-demand deep health check button.'
 );
@@ -457,7 +457,7 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminProjectDetailPanel.tsx',
   '诊断建议',
   'Admin project detail must surface root-cause diagnosis recommendations.'
 );
@@ -631,7 +631,7 @@ assertIncludes(
 );
 
 assertIncludes(
-  'client/src/App.tsx',
+  'client/src/components/AdminContentPage.tsx',
   'feature-admin-preview',
   'Admin content operations must preview feature cards before saving.'
 );

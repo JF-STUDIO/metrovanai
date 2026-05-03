@@ -2,8 +2,17 @@
 import './App.css';
 import { startTransition, useLayoutEffect } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
+import { AdminActivationCodesPage } from './components/AdminActivationCodesPage';
 import { AuthModal } from './components/AuthModal';
+import { AdminBillingLedgerPage } from './components/AdminBillingLedgerPage';
 import { AdminConsole } from './components/AdminConsole';
+import { AdminContentPage } from './components/AdminContentPage';
+import { AdminEnginePage, AdminPromptsPage } from './components/AdminEnginePages';
+import { AdminLogsPage } from './components/AdminLogsPage';
+import { AdminPlansConfigPage } from './components/AdminPlansConfigPage';
+import { AdminProjectCostsPage } from './components/AdminProjectCostsPage';
+import { AdminProjectDetailPanel } from './components/AdminProjectDetailPanel';
+import { AdminRegenerationAuditPage } from './components/AdminRegenerationAuditPage';
 import { AdminRefundDialog } from './components/AdminRefundDialog';
 import { AdminWorksList } from './components/AdminWorksList';
 import { BillingPanel } from './components/BillingPanel';
@@ -6050,214 +6059,36 @@ function App() {
           projectToneClass={projectToneClass}
           resolveMediaUrl={resolveMediaUrl}
         />
-        {adminSelectedProject ? (
-          <div className="card admin-detail-card">
-            <div className="card-header">
-              <h3>{adminSelectedProject.name}</h3>
-              <div className="admin-inline-actions">
-                <span className={tagClassForStatus(adminSelectedProject.status)}>{getProjectStatusLabel(adminSelectedProject, locale)}</span>
-                <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminRecoverSelectedProject()} disabled={adminActionBusy}>
-                  {adminActionBusy ? '恢复中...' : '恢复云端结果'}
-                </button>
-                <button className="btn btn-ghost btn-xs" type="button" onClick={() => void handleAdminRunDeepHealth()} disabled={adminDeepHealthBusy}>
-                  {adminDeepHealthBusy ? '巡检中...' : '深度巡检'}
-                </button>
-                <button className="btn btn-ghost btn-xs danger" type="button" onClick={() => void handleAdminDeleteProject(adminSelectedProject.id)} disabled={adminActionBusy}>
-                  删除项目
-                </button>
-              </div>
-            </div>
-            <div className="admin-project-live">
-              <div className="admin-live-stats">
-                <span>失败 {adminSelectedProjectFailedItems.length}</span>
-                <span>处理中 {adminSelectedProjectProcessingItems.length}</span>
-                <span>缺结果 {adminSelectedProjectMissingItems.length}</span>
-                <span>结果 {adminSelectedProjectResults.length}</span>
-              </div>
-              {adminSelectedProject.adminHealth ? (
-                <div className="admin-health-panel">
-                  <div className="admin-health-head">
-                    <span className={getProjectHealthTagClass(adminSelectedProject)}>{getProjectHealthLabel(adminSelectedProject)}</span>
-                    <strong>项目健康检查</strong>
-                    <small>{adminSelectedProject.adminHealth.latestDownloadJob ? `最近下载：${adminSelectedProject.adminHealth.latestDownloadJob.status}` : '暂无下载任务'}</small>
-                  </div>
-                  <div className="admin-health-grid">
-                    <div><strong>{adminSelectedProject.adminHealth.exposureCount}</strong><span>曝光文件</span></div>
-                    <div><strong>{adminSelectedProject.adminHealth.hdrCount}</strong><span>HDR 分组</span></div>
-                    <div><strong>{adminSelectedProject.adminHealth.resultCount}</strong><span>结果图</span></div>
-                    <div><strong>{adminSelectedProject.adminHealth.missingSourceCount}</strong><span>缺源文件</span></div>
-                  </div>
-                  <div className="admin-diagnosis-card">
-                    <div className="admin-mini-head">
-                      <strong>诊断建议</strong>
-                      <span>{adminSelectedProject.adminHealth.reviewed ? '已审核' : adminSelectedProject.adminHealth.issues?.length ? `${adminSelectedProject.adminHealth.issues.length} 个原因` : '正常'}</span>
-                    </div>
-                    <p>{adminSelectedProject.adminHealth.rootCauseSummary ?? '未发现需要处理的项目健康问题。'}</p>
-                    {adminSelectedProject.adminHealth.issues?.length ? (
-                      <div className="admin-diagnosis-list">
-                        {adminSelectedProject.adminHealth.issues.slice(0, 5).map((issue) => (
-                          <div className={`admin-diagnosis-item ${issue.severity === 'error' ? 'error' : 'warning'}`} key={issue.code}>
-                            <strong>{issue.title}</strong>
-                            <span>{issue.detail}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    {adminSelectedProject.adminHealth.recommendedActions?.length ? (
-                      <div className="admin-recommended-actions">
-                        {adminSelectedProject.adminHealth.recommendedActions.map((action) => (
-                          <button
-                            className={`btn btn-ghost btn-xs ${action === 'mark-stalled-failed' ? 'danger' : ''}`}
-                            type="button"
-                            key={action}
-                            onClick={() => handleAdminRecommendedProjectAction(action)}
-                            disabled={Boolean(adminRepairBusy) || (action === 'deep-health' && adminDeepHealthBusy)}
-                          >
-                            {getAdminRepairActionLabel(action)}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  {adminSelectedProject.adminHealth.failedItemDiagnostics?.length ? (
-                    <div className="admin-diagnosis-card admin-failure-diagnostics">
-                      <div className="admin-mini-head">
-                        <strong>失败照片诊断</strong>
-                        <span>{adminSelectedProject.adminHealth.failedItemDiagnostics.length} 张</span>
-                      </div>
-                      <div className="admin-failure-list">
-                        {adminSelectedProject.adminHealth.failedItemDiagnostics.slice(0, 24).map((diagnostic) => (
-                          <article className="admin-failure-row" key={diagnostic.id}>
-                            <div className="admin-failure-main">
-                              <span className="tag tag-red">{diagnostic.causeTitle}</span>
-                              <strong>{diagnostic.fileName}</strong>
-                              <small>
-                                HDR {diagnostic.hdrIndex} · {getAdminFailureProviderLabel(diagnostic.provider, diagnostic.stage)} · {getAdminFailureTaskLabel(diagnostic)}
-                              </small>
-                            </div>
-                            <p>{diagnostic.causeDetail}</p>
-                            {diagnostic.errorMessage ? <code>{diagnostic.errorMessage}</code> : null}
-                            <div className="admin-failure-meta">
-                              <span>曝光 {diagnostic.exposureCount}</span>
-                              {diagnostic.incomingSourceCount ? <span>临时原片 {diagnostic.incomingSourceCount}</span> : null}
-                              {diagnostic.missingSourceReferenceCount ? <span>缺引用 {diagnostic.missingSourceReferenceCount}</span> : null}
-                              {diagnostic.updatedAt ? <span>{formatAdminShortDate(diagnostic.updatedAt)}</span> : null}
-                              <button
-                                className="btn btn-ghost btn-xs"
-                                type="button"
-                                onClick={() => handleAdminRecommendedProjectAction(diagnostic.recommendedAction)}
-                                disabled={Boolean(adminRepairBusy) || (diagnostic.recommendedAction === 'deep-health' && adminDeepHealthBusy)}
-                              >
-                                {getAdminRepairActionLabel(diagnostic.recommendedAction)}
-                              </button>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {adminSelectedProject.adminHealth.warnings.length ? (
-                    <div className="admin-health-warnings">
-                      {adminSelectedProject.adminHealth.warnings.slice(0, 6).map((warning) => (
-                        <span key={warning}>{warning}</span>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="admin-health-ok">未发现 RAW/JPG 混组、重复源文件或截断结果图风险。</div>
-                  )}
-                  {adminSelectedProjectMissingItems.length ? (
-                    <div className="admin-diagnosis-card">
-                      <div className="admin-mini-head">
-                        <strong>缺失结果</strong>
-                        <span>{adminSelectedProjectMissingItems.length} 组没有结果图</span>
-                      </div>
-                      <div className="admin-diagnosis-list">
-                        {adminSelectedProjectMissingItems.slice(0, 12).map((item) => {
-                          const selectedExposure = getSelectedExposure(item);
-                          return (
-                            <div className={item.status === 'error' ? 'admin-diagnosis-item error' : 'admin-diagnosis-item warning'} key={item.id}>
-                              <strong>{selectedExposure?.originalName ?? item.title}</strong>
-                              <span>{getHdrItemStatusLabel(item, locale)} · HDR {item.index}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="admin-repair-actions">
-                    <button
-                      className="btn btn-ghost btn-xs"
-                      type="button"
-                      onClick={() => void handleAdminRepairSelectedProject('acknowledge-maintenance')}
-                      disabled={adminSelectedProject.adminHealth?.reviewed || Boolean(adminRepairBusy)}
-                    >
-                      {adminRepairBusy === 'acknowledge-maintenance' ? '标记中...' : '标记已审核'}
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-xs"
-                      type="button"
-                      onClick={() => void handleAdminRepairSelectedProject('retry-failed-processing')}
-                      disabled={!adminSelectedProjectCanRetryFailed || Boolean(adminRepairBusy)}
-                    >
-                      {adminRepairBusy === 'retry-failed-processing' ? '重试中...' : '重试失败照片'}
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-xs"
-                      type="button"
-                      onClick={() => void handleAdminRepairSelectedProject('regenerate-download')}
-                      disabled={!adminSelectedProjectResults.length || Boolean(adminRepairBusy)}
-                    >
-                      {adminRepairBusy === 'regenerate-download' ? '生成中...' : '重新生成下载包'}
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-xs danger"
-                      type="button"
-                      onClick={() => void handleAdminRepairSelectedProject('mark-stalled-failed')}
-                      disabled={!adminSelectedProjectCanMarkStalled || Boolean(adminRepairBusy)}
-                    >
-                      {adminRepairBusy === 'mark-stalled-failed' ? '标记中...' : '标记卡住失败'}
-                    </button>
-                  </div>
-                  {adminSelectedProjectDeepHealth ? (
-                    <div className="admin-deep-health">
-                      <div className="admin-mini-head">
-                        <strong>深度巡检</strong>
-                        <span>{adminSelectedProjectDeepHealth.status === 'passed' ? '通过' : `${adminSelectedProjectDeepHealth.issueCount} 个问题`}</span>
-                      </div>
-                      <div className="admin-health-grid compact">
-                        <div><strong>{adminSelectedProjectDeepHealth.checkedObjects}</strong><span>R2 对象</span></div>
-                        <div><strong>{adminSelectedProjectDeepHealth.missingObjects}</strong><span>缺失</span></div>
-                        <div><strong>{adminSelectedProjectDeepHealth.sizeMismatchObjects}</strong><span>大小不符</span></div>
-                        <div><strong>{formatAdminShortDate(adminSelectedProjectDeepHealth.completedAt)}</strong><span>完成时间</span></div>
-                      </div>
-                      {adminSelectedProjectDeepHealth.issues.length ? (
-                        <div className="admin-health-warnings">
-                          {adminSelectedProjectDeepHealth.issues.slice(0, 8).map((issue) => (
-                            <span key={`${issue.scope}-${issue.name}-${issue.message}`}>
-                              {issue.scope} · {issue.name}：{issue.message}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="admin-health-ok">R2 原片、结果图和最近下载包检查通过。</div>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              {adminSelectedProjectResults.length ? (
-                <div className="admin-live-grid">
-                  {adminSelectedProjectResults.slice(0, 12).map((asset) => (
-                    <a key={asset.id} className="admin-live-tile" href={resolveMediaUrl(asset.storageUrl)} target="_blank" rel="noreferrer">
-                      <img src={resolveMediaUrl(asset.previewUrl ?? asset.storageUrl)} alt={asset.fileName} loading="lazy" decoding="async" />
-                      <span>{asset.fileName}</span>
-                    </a>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        <AdminProjectDetailPanel
+          adminActionBusy={adminActionBusy}
+          adminDeepHealthBusy={adminDeepHealthBusy}
+          adminRepairBusy={adminRepairBusy}
+          canMarkStalled={adminSelectedProjectCanMarkStalled}
+          canRetryFailed={adminSelectedProjectCanRetryFailed}
+          deepHealth={adminSelectedProjectDeepHealth}
+          failedItems={adminSelectedProjectFailedItems}
+          formatAdminShortDate={formatAdminShortDate}
+          getAdminFailureProviderLabel={getAdminFailureProviderLabel}
+          getAdminFailureTaskLabel={getAdminFailureTaskLabel}
+          getAdminRepairActionLabel={getAdminRepairActionLabel}
+          getHdrItemStatusLabel={getHdrItemStatusLabel}
+          getProjectHealthLabel={getProjectHealthLabel}
+          getProjectHealthTagClass={getProjectHealthTagClass}
+          getProjectStatusLabel={getProjectStatusLabel}
+          getSelectedExposure={getSelectedExposure}
+          locale={locale}
+          missingItems={adminSelectedProjectMissingItems}
+          onDeleteProject={(projectId) => void handleAdminDeleteProject(projectId)}
+          onRecoverProject={() => void handleAdminRecoverSelectedProject()}
+          onRecommendedAction={(action) => void handleAdminRecommendedProjectAction(action)}
+          onRepairProject={(action) => void handleAdminRepairSelectedProject(action)}
+          onRunDeepHealth={() => void handleAdminRunDeepHealth()}
+          processingItems={adminSelectedProjectProcessingItems}
+          project={adminSelectedProject}
+          resolveMediaUrl={resolveMediaUrl}
+          results={adminSelectedProjectResults}
+          tagClassForStatus={tagClassForStatus}
+        />
       </div>
     );
 
@@ -6309,885 +6140,206 @@ function App() {
     );
 
     const renderBillingLedgerPage = () => (
-      <div className="page-content active">
-        {adminPageTitle(
-          '用户账单',
-          <>按用户汇总充值、积分、云端处理成本和利润 · 当前匹配 <span className="mono accent-text">{adminBillingUserTotal.toLocaleString()}</span> 人</>,
-          <>
-            <button className="btn btn-ghost" type="button" onClick={() => void exportAdminBillingUsersCSV()} disabled={adminBillingUsersBusy || !adminBillingUserTotal}>
-              导出 CSV
-            </button>
-            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadBillingUsers()} disabled={adminBillingUsersBusy}>
-              {adminBillingUsersBusy ? '查询中...' : '查询用户账单'}
-            </button>
-          </>
-        )}
-        <div className="kpi-grid">
-          {kpi('充值金额', <>${adminBillingUserTotals.totalPaidUsd.toFixed(2)}</>, <span>实收现金</span>)}
-          {kpi('云端处理成本', <>${adminBillingUserTotals.runningHubCostUsd.toFixed(2)}</>, <span>{adminBillingUserTotals.runningHubRuns.toLocaleString()} × ${adminBillingUserUnitUsd.toFixed(2)}</span>, adminBillingUserTotals.runningHubCostUsd ? 'down' : 'up')}
-          {kpi('剩余积分成本', <>${adminBillingUserTotals.remainingCreditCostUsd.toFixed(2)}</>, <span>{adminBillingUserTotals.availablePoints.toLocaleString()} × ${adminBillingUserUnitUsd.toFixed(2)}</span>, adminBillingUserTotals.remainingCreditCostUsd ? 'down' : 'up')}
-          {kpi('保守利润', <>${adminBillingUserTotals.profitUsd.toFixed(2)}</>, <span>充值 - 已用成本 - 剩余成本</span>, adminBillingUserTotals.profitUsd < 0 ? 'down' : 'up')}
-        </div>
-        <div className="card">
-          <div className="toolbar">
-            <input
-              value={adminBillingLedgerSearch}
-              onChange={(event) => {
-                setAdminBillingLedgerSearch(event.target.value);
-                setAdminBillingUsersLoaded(false);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleAdminLoadBillingUsers();
-              }}
-              placeholder="搜索邮箱 / 用户名 / userKey"
-            />
-          </div>
-          <div className="admin-health-ok">
-            保守利润按实际充值金额 - 当前云端调用次数 × $0.07 - 剩余积分 × $0.07 计算；重试和重修会继续增加实际成本。
-          </div>
-          {adminBillingUsers.length ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>用户</th>
-                    <th>充值</th>
-                    <th>积分</th>
-                    <th>云端调用</th>
-                    <th>成本</th>
-                    <th>剩余成本</th>
-                    <th>利润</th>
-                    <th>项目 / 结果</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adminBillingUsers.map((row, index) => (
-                    <tr key={row.userId}>
-                      <td>
-                        <div className="user-cell">
-                          <div className={userAvatarClass(index)}>{getAdminInitials(row.userDisplayName || row.userEmail)}</div>
-                          <div>
-                            <div className="name">{row.userDisplayName}</div>
-                            <div className="email">{row.userEmail || row.userKey}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="mono">${row.totalPaidUsd.toFixed(2)}</td>
-                      <td>
-                        <div className="admin-status-stack">
-                          <span className="mono">剩 {row.availablePoints.toLocaleString()} pts</span>
-                          <small>获 {row.totalGrantedPoints.toLocaleString()} · 用 {row.totalChargedPoints.toLocaleString()}</small>
-                        </div>
-                      </td>
-                      <td className="mono">{row.runningHubRuns.toLocaleString()} 次 <span className="text-muted">({row.workflowRuns}+{row.regenerationRuns})</span></td>
-                      <td className="mono">${row.runningHubCostUsd.toFixed(2)}</td>
-                      <td className="mono">${row.remainingCreditCostUsd.toFixed(2)}</td>
-                      <td className={row.profitUsd < 0 ? 'mono danger-text' : 'mono accent-text'}>${row.profitUsd.toFixed(2)}</td>
-                      <td className="mono">{row.projectCount} / {row.resultCount}</td>
-                      <td>
-                        <button className="tbl-icon tbl-icon-text" type="button" onClick={() => void handleAdminOpenUserBilling(row.userId)} title="查看用户明细">
-                          账
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="empty-tip">{adminBillingUsersBusy ? '正在查询用户账单...' : '没有匹配的用户账单。'}</div>
-          )}
-        </div>
-      </div>
+      <AdminBillingLedgerPage
+        adminBillingLedgerSearch={adminBillingLedgerSearch}
+        adminBillingUserTotal={adminBillingUserTotal}
+        adminBillingUserTotals={adminBillingUserTotals}
+        adminBillingUserUnitUsd={adminBillingUserUnitUsd}
+        adminBillingUsers={adminBillingUsers}
+        adminBillingUsersBusy={adminBillingUsersBusy}
+        adminPageTitle={adminPageTitle}
+        getAdminInitials={getAdminInitials}
+        kpi={kpi}
+        onExportUsersCSV={() => void exportAdminBillingUsersCSV()}
+        onLoadBillingUsers={() => void handleAdminLoadBillingUsers()}
+        onOpenUserBilling={(userId) => void handleAdminOpenUserBilling(userId)}
+        onSearchChange={(value) => {
+          setAdminBillingLedgerSearch(value);
+          setAdminBillingUsersLoaded(false);
+        }}
+        userAvatarClass={userAvatarClass}
+      />
     );
 
     const renderProjectCostsPage = () => (
-      <div className="page-content active">
-        {adminPageTitle(
-          '成本利润',
-          <>当前匹配 <span className="mono accent-text">{adminProjectCostTotal.toLocaleString()}</span> 项 · 云端单次成本 <span className="mono accent-text">${adminProjectCostUnitUsd.toFixed(2)}</span></>,
-          <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadProjectCosts()} disabled={adminProjectCostsBusy}>
-            {adminProjectCostsBusy ? '查询中...' : '查询成本'}
-          </button>
-        )}
-        <div className="kpi-grid">
-          {kpi('实收估算', <>${adminProjectCostTotals.cashRevenueUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.netPoints.toLocaleString()} pts</span>)}
-          {kpi('扣点标价', <>${adminProjectCostTotals.listRevenueUsd.toFixed(2)}</>, <span>$0.25 / pt</span>)}
-          {kpi('云端调用次数', <>{adminProjectCostTotals.runningHubRuns.toLocaleString()}<span className="unit">次</span></>, <span>含重试/重修</span>)}
-          {kpi('云端处理成本', <>${adminProjectCostTotals.runningHubCostUsd.toFixed(2)}</>, <span>$0.07 / 次</span>, adminProjectCostTotals.runningHubCostUsd ? 'down' : 'up')}
-          {kpi('估算利润', <>${adminProjectCostTotals.profitUsd.toFixed(2)}</>, <span>{adminProjectCostTotals.projects.toLocaleString()} 项</span>, adminProjectCostTotals.profitUsd < 0 ? 'down' : 'up')}
-        </div>
-        <div className="card">
-          <div className="toolbar">
-            <input
-              value={adminProjectCostSearch}
-              onChange={(event) => {
-                setAdminProjectCostSearch(event.target.value);
-                setAdminProjectCostsLoaded(false);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleAdminLoadProjectCosts();
-              }}
-              placeholder="搜索用户 / 邮箱 / 项目名 / 项目ID"
-            />
-            <select
-              value={adminProjectCostDatePreset}
-              onChange={(event) => {
-                setAdminProjectCostDatePreset(event.target.value as AdminProjectCostDatePreset);
-                setAdminProjectCostsLoaded(false);
-              }}
-            >
-              <option value="30d">最近 30 天</option>
-              <option value="today">今天</option>
-              <option value="week">本周</option>
-              <option value="month">本月</option>
-              <option value="all">全部日期</option>
-              <option value="custom">自定义日期</option>
-            </select>
-            {adminProjectCostDatePreset === 'custom' ? (
-              <>
-                <input
-                  type="date"
-                  value={adminProjectCostStartDate}
-                  onChange={(event) => {
-                    setAdminProjectCostStartDate(event.target.value);
-                    setAdminProjectCostsLoaded(false);
-                  }}
-                  aria-label="成本开始日期"
-                />
-                <input
-                  type="date"
-                  value={adminProjectCostEndDate}
-                  onChange={(event) => {
-                    setAdminProjectCostEndDate(event.target.value);
-                    setAdminProjectCostsLoaded(false);
-                  }}
-                  aria-label="成本结束日期"
-                />
-              </>
-            ) : null}
-          </div>
-          <div className="admin-health-ok">
-            实收估算按用户已充值金额 / 非项目到账积分的平均点价计算，后台赠送和重修退回会摊低点价；扣点标价按 $0.25/pt 显示。
-          </div>
-          <div className="admin-health-ok">
-            新任务会记录每次云端处理进入次数；历史项目若早期没有保存尝试次数，会按当前可见任务计算最低成本。
-          </div>
-          {adminProjectCosts.length ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>项目</th>
-                    <th>用户</th>
-                    <th>照片 / 结果</th>
-                    <th>实收 / 标价</th>
-                    <th>云端调用</th>
-                    <th>成本</th>
-                    <th>利润</th>
-                    <th>更新</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adminProjectCosts.map((row, index) => (
-                    <tr key={row.projectId}>
-                      <td>
-                        <div className="admin-status-stack">
-                          <span>{row.projectName}</span>
-                          <small>{row.status} · {row.projectId}</small>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="user-cell">
-                          <div className={userAvatarClass(index)}>{getAdminInitials(row.userDisplayName || row.userKey)}</div>
-                          <div><div className="name">{row.userDisplayName}</div><div className="email">{row.userKey}</div></div>
-                        </div>
-                      </td>
-                      <td className="mono">{row.photoCount} / {row.resultCount}</td>
-                      <td>
-                        <div className="admin-status-stack">
-                          <span className="mono">${row.cashRevenueUsd.toFixed(2)} · {row.netPoints} pts</span>
-                          <small>${row.userPaidUsd.toFixed(2)} / {row.userGrantedPoints.toLocaleString()} pts = ${row.blendedPointPriceUsd.toFixed(4)}/pt</small>
-                          <small>${row.listRevenueUsd.toFixed(2)} 标价</small>
-                        </div>
-                      </td>
-                      <td className="mono">{row.runningHubRuns} 次 <span className="text-muted">({row.workflowRuns}+{row.regenerationRuns})</span></td>
-                      <td className="mono">${row.runningHubCostUsd.toFixed(2)}</td>
-                      <td className={row.profitUsd < 0 ? 'mono danger-text' : 'mono accent-text'}>${row.profitUsd.toFixed(2)}</td>
-                      <td className="cell-id">{formatAdminShortDate(row.updatedAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="empty-tip">{adminProjectCostsBusy ? '正在读取项目成本...' : '暂无项目成本数据。'}</div>
-          )}
-        </div>
-      </div>
+      <AdminProjectCostsPage
+        adminPageTitle={adminPageTitle}
+        adminProjectCostDatePreset={adminProjectCostDatePreset}
+        adminProjectCostEndDate={adminProjectCostEndDate}
+        adminProjectCostSearch={adminProjectCostSearch}
+        adminProjectCostStartDate={adminProjectCostStartDate}
+        adminProjectCostTotal={adminProjectCostTotal}
+        adminProjectCostTotals={adminProjectCostTotals}
+        adminProjectCostUnitUsd={adminProjectCostUnitUsd}
+        adminProjectCosts={adminProjectCosts}
+        adminProjectCostsBusy={adminProjectCostsBusy}
+        formatAdminShortDate={formatAdminShortDate}
+        getAdminInitials={getAdminInitials}
+        kpi={kpi}
+        onDatePresetChange={(value) => {
+          setAdminProjectCostDatePreset(value as AdminProjectCostDatePreset);
+          setAdminProjectCostsLoaded(false);
+        }}
+        onEndDateChange={(value) => {
+          setAdminProjectCostEndDate(value);
+          setAdminProjectCostsLoaded(false);
+        }}
+        onLoadProjectCosts={() => void handleAdminLoadProjectCosts()}
+        onSearchChange={(value) => {
+          setAdminProjectCostSearch(value);
+          setAdminProjectCostsLoaded(false);
+        }}
+        onStartDateChange={(value) => {
+          setAdminProjectCostStartDate(value);
+          setAdminProjectCostsLoaded(false);
+        }}
+        userAvatarClass={userAvatarClass}
+      />
     );
 
     const renderRegenerationAuditPage = () => (
-      <div className="page-content active">
-        {adminPageTitle(
-          '重修审计',
-          <>检查每项目前 10 次免费重修是否和账单一致 · 当前匹配 <span className="mono accent-text">{adminRegenerationAuditTotal.toLocaleString()}</span> 项</>,
-          <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadRegenerationAudit()} disabled={adminRegenerationAuditBusy}>
-            {adminRegenerationAuditBusy ? '查询中...' : '查询审计'}
-          </button>
-        )}
-        <div className="kpi-grid">
-          {kpi('异常项目', <>{adminRegenerationAuditTotals.projects.toLocaleString()}<span className="unit">项</span></>, <span>当前筛选</span>, adminRegenerationAuditTotals.projects ? 'down' : 'up')}
-          {kpi('多扣项目', <>{adminRegenerationAuditTotals.overchargedProjects.toLocaleString()}<span className="unit">项</span></>, <span>{adminRegenerationAuditTotals.overchargedPoints.toLocaleString()} pts</span>, adminRegenerationAuditTotals.overchargedProjects ? 'down' : 'up')}
-          {kpi('少扣项目', <>{adminRegenerationAuditTotals.underchargedProjects.toLocaleString()}<span className="unit">项</span></>, <span>{adminRegenerationAuditTotals.underchargedPoints.toLocaleString()} pts</span>)}
-          {kpi('免费规则', <>10<span className="unit">次</span></>, <span>每个项目</span>)}
-        </div>
-        <div className="card">
-          <div className="toolbar">
-            <input
-              value={adminRegenerationAuditSearch}
-              onChange={(event) => {
-                setAdminRegenerationAuditSearch(event.target.value);
-                setAdminRegenerationAuditLoaded(false);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void handleAdminLoadRegenerationAudit();
-              }}
-              placeholder="搜索用户 / 邮箱 / 项目名 / 项目ID"
-            />
-            <select
-              value={adminRegenerationAuditMode}
-              onChange={(event) => {
-                setAdminRegenerationAuditMode(event.target.value as typeof adminRegenerationAuditMode);
-                setAdminRegenerationAuditLoaded(false);
-              }}
-            >
-              <option value="mismatch">只看异常</option>
-              <option value="overcharged">只看多扣</option>
-              <option value="undercharged">只看少扣</option>
-              <option value="all">全部项目</option>
-            </select>
-          </div>
-          <div className="admin-health-ok">
-            应收费 = max(已完成重修次数 - 免费次数, 0)。实际收费 = 重修扣费 - 重修退款。差额为正表示多扣，负数表示少扣。
-          </div>
-          {adminRegenerationAudit.length ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>项目</th>
-                    <th>用户</th>
-                    <th>重修</th>
-                    <th>应收费</th>
-                    <th>实际收费</th>
-                    <th>差额</th>
-                    <th>状态</th>
-                    <th>更新</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {adminRegenerationAudit.map((row, index) => (
-                    <tr key={row.projectId}>
-                      <td>
-                        <div className="admin-status-stack">
-                          <span>{row.projectName}</span>
-                          <small>{row.resultCount} 结果 · {row.projectId}</small>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="user-cell">
-                          <div className={userAvatarClass(index)}>{getAdminInitials(row.userDisplayName || row.userKey)}</div>
-                          <div><div className="name">{row.userDisplayName}</div><div className="email">{row.userEmail || row.userKey}</div></div>
-                        </div>
-                      </td>
-                      <td className="mono">{row.regenerationRuns} 次 <span className="text-muted">({row.completedRuns} 成功 / {row.failedRuns} 失败)</span></td>
-                      <td className="mono">{row.expectedChargedPoints} pts <span className="text-muted">免费 {row.freeLimit}</span></td>
-                      <td className="mono">{row.actualChargedPoints} pts <span className="text-muted">扣 {row.billedChargePoints} / 退 {row.billedRefundPoints}</span></td>
-                      <td className={row.deltaPoints > 0 ? 'mono danger-text' : row.deltaPoints < 0 ? 'mono accent-text' : 'mono'}>
-                        {row.deltaPoints > 0 ? '+' : ''}{row.deltaPoints} pts
-                      </td>
-                      <td>
-                        <span className={row.status === 'overcharged' ? 'tag tag-red' : row.status === 'undercharged' ? 'tag tag-gray' : 'tag tag-green'}>
-                          {row.status === 'overcharged' ? '多扣' : row.status === 'undercharged' ? '少扣' : '正常'}
-                        </span>
-                      </td>
-                      <td className="cell-id">{formatAdminShortDate(row.updatedAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="empty-tip">{adminRegenerationAuditBusy ? '正在读取重修审计...' : '暂无重修审计异常。'}</div>
-          )}
-        </div>
-      </div>
+      <AdminRegenerationAuditPage
+        adminPageTitle={adminPageTitle}
+        adminRegenerationAudit={adminRegenerationAudit}
+        adminRegenerationAuditBusy={adminRegenerationAuditBusy}
+        adminRegenerationAuditMode={adminRegenerationAuditMode}
+        adminRegenerationAuditSearch={adminRegenerationAuditSearch}
+        adminRegenerationAuditTotal={adminRegenerationAuditTotal}
+        adminRegenerationAuditTotals={adminRegenerationAuditTotals}
+        formatAdminShortDate={formatAdminShortDate}
+        getAdminInitials={getAdminInitials}
+        kpi={kpi}
+        onLoadRegenerationAudit={() => void handleAdminLoadRegenerationAudit()}
+        onModeChange={(value) => {
+          setAdminRegenerationAuditMode(value as typeof adminRegenerationAuditMode);
+          setAdminRegenerationAuditLoaded(false);
+        }}
+        onSearchChange={(value) => {
+          setAdminRegenerationAuditSearch(value);
+          setAdminRegenerationAuditLoaded(false);
+        }}
+        userAvatarClass={userAvatarClass}
+      />
     );
 
     const renderPlansPage = () => (
-      <div className="page-content active">
-        {adminPageTitle(
-          '套餐配置',
-          <>编辑前台 Plans 页展示的 <span className="mono accent-text">{planPackages.length}</span> 档套餐 · 改动会即时生效</>,
-          <>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadSystemSettings()} disabled={adminSystemBusy}>{adminSystemBusy ? '刷新中...' : '刷新套餐'}</button>
-            <button className="btn btn-primary" type="button" onClick={handleAdminOpenNewPlanPackage} disabled={adminSystemBusy}>+ 新增套餐</button>
-          </>
-        )}
-        <div className="plans-grid">
-          {planPackages.map((plan, index) => (
-            <div key={plan.id} className={`plan-card${index === 1 ? ' featured' : ''}`}>
-              <div className="plan-tag">Tier {String(index + 1).padStart(2, '0')}{index === 1 ? ' · Best Value' : ''}</div>
-              <div className="plan-name">{plan.name}</div>
-              <div className="plan-price">${plan.amountUsd.toFixed(0)}<span className="small">/次</span></div>
-              <div className="plan-credits">{plan.points} 积分 · 优惠 {plan.discountPercent}%</div>
-              <ul className="plan-features">
-                <li>{plan.points} 张约可处理照片</li>
-                <li>Stripe 充值订单</li>
-                <li>激活码折扣可叠加</li>
-                <li>自动到账积分</li>
-              </ul>
-              <button className="plan-edit-btn" type="button" onClick={() => handleAdminEditPlanPackage(plan)}>编辑套餐</button>
-            </div>
-          ))}
-          {!planPackages.length && <div className="empty-tip">暂无套餐数据</div>}
-        </div>
-        {adminPlanEditorOpen ? (
-          <div className="card admin-inline-editor">
-            <div className="card-header">
-              <h3>套餐设置</h3>
-              <button className="tbl-icon" type="button" onClick={() => setAdminPlanEditorOpen(false)}>×</button>
-            </div>
-            <div className="admin-form-grid">
-              <label>
-                <span>套餐 ID</span>
-                <input value={adminPlanDraft.id} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, id: event.target.value }))} />
-              </label>
-              <label>
-                <span>套餐名称</span>
-                <input value={adminPlanDraft.name} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, name: event.target.value }))} />
-              </label>
-              <label>
-                <span>实付金额 USD</span>
-                <input type="number" min="1" value={adminPlanDraft.amountUsd} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, amountUsd: event.target.value }))} />
-              </label>
-              <label>
-                <span>到账积分</span>
-                <input type="number" min="1" value={adminPlanDraft.points} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, points: event.target.value }))} />
-              </label>
-              <label>
-                <span>显示优惠 %</span>
-                <input type="number" min="0" max="100" value={adminPlanDraft.discountPercent} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, discountPercent: event.target.value }))} />
-              </label>
-              <label>
-                <span>原价 USD</span>
-                <input type="number" min="1" value={adminPlanDraft.listPriceUsd} onChange={(event) => setAdminPlanDraft((current) => ({ ...current, listPriceUsd: event.target.value }))} />
-              </label>
-            </div>
-            <div className="admin-form-actions">
-              <button className="btn btn-ghost" type="button" onClick={() => setAdminPlanEditorOpen(false)}>取消</button>
-              <button className="btn btn-primary" type="button" onClick={() => void handleAdminSavePlanPackage()} disabled={adminSystemBusy}>
-                {adminSystemBusy ? '保存中...' : '保存套餐'}
-              </button>
-            </div>
-          </div>
-        ) : null}
-        <div className="card">
-          <div className="card-header">
-            <h3>套餐转化漏斗</h3>
-            <span className="chart-range-label">固定展示最近 30 天</span>
-          </div>
-          <div className="admin-console-metrics card-body">
-            <div><span>访问 Plans</span><strong>{(adminTotals.users * 2 || 0).toLocaleString()}</strong></div>
-            <div><span>点击购买</span><strong>{adminOrders.length.toLocaleString()}</strong></div>
-            <div><span>完成支付</span><strong>{paidOrders.length.toLocaleString()}</strong></div>
-          </div>
-        </div>
-      </div>
+      <AdminPlansConfigPage
+        adminOrders={adminOrders}
+        adminPageTitle={adminPageTitle}
+        adminPlanDraft={adminPlanDraft}
+        adminPlanEditorOpen={adminPlanEditorOpen}
+        adminSystemBusy={adminSystemBusy}
+        adminTotals={adminTotals}
+        onClosePlanEditor={() => setAdminPlanEditorOpen(false)}
+        onEditPlanPackage={handleAdminEditPlanPackage}
+        onLoadSystemSettings={() => void handleAdminLoadSystemSettings()}
+        onOpenNewPlanPackage={handleAdminOpenNewPlanPackage}
+        onPlanDraftChange={setAdminPlanDraft}
+        onSavePlanPackage={() => void handleAdminSavePlanPackage()}
+        paidOrders={paidOrders}
+        planPackages={planPackages}
+      />
     );
 
     const renderCodesPage = () => (
-      <div className="page-content active">
-        {adminPageTitle(
-          '兑换码',
-          '生成与管理积分兑换码、活动促销码、合作伙伴码',
-          <>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadActivationCodes()} disabled={adminActivationBusy}>
-              {adminActivationBusy ? '刷新中...' : '刷新兑换码'}
-            </button>
-            <button className="btn btn-ghost" type="button" onClick={handleAdminOpenBatchActivationCodes}>批量生成</button>
-            <button className="btn btn-primary" type="button" onClick={() => { setAdminSingleCodeOpen(true); setAdminActivationDraft({ code: '', label: '', packageId: '', discountPercentOverride: '', bonusPoints: '0', maxRedemptions: '', expiresAt: '', active: true }); }}>+ 新建兑换码</button>
-          </>
-        )}
-        <div className="code-grid">
-          <div className="code-stat"><div className="label">已生成 / 可用</div><div className="value">{adminActivationCodes.length.toLocaleString()} / {availableCodeCount}</div></div>
-          <div className="code-stat"><div className="label">已使用</div><div className="value accent-text">{usedCodeCount.toLocaleString()}</div></div>
-          <div className="code-stat"><div className="label">使用率</div><div className="value success-text">{codeUsageRate}%</div></div>
-        </div>
-        {adminBatchCodeOpen ? (
-          <div className="card admin-inline-editor">
-            <div className="card-header">
-              <h3>批量生成兑换码</h3>
-              <button className="tbl-icon" type="button" onClick={() => setAdminBatchCodeOpen(false)}>×</button>
-            </div>
-            <div className="admin-form-grid">
-              <label>
-                <span>前缀</span>
-                <input value={adminBatchCodeDraft.prefix} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, prefix: event.target.value.toUpperCase() }))} />
-              </label>
-              <label>
-                <span>数量</span>
-                <input type="number" min="1" max={ADMIN_MAX_BATCH_CODES} value={adminBatchCodeDraft.count} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, count: event.target.value }))} />
-              </label>
-              <label>
-                <span>显示名称</span>
-                <input value={adminBatchCodeDraft.label} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, label: event.target.value }))} />
-              </label>
-              <label>
-                <span>绑定套餐</span>
-                <select value={adminBatchCodeDraft.packageId} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, packageId: event.target.value }))}>
-                  <option value="">不绑定套餐</option>
-                  {planPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>覆盖优惠 %</span>
-                <input type="number" min="0" max="100" value={adminBatchCodeDraft.discountPercentOverride} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, discountPercentOverride: event.target.value }))} />
-              </label>
-              <label>
-                <span>额外积分</span>
-                <input type="number" min="0" value={adminBatchCodeDraft.bonusPoints} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, bonusPoints: event.target.value }))} />
-              </label>
-              <label>
-                <span>每码次数</span>
-                <input type="number" min="1" value={adminBatchCodeDraft.maxRedemptions} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, maxRedemptions: event.target.value }))} />
-              </label>
-              <label>
-                <span>到期时间</span>
-                <input type="datetime-local" value={adminBatchCodeDraft.expiresAt} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, expiresAt: event.target.value }))} />
-              </label>
-              <label className="admin-check-field">
-                <input type="checkbox" checked={adminBatchCodeDraft.active} onChange={(event) => setAdminBatchCodeDraft((current) => ({ ...current, active: event.target.checked }))} />
-                <span>生成后立即启用</span>
-              </label>
-            </div>
-            <div className="admin-form-actions">
-              <button className="btn btn-ghost" type="button" onClick={() => setAdminBatchCodeOpen(false)}>取消</button>
-              <button className="btn btn-primary" type="button" onClick={() => void handleAdminCreateBatchActivationCodes()} disabled={adminActivationBusy}>
-                {adminActivationBusy ? '生成中...' : '确认生成'}
-              </button>
-            </div>
-          </div>
-        ) : null}
-        {adminSingleCodeOpen ? (
-          <div className="card admin-inline-editor">
-            <div className="card-header">
-              <h3>新建单个兑换码</h3>
-              <button className="tbl-icon" type="button" onClick={() => setAdminSingleCodeOpen(false)}>×</button>
-            </div>
-            <div className="admin-form-grid">
-              <label>
-                <span>兑换码（留空自动生成）</span>
-                <input value={adminActivationDraft.code} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, code: event.target.value.toUpperCase() }))} placeholder="自动生成" />
-              </label>
-              <label>
-                <span>显示名称</span>
-                <input value={adminActivationDraft.label} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, label: event.target.value }))} placeholder="例：双十一活动码" />
-              </label>
-              <label>
-                <span>绑定套餐</span>
-                <select value={adminActivationDraft.packageId} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, packageId: event.target.value }))}>
-                  <option value="">不绑定套餐（通用）</option>
-                  {planPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>覆盖优惠 %（留空使用套餐默认）</span>
-                <input type="number" min="0" max="100" value={adminActivationDraft.discountPercentOverride} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, discountPercentOverride: event.target.value }))} placeholder="不覆盖" />
-              </label>
-              <label>
-                <span>额外赠送积分</span>
-                <input type="number" min="0" value={adminActivationDraft.bonusPoints} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, bonusPoints: event.target.value }))} />
-              </label>
-              <label>
-                <span>最大兑换次数（留空无限）</span>
-                <input type="number" min="1" value={adminActivationDraft.maxRedemptions} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, maxRedemptions: event.target.value }))} placeholder="无限" />
-              </label>
-              <label>
-                <span>到期时间（留空永不过期）</span>
-                <input type="datetime-local" value={adminActivationDraft.expiresAt} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, expiresAt: event.target.value }))} />
-              </label>
-              <label className="admin-check-field">
-                <input type="checkbox" checked={adminActivationDraft.active} onChange={(event) => setAdminActivationDraft((current) => ({ ...current, active: event.target.checked }))} />
-                <span>创建后立即启用</span>
-              </label>
-            </div>
-            <div className="admin-form-actions">
-              <button className="btn btn-ghost" type="button" onClick={() => setAdminSingleCodeOpen(false)}>取消</button>
-              <button className="btn btn-primary" type="button" onClick={() => void handleAdminCreateActivationCode()} disabled={adminActivationBusy}>
-                {adminActivationBusy ? '创建中...' : '确认创建'}
-              </button>
-            </div>
-          </div>
-        ) : null}
-        <div className="card">
-          <div className="toolbar">
-            <input
-              value={adminActivationDraft.code}
-              onChange={(event) => setAdminActivationDraft((current) => ({ ...current, code: event.target.value.toUpperCase() }))}
-              placeholder="搜索兑换码"
-            />
-            <select value={adminCodesStatusFilter} onChange={(event) => setAdminCodesStatusFilter(event.target.value as typeof adminCodesStatusFilter)}>
-              <option value="all">所有状态</option>
-              <option value="available">活跃可用</option>
-              <option value="used">已用完</option>
-              <option value="expired">已过期</option>
-              <option value="inactive">已停用</option>
-            </select>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>兑换码</th><th>类型</th><th>面值</th><th>剩余 / 总量</th><th>有效期</th><th>使用情况</th><th>状态</th><th></th></tr></thead>
-              <tbody>
-                {adminActivationCodes.filter((item) => {
-                  const search = adminActivationDraft.code.trim().toUpperCase();
-                  if (search && !item.code.includes(search) && !item.label.toUpperCase().includes(search)) return false;
-                  const isExpired = !!item.expiresAt && new Date(item.expiresAt) < new Date();
-                  const isUsedUp = !item.available && item.active && !isExpired &&
-                    item.maxRedemptions !== null && item.redemptionCount >= item.maxRedemptions;
-                  if (adminCodesStatusFilter === 'available') return item.available;
-                  if (adminCodesStatusFilter === 'used') return isUsedUp;
-                  if (adminCodesStatusFilter === 'expired') return isExpired;
-                  if (adminCodesStatusFilter === 'inactive') return !item.active;
-                  return true;
-                }).map((item) => (
-                  <tr key={item.id}>
-                    <td className="mono code-text">{item.code}</td>
-                    <td><span className={`tag ${item.packageName ? 'tag-purple' : 'tag-cyan'}`}>{item.packageName ? '套餐优惠' : '积分'}</span></td>
-                    <td className="mono">{item.discountPercentOverride !== null ? `${item.discountPercentOverride} 折` : item.bonusPoints ? `+${item.bonusPoints} 积分` : '默认'}</td>
-                    <td className="mono">{item.maxRedemptions ? `${Math.max(0, item.maxRedemptions - item.redemptionCount)} / ${item.maxRedemptions}` : '无限'}</td>
-                    <td className="cell-id">{item.expiresAt ? formatAdminDate(item.expiresAt) : '永久'}</td>
-                    <td className="mono">{item.redemptionCount}{item.maxRedemptions ? ` / ${item.maxRedemptions}` : ' 次'}</td>
-                    <td><span className={item.available ? 'tag tag-green' : item.active ? 'tag tag-orange' : 'tag tag-gray'}>{item.available ? '活跃' : item.active ? '不可用' : '已停用'}</span></td>
-                    <td>
-                      <div className="tbl-actions">
-                        <button className="tbl-icon" type="button" title={item.active ? '停用' : '启用'} onClick={() => void handleAdminToggleActivationCode(item)} disabled={adminActivationBusy}>{item.active ? '⏸' : '▶'}</button>
-                        <button className="tbl-icon" type="button" title={item.redemptionCount > 0 ? '已兑换，无法删除' : '删除'} onClick={() => void handleAdminDeleteActivationCode(item)} disabled={adminActivationBusy || item.redemptionCount > 0}>✕</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!adminActivationCodes.length && <div className="empty-tip">{adminActivationBusy ? '正在读取兑换码...' : '暂无兑换码'}</div>}
-        </div>
-      </div>
+      <AdminActivationCodesPage
+        adminActivationBusy={adminActivationBusy}
+        adminActivationCodes={adminActivationCodes}
+        adminActivationDraft={adminActivationDraft}
+        adminBatchCodeDraft={adminBatchCodeDraft}
+        adminBatchCodeOpen={adminBatchCodeOpen}
+        adminCodesStatusFilter={adminCodesStatusFilter}
+        adminPageTitle={adminPageTitle}
+        adminSingleCodeOpen={adminSingleCodeOpen}
+        availableCodeCount={availableCodeCount}
+        codeUsageRate={codeUsageRate}
+        formatAdminDate={formatAdminDate}
+        maxBatchCodes={ADMIN_MAX_BATCH_CODES}
+        onActivationDraftChange={setAdminActivationDraft}
+        onBatchCodeDraftChange={setAdminBatchCodeDraft}
+        onCloseBatchCode={() => setAdminBatchCodeOpen(false)}
+        onCloseSingleCode={() => setAdminSingleCodeOpen(false)}
+        onCreateActivationCode={() => void handleAdminCreateActivationCode()}
+        onCreateBatchActivationCodes={() => void handleAdminCreateBatchActivationCodes()}
+        onDeleteActivationCode={(item) => void handleAdminDeleteActivationCode(item)}
+        onLoadActivationCodes={() => void handleAdminLoadActivationCodes()}
+        onOpenBatchActivationCodes={handleAdminOpenBatchActivationCodes}
+        onOpenSingleCode={() => {
+          setAdminSingleCodeOpen(true);
+          setAdminActivationDraft({ code: '', label: '', packageId: '', discountPercentOverride: '', bonusPoints: '0', maxRedemptions: '', expiresAt: '', active: true });
+        }}
+        onStatusFilterChange={(value) => setAdminCodesStatusFilter(value as typeof adminCodesStatusFilter)}
+        onToggleActivationCode={(item) => void handleAdminToggleActivationCode(item)}
+        planPackages={planPackages}
+        usedCodeCount={usedCodeCount}
+      />
     );
 
     const renderEnginePage = () => (
-      <div className="page-content active">
-        {adminPageTitle(
-          'AI 引擎',
-          '只读监控 · 查看工作流、节点、API 状态和估算调用成本',
-          <>
-            <span className="tag tag-gray">只读</span>
-            <button className="btn btn-primary" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>{adminWorkflowBusy ? '刷新中...' : '刷新引擎'}</button>
-          </>
-        )}
-        <div className="kpi-grid">
-          {kpi('总引擎数', <>{enabledWorkflowCount}<span className="unit">/ {Math.max(enabledWorkflowCount, 1)}</span></>, <span className="vs">{adminWorkflowSummary?.active ?? '未加载'}</span>)}
-          {kpi('本月调用', totalProjectPhotos.toLocaleString(), <span>▲ 实时项目</span>)}
-          {kpi('本月成本', `$${(totalProjectPhotos * 0.04).toFixed(0)}`, <span>▲ 估算</span>, 'down')}
-          {kpi('处理批量', <>{adminSystemSettings?.runpodHdrBatchSize ?? 0}<span className="unit">组/批</span></>, <span>▼ 批量设置</span>)}
-        </div>
-        <div className="engine-grid">
-          {workflowItems.length ? workflowItems.map((item, index) => {
-            const isActive = adminWorkflowSummary?.active?.trim().toLowerCase() === item.name.trim().toLowerCase();
-            const isMissingWorkflow = !item.workflowId;
-            const isApiMissing = !adminWorkflowSummary?.apiKeyConfigured;
-            const statusTag = isMissingWorkflow
-              ? <span className="tag tag-orange">未配置</span>
-              : isApiMissing
-                ? <span className="tag tag-red">API 缺失</span>
-                : isActive
-                  ? <span className="tag tag-purple">主流程</span>
-                  : <span className="tag tag-green">就绪</span>;
-            return (
-              <div key={`${item.name}-${item.workflowId ?? index}`} className={`engine-card${isMissingWorkflow || isApiMissing ? '' : ' live'}`}>
-              <div className="engine-head">
-                <div className="engine-icon">{['✨', '☁️', '🛋️', '🌿', '🧹', '🌅'][index % 6]}</div>
-                <div>
-                  <div className="engine-title">{item.name}</div>
-                  <div className="engine-sub">流程 ID: {item.workflowId ?? '未配置'} · 类型: {item.type}</div>
-                </div>
-                {statusTag}
-              </div>
-              <div className="engine-stats">
-                <div className="engine-stat"><div className="label">输入节点</div><div className="value">{item.inputCount}</div></div>
-                <div className="engine-stat"><div className="label">输出节点</div><div className="value">{item.outputCount}</div></div>
-                <div className="engine-stat"><div className="label">Prompt 节点</div><div className="value success-text">{item.promptNodeId ?? '—'}</div></div>
-                <div className="engine-stat"><div className="label">颜色卡</div><div className="value">{item.colorCardNo ?? '—'}</div></div>
-              </div>
-            </div>
-            );
-          }) : (
-            <div className="empty-tip">{adminWorkflowBusy ? '正在读取 AI 引擎...' : '暂无工作流数据'}</div>
-          )}
-        </div>
-      </div>
+      <AdminEnginePage
+        adminPageTitle={adminPageTitle}
+        adminSystemSettings={adminSystemSettings}
+        adminWorkflowBusy={adminWorkflowBusy}
+        adminWorkflowSummary={adminWorkflowSummary}
+        enabledWorkflowCount={enabledWorkflowCount}
+        kpi={kpi}
+        onLoadWorkflows={() => void handleAdminLoadWorkflows()}
+        totalProjectPhotos={totalProjectPhotos}
+        workflowItems={workflowItems}
+      />
     );
 
     const renderPromptsPage = () => (
-      <div className="page-content active">
-        {adminPageTitle(
-          'Prompt 模板',
-          '只读配置索引 · 当前后台展示 Prompt 节点和流程 ID',
-          <>
-            <span className="tag tag-gray">只读</span>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadWorkflows()} disabled={adminWorkflowBusy}>{adminWorkflowBusy ? '刷新中...' : '刷新模板'}</button>
-          </>
-        )}
-        <div className="card">
-          <div className="card-body prompt-grid">
-            {workflowItems.length ? workflowItems.map((item) => (
-              <article key={`${item.name}-prompt`} className="prompt-card">
-                <span className="tag tag-purple">{item.type}</span>
-                <h3>{item.name}</h3>
-                <p>Prompt Node: <span className="mono">{item.promptNodeId ?? '未配置'}</span></p>
-                <p>流程 ID: <span className="mono">{item.workflowId ?? '未配置'}</span></p>
-              </article>
-            )) : <div className="empty-tip">暂无 Prompt 模板数据</div>}
-          </div>
-        </div>
-      </div>
+      <AdminPromptsPage
+        adminPageTitle={adminPageTitle}
+        adminWorkflowBusy={adminWorkflowBusy}
+        onLoadWorkflows={() => void handleAdminLoadWorkflows()}
+        workflowItems={workflowItems}
+      />
     );
 
     const renderContentPage = () => (
-      <div className="page-content active">
-        {adminPageTitle(
-          '内容运营',
-          '前台功能卡片、对比图、输入输出节点、每张积分',
-          <>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadSystemSettings()} disabled={adminSystemBusy}>
-              {adminSystemBusy ? '刷新中...' : '刷新卡片'}
-            </button>
-            <button className="btn btn-primary" type="button" onClick={handleAddAdminFeatureCard}>+ 添加功能卡片</button>
-          </>
-        )}
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h3>功能卡片配置</h3>
-              <div className="card-sub">只有“前台显示”且发布前检查通过的卡片会出现在用户端。</div>
-            </div>
-            <button className="btn btn-ghost" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminSystemSettings}>
-              {adminSystemBusy ? '保存中...' : '保存全部并发布到前台'}
-            </button>
-          </div>
-          <div className="card-body feature-admin-grid">
-            {adminFeatureDrafts.length ? adminFeatureDrafts.map((feature, index) => {
-              const workflowDisplay = getAdminFeatureWorkflowDisplay(feature);
-              const publishIssues = getAdminFeaturePublishIssues(feature);
-              const beforeImageBusy = adminFeatureImageBusy === `${feature.id}:beforeImageUrl`;
-              const afterImageBusy = adminFeatureImageBusy === `${feature.id}:afterImageUrl`;
-              return (
-              <details
-                key={feature.id}
-                className="feature-admin-card"
-                open={Boolean(adminExpandedFeatureIds[feature.id])}
-                onToggle={(event) => {
-                  const isOpen = event.currentTarget.open;
-                  setAdminExpandedFeatureIds((current) => ({
-                    ...current,
-                    [feature.id]: isOpen
-                  }));
-                }}
-              >
-                <summary>
-                  <span className={`tag ${planToneClass(index)}`}>{feature.status}</span>
-                  <span className={feature.enabled ? 'tag tag-green' : 'tag-red tag'}>{feature.enabled ? '前台显示' : '前台隐藏'}</span>
-                  {feature.enabled && publishIssues.length ? <span className="tag tag-orange">缺配置</span> : null}
-                  <strong>{feature.titleZh}</strong>
-                  <small>Workflow: {workflowDisplay.workflowId || '未配置'} · 输入 {workflowDisplay.inputNodeId || '—'} · 输出 {workflowDisplay.outputNodeId || '—'} · {feature.pointsPerPhoto} pts/张</small>
-                  <div className="feature-admin-order-actions" onClick={(event) => event.preventDefault()}>
-                    <button className="btn btn-ghost btn-xs" type="button" onClick={() => handleMoveAdminFeatureCard(feature.id, -1)} disabled={index === 0}>
-                      上移
-                    </button>
-                    <button className="btn btn-ghost btn-xs" type="button" onClick={() => handleMoveAdminFeatureCard(feature.id, 1)} disabled={index === adminFeatureDrafts.length - 1}>
-                      下移
-                    </button>
-                  </div>
-                </summary>
-                <div className="feature-admin-form">
-                  <div className="feature-admin-preview">
-                    <span className="feature-admin-preview-label">前台预览</span>
-                    <article className={`studio-feature-card admin-feature-preview-card tone-${feature.tone}${feature.enabled ? '' : ' locked'}`}>
-                      <div className="studio-feature-visual">
-                        {feature.beforeImageUrl && feature.afterImageUrl ? (
-                          <>
-                            <img className="studio-feature-before" src={feature.beforeImageUrl} alt="" loading="lazy" decoding="async" />
-                            <img className="studio-feature-after" src={feature.afterImageUrl} alt="" loading="lazy" decoding="async" />
-                            <span className="studio-feature-scanline" aria-hidden="true" />
-                          </>
-                        ) : (
-                          <span className="studio-feature-gradient" aria-hidden="true" />
-                        )}
-                        <span className="studio-feature-tag">{feature.tagZh || '功能标签'}</span>
-                        {!feature.enabled ? <span className="studio-feature-lock">未启用</span> : null}
-                      </div>
-                      <div className="studio-feature-body">
-                        <strong>{feature.titleZh || '功能名称'}</strong>
-                        <p>{feature.descriptionZh || '这里会显示前台功能卡片的短描述。'}</p>
-                        <div className="studio-feature-meta">
-                          <em>{feature.pointsPerPhoto} 积分 / 张</em>
-                          <span className="studio-feature-use">去使用</span>
-                        </div>
-                      </div>
-                    </article>
-                  </div>
-                  <div className="feature-admin-actions">
-                    <button className="btn btn-danger" type="button" onClick={() => handleDeleteAdminFeatureCard(feature.id)}>
-                      删除卡片
-                    </button>
-                    <small>删除后需要点击保存全部才会同步到前台。</small>
-                  </div>
-                  {publishIssues.length ? (
-                    <div className={`feature-admin-publish-check${feature.enabled ? ' warning' : ''}`}>
-                      <strong>{feature.enabled ? '前台启用前需要补齐' : '发布前检查'}</strong>
-                      <span>{publishIssues.join('、')}</span>
-                    </div>
-                  ) : (
-                    <div className="feature-admin-publish-check ready">
-                      <strong>发布前检查通过</strong>
-                      <span>这张卡片已具备前台展示和创建项目所需配置。</span>
-                    </div>
-                  )}
-                  <div className="feature-admin-save-row">
-                    <small>{feature.enabled ? '保存成功后会进入用户端功能卡片。' : '当前为前台隐藏，保存后用户端不会显示。'}</small>
-                    <button className="btn btn-primary" type="button" onClick={() => void handleAdminSaveSystemSettings()} disabled={adminSystemBusy || !adminSystemSettings}>
-                      {adminSystemBusy ? '保存中...' : '保存全部并发布到前台'}
-                    </button>
-                  </div>
-                  <label className="admin-check-field">
-                    <input
-                      type="checkbox"
-                      checked={feature.enabled}
-                      onChange={(event) => updateAdminFeatureDraft(feature.id, { enabled: event.target.checked })}
-                    />
-                    <span>前台启用（关闭时保存成功也不会在前台显示）</span>
-                  </label>
-                  <input value={feature.id} onChange={(event) => updateAdminFeatureDraft(feature.id, { id: event.target.value })} placeholder="功能 ID（英文 / 数字）" />
-                  <select value={feature.category} onChange={(event) => updateAdminFeatureDraft(feature.id, { category: event.target.value as StudioFeatureConfig['category'] })}>
-                    {ADMIN_FEATURE_CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                  <select value={feature.status} onChange={(event) => updateAdminFeatureDraft(feature.id, { status: event.target.value as StudioFeatureConfig['status'] })}>
-                    {ADMIN_FEATURE_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                  <select value={feature.tone} onChange={(event) => updateAdminFeatureDraft(feature.id, { tone: event.target.value as StudioFeatureConfig['tone'] })}>
-                    {ADMIN_FEATURE_TONE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                  <input value={feature.titleZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { titleZh: event.target.value })} placeholder="中文功能名称" />
-                  <input value={feature.titleEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { titleEn: event.target.value })} placeholder="英文功能名称" />
-                  <input value={feature.tagZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { tagZh: event.target.value })} placeholder="中文标签" />
-                  <input value={feature.tagEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { tagEn: event.target.value })} placeholder="英文标签" />
-                  <textarea value={feature.descriptionZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionZh: event.target.value })} placeholder="中文描述" />
-                  <textarea value={feature.descriptionEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { descriptionEn: event.target.value })} placeholder="英文描述" />
-                  <textarea value={feature.detailZh} onChange={(event) => updateAdminFeatureDraft(feature.id, { detailZh: event.target.value })} placeholder="中文详情" />
-                  <textarea value={feature.detailEn} onChange={(event) => updateAdminFeatureDraft(feature.id, { detailEn: event.target.value })} placeholder="英文详情" />
-                  <input value={feature.workflowId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { workflowId: event.target.value })} placeholder="流程 ID" />
-                  <input value={feature.inputNodeId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { inputNodeId: event.target.value })} placeholder="输入节点" />
-                  <input value={feature.outputNodeId ?? ''} onChange={(event) => updateAdminFeatureDraft(feature.id, { outputNodeId: event.target.value })} placeholder="输出节点" />
-                  <input value={feature.pointsPerPhoto} onChange={(event) => updateAdminFeatureDraft(feature.id, { pointsPerPhoto: Number(event.target.value) || 0 })} inputMode="numeric" placeholder="每张积分" />
-                  <div className="feature-upload-row">
-                    <span>对比图 Before</span>
-                    <input value={feature.beforeImageUrl} onChange={(event) => updateAdminFeatureDraft(feature.id, { beforeImageUrl: event.target.value })} placeholder="Before URL" />
-                    <input
-                      type="file"
-                      accept="image/*"
-                      disabled={beforeImageBusy}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) {
-                          void handleAdminFeatureImageUpload(feature.id, 'beforeImageUrl', file);
-                        }
-                        event.currentTarget.value = '';
-                      }}
-                    />
-                    {beforeImageBusy ? <small>上传中...</small> : null}
-                  </div>
-                  <div className="feature-upload-row">
-                    <span>对比图 After</span>
-                    <input value={feature.afterImageUrl} onChange={(event) => updateAdminFeatureDraft(feature.id, { afterImageUrl: event.target.value })} placeholder="After URL" />
-                    <input
-                      type="file"
-                      accept="image/*"
-                      disabled={afterImageBusy}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) {
-                          void handleAdminFeatureImageUpload(feature.id, 'afterImageUrl', file);
-                        }
-                        event.currentTarget.value = '';
-                      }}
-                    />
-                    {afterImageBusy ? <small>上传中...</small> : null}
-                  </div>
-                </div>
-              </details>
-              );
-            }) : (
-              <div className="empty-tip">
-                {adminSystemBusy ? '正在读取功能卡片...' : '功能卡片未载入，请刷新卡片。'}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <AdminContentPage
+        adminExpandedFeatureIds={adminExpandedFeatureIds}
+        adminFeatureDrafts={adminFeatureDrafts}
+        adminFeatureImageBusy={adminFeatureImageBusy}
+        adminPageTitle={adminPageTitle}
+        adminSystemBusy={adminSystemBusy}
+        adminSystemSettings={adminSystemSettings}
+        categoryOptions={ADMIN_FEATURE_CATEGORY_OPTIONS}
+        getAdminFeaturePublishIssues={getAdminFeaturePublishIssues}
+        getAdminFeatureWorkflowDisplay={getAdminFeatureWorkflowDisplay}
+        onAddFeatureCard={handleAddAdminFeatureCard}
+        onDeleteFeatureCard={handleDeleteAdminFeatureCard}
+        onFeatureImageUpload={(featureId, field, file) => void handleAdminFeatureImageUpload(featureId, field, file)}
+        onLoadSystemSettings={() => void handleAdminLoadSystemSettings()}
+        onMoveFeatureCard={handleMoveAdminFeatureCard}
+        onSaveSystemSettings={() => void handleAdminSaveSystemSettings()}
+        onToggleFeatureExpanded={(featureId, isOpen) => {
+          setAdminExpandedFeatureIds((current) => ({
+            ...current,
+            [featureId]: isOpen
+          }));
+        }}
+        planToneClass={planToneClass}
+        statusOptions={ADMIN_FEATURE_STATUS_OPTIONS}
+        toneOptions={ADMIN_FEATURE_TONE_OPTIONS}
+        updateAdminFeatureDraft={updateAdminFeatureDraft}
+      />
     );
 
     const renderLogsPage = () => (
-      <div className="page-content active">
-        {adminPageTitle('操作日志', '所有管理员操作 · 不可编辑、不可删除', <button className="btn btn-ghost" type="button" onClick={() => void handleAdminLoadAuditLogs()} disabled={adminActionBusy}>读取日志</button>)}
-        <div className="card">
-          <div className="toolbar">
-            <input
-              value={adminLogsSearch}
-              onChange={(event) => setAdminLogsSearch(event.target.value)}
-              placeholder="搜索 操作员 / 操作类型"
-            />
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>时间</th><th>操作员</th><th>模块</th><th>操作</th><th>对象</th><th>IP</th></tr></thead>
-              <tbody>
-                {adminAuditLogs
-                  .filter((entry) => !adminLogsSearch ||
-                    (entry.actorEmail ?? entry.actorType ?? '').toLowerCase().includes(adminLogsSearch.toLowerCase()) ||
-                    entry.action.toLowerCase().includes(adminLogsSearch.toLowerCase())
-                  )
-                  .map((entry, index) => (
-                    <tr key={entry.id}>
-                      <td className="cell-id">{formatAdminDate(entry.createdAt)}</td>
-                      <td><div className="user-cell"><div className={userAvatarClass(index)}>{getAdminInitials(entry.actorEmail ?? entry.actorType)}</div><div><div className="name">{entry.actorEmail ?? entry.actorType}</div></div></div></td>
-                      <td><span className="tag tag-cyan">{entry.action.split('.')[0] || '系统'}</span></td>
-                      <td>{entry.action}</td>
-                      <td className="mono">{entry.targetUserId ?? entry.targetProjectId ?? '—'}</td>
-                      <td className="cell-id">{entry.ipAddress}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-          {adminAuditLogs.length > 0 && adminLogsSearch && !adminAuditLogs.some((e) =>
-            (e.actorEmail ?? e.actorType ?? '').toLowerCase().includes(adminLogsSearch.toLowerCase()) ||
-            e.action.toLowerCase().includes(adminLogsSearch.toLowerCase())
-          ) && <div className="empty-tip">没有匹配 "{adminLogsSearch}" 的日志记录</div>}
-          {!adminAuditLogs.length && <div className="empty-tip">{adminActionBusy ? '正在读取日志...' : '暂无日志，点击"读取日志"加载'}</div>}
-        </div>
-      </div>
+      <AdminLogsPage
+        adminActionBusy={adminActionBusy}
+        adminAuditLogs={adminAuditLogs}
+        adminLogsSearch={adminLogsSearch}
+        adminPageTitle={adminPageTitle}
+        formatAdminDate={formatAdminDate}
+        getAdminInitials={getAdminInitials}
+        onLoadAuditLogs={() => void handleAdminLoadAuditLogs()}
+        onSearchChange={setAdminLogsSearch}
+        userAvatarClass={userAvatarClass}
+      />
     );
 
     const renderMaintenancePage = () => (
