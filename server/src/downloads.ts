@@ -22,7 +22,6 @@ export interface ProjectDownloadOptions {
   namingMode: 'original' | 'sequence' | 'custom-prefix';
   customPrefix?: string;
   variants: DownloadVariantOption[];
-  trialWatermark?: boolean;
 }
 
 export function getDefaultDownloadOptions(): ProjectDownloadOptions {
@@ -30,26 +29,7 @@ export function getDefaultDownloadOptions(): ProjectDownloadOptions {
     folderMode: 'grouped',
     namingMode: 'sequence',
     customPrefix: '',
-    variants: [{ key: 'hd', label: 'HD' }],
-    trialWatermark: false
-  };
-}
-
-export function applyTrialDownloadPolicy(input?: ProjectDownloadOptions): ProjectDownloadOptions {
-  const normalized = normalizeDownloadOptions(input);
-  return {
-    ...normalized,
-    folderMode: 'grouped',
-    variants: [
-      {
-        key: 'custom',
-        label: 'Trial-1024',
-        longEdge: 1024,
-        width: null,
-        height: null
-      }
-    ],
-    trialWatermark: true
+    variants: [{ key: 'hd', label: 'HD' }]
   };
 }
 
@@ -111,12 +91,11 @@ export async function buildProjectDownloadArchive(project: ProjectRecord, input?
       });
       const targetPath = path.join(variantFolder, targetFileName);
       const resize = resolveVariantResize(variant);
-      const watermarkText = options.trialWatermark ? 'Metrovan AI' : null;
-      if (!resize && !watermarkText) {
+      if (!resize) {
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
         fs.copyFileSync(asset.storagePath, targetPath);
       } else {
-        await writeJpegVariant(asset.storagePath, targetPath, 95, resize, { watermarkText });
+        await writeJpegVariant(asset.storagePath, targetPath, 95, resize);
       }
     }
   }
@@ -334,10 +313,9 @@ async function prepareAssetDownloadSource(
   }
 
   const resize = resolveVariantResize(variant);
-  const watermarkText = options.trialWatermark ? 'Metrovan AI' : null;
-  if (resize || watermarkText) {
+  if (resize) {
     return {
-      stream: createJpegVariantStream(asset.storagePath, 95, resize, { watermarkText }),
+      stream: createJpegVariantStream(asset.storagePath, 95, resize),
       mtime: fs.statSync(asset.storagePath).mtime
     };
   }
@@ -626,8 +604,7 @@ function normalizeDownloadOptions(input?: ProjectDownloadOptions): ProjectDownlo
     folderMode: input?.folderMode === 'flat' ? 'flat' : defaults.folderMode,
     namingMode: input?.namingMode === 'original' || input?.namingMode === 'custom-prefix' ? input.namingMode : defaults.namingMode,
     customPrefix: sanitizeSegment(input?.customPrefix ?? '').slice(0, 40),
-    variants,
-    trialWatermark: Boolean(input?.trialWatermark)
+    variants
   };
 }
 

@@ -1082,13 +1082,6 @@ export class LocalStore {
     return entry;
   }
 
-  shouldRestrictTrialDownloads(userKey: string) {
-    const paidTopUpTotal = this.loadDb().billing
-      .filter((entry) => entry.userKey === userKey && entry.type === 'credit')
-      .reduce((sum, entry) => sum + entry.amountUsd, 0);
-    return paidTopUpTotal <= 0;
-  }
-
   listPaymentOrders(userKey?: string) {
     return this.loadDb().paymentOrders
       .filter((order) => !userKey || order.userKey === userKey)

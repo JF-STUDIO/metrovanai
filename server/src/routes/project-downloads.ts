@@ -5,7 +5,6 @@ import type { RouteContext } from './context.js';
 export function createProjectDownloadsRouter(ctx: RouteContext) {
   const app = express.Router();
   const {
-    applyTrialDownloadPolicy,
     assertProjectDownloadAssetsReady,
     cancelDownloadJob,
     checkUserRateLimit,
@@ -57,19 +56,14 @@ function setArchiveDownloadHeaders(res: express.Response, fileName: string) {
   );
 }
 
-function getEffectiveDownloadOptions(userKey: string, input: ReturnType<typeof getDefaultDownloadOptions>) {
-  return store.shouldRestrictTrialDownloads(userKey) ? applyTrialDownloadPolicy(input) : input;
-}
-
 async function sendProjectDownloadArchive(
   project: ProjectRecord,
-  userKey: string,
   options: ReturnType<typeof getDefaultDownloadOptions>,
   res: express.Response
 ) {
   await assertProjectDownloadAssetsReady(project);
   setArchiveDownloadHeaders(res, getProjectDownloadFileName(project));
-  await streamProjectDownloadArchive(project, res, getEffectiveDownloadOptions(userKey, options));
+  await streamProjectDownloadArchive(project, res, options);
 }
 
 function handleDownloadError(
@@ -120,7 +114,7 @@ app.get('/api/projects/:id/download', async (req, res) => {
   }
 
   try {
-    await sendProjectDownloadArchive(project, user.userKey, parseDownloadQueryOptions(req.query.options), res);
+    await sendProjectDownloadArchive(project, parseDownloadQueryOptions(req.query.options), res);
   } catch (error) {
     handleDownloadError(req, res, project, user, error);
   }
@@ -154,7 +148,7 @@ app.post('/api/projects/:id/download', async (req, res) => {
   }
 
   try {
-    await sendProjectDownloadArchive(project, user.userKey, {
+    await sendProjectDownloadArchive(project, {
       ...getDefaultDownloadOptions(),
       ...parsed.data
     }, res);
@@ -195,10 +189,10 @@ app.post('/api/projects/:id/download/jobs', async (req, res) => {
     const { job, reused } = enqueueDownloadJob({
       project,
       userKey: user.userKey,
-      options: getEffectiveDownloadOptions(user.userKey, {
+      options: {
         ...getDefaultDownloadOptions(),
         ...parsed.data
-      })
+      }
     });
     res.status(reused ? 200 : 202).json({ job, reused });
   } catch (error) {
