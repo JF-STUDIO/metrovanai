@@ -5,6 +5,7 @@ import type { PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactW
 import { AuthModal } from './components/AuthModal';
 import { AdminConsole } from './components/AdminConsole';
 import { AdminRefundDialog } from './components/AdminRefundDialog';
+import { AdminWorksList } from './components/AdminWorksList';
 import { BillingPanel } from './components/BillingPanel';
 import { LocalImportReviewNotices } from './components/LocalImportReviewNotices';
 import { ProcessingStatusPanel } from './components/ProcessingStatusPanel';
@@ -6034,53 +6035,21 @@ function App() {
             <div className="admin-health-ok">当前载入项目没有需要优先处理的健康问题。</div>
           )}
         </div>
-        <div className="card">
-          <div className="toolbar">
-            <input
-              value={adminWorksSearch}
-              onChange={(event) => setAdminWorksSearch(event.target.value)}
-              placeholder="搜索 作品名称 / 用户"
-            />
-          </div>
-          {adminProjects.length ? (() => {
-            const normalizedSearch = adminWorksSearch.trim().toLowerCase();
-            const filtered = adminProjects.filter((p) => !normalizedSearch || p.name.toLowerCase().includes(normalizedSearch) || (p.userDisplayName ?? p.userKey ?? '').toLowerCase().includes(normalizedSearch));
-            return filtered.length ? (
-              <>
-                <div className="admin-list-meta">
-                  当前显示 {filtered.length.toLocaleString()} 项
-                  {adminProjectsPage < adminProjectsPageCount ? ` · 还有 ${(adminProjectsTotal - adminProjects.length).toLocaleString()} 项未载入` : ''}
-                </div>
-                <div className="works-grid">
-                  {filtered.map((project, index) => {
-                    const preview = project.resultAssets[0]?.previewUrl ?? project.resultAssets[0]?.storageUrl ?? project.hdrItems[0]?.previewUrl ?? null;
-                    return (
-                      <button key={project.id} className="work-card" type="button" onClick={() => void handleAdminSelectProject(project.id)}>
-                        <div className={projectToneClass(index)}>
-                          {preview ? <img src={resolveMediaUrl(preview)} alt={project.name} loading="lazy" decoding="async" /> : null}
-                          <div className="badge-row">
-                            <span className="ai-badge">{project.studioFeatureTitle ?? project.workflowId ?? 'HDR ENHANCE'}</span>
-                            <span className="check">{project.status === 'completed' ? '✓' : project.status === 'failed' ? '⚠' : '⋯'}</span>
-                          </div>
-                        </div>
-                        <div className="work-meta">
-                          <div className="name">{project.name}</div>
-                          <div className="by"><span>{project.userDisplayName || project.userKey}</span><span>{formatAdminShortDate(project.updatedAt)}</span></div>
-                          <div className="admin-health-strip">
-                            <span className={getProjectHealthTagClass(project)}>{getProjectHealthLabel(project)}</span>
-                            <small>{project.adminHealth?.hdrCount ?? project.hdrItems.length} 组 · {project.adminHealth?.resultCount ?? project.resultAssets.length} 结果</small>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            ) : <div className="empty-tip">没有匹配 "{adminWorksSearch}" 的作品</div>;
-          })() : (
-            <div className="empty-tip">{adminProjectsBusy ? '正在读取作品...' : '暂无作品'}</div>
-          )}
-        </div>
+        <AdminWorksList
+          adminProjects={adminProjects}
+          adminProjectsBusy={adminProjectsBusy}
+          adminProjectsPage={adminProjectsPage}
+          adminProjectsPageCount={adminProjectsPageCount}
+          adminProjectsTotal={adminProjectsTotal}
+          adminWorksSearch={adminWorksSearch}
+          formatAdminShortDate={formatAdminShortDate}
+          getProjectHealthLabel={getProjectHealthLabel}
+          getProjectHealthTagClass={getProjectHealthTagClass}
+          onSearchChange={setAdminWorksSearch}
+          onSelectProject={(projectId) => void handleAdminSelectProject(projectId)}
+          projectToneClass={projectToneClass}
+          resolveMediaUrl={resolveMediaUrl}
+        />
         {adminSelectedProject ? (
           <div className="card admin-detail-card">
             <div className="card-header">
